@@ -1,0 +1,21 @@
+name: dni_peru_ocr
+description: Peruvian DNI OCR helpers — ML Kit text recognition denoise, MRZ parsing, address extraction, and surname normalization for the Peruvian Documento Nacional de Identidad.
+version: 0.1.0
+homepage: https://github.com/DarkCodex29/dni_peru_ocr
+repository: https://github.com/DarkCodex29/dni_peru_ocr
+issue_tracker: https://github.com/DarkCodex29/dni_peru_ocr/issues
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  google_mlkit_text_recognition: ^0.15.0
+  mrz_parser: ^2.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
