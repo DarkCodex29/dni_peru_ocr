@@ -158,6 +158,13 @@ class OcrExtractedFields {
   bool get hasMrzData => _fromMrz;
   bool _fromMrz = false;
 
+  /// Marks this instance as MRZ-sourced.
+  ///
+  /// Called by [MrzFieldStrategy] after a successful MRZ parse.
+  /// Callers outside this package should use [hasMrzData] for reads.
+  // ignore: avoid_setters_without_getters
+  set markAsMrzSourced(bool value) => _fromMrz = value;
+
   /// Test-only helper — marks this instance as MRZ-sourced without going
   /// through the full MRZ parsing path. Callers should use [hasMrzData]
   /// for reads; a dedicated getter is intentionally omitted here.
