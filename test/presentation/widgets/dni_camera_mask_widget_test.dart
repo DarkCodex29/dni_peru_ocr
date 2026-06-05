@@ -51,6 +51,10 @@ _MockCameraController _idleMockCamera() {
   when(() => mock.startImageStream(any())).thenAnswer((_) async {});
   when(() => mock.stopImageStream()).thenAnswer((_) async {});
   when(() => mock.buildPreview()).thenReturn(const SizedBox.expand());
+  when(() => mock.takePicture()).thenAnswer(
+    (_) async => XFile('/tmp/test_capture.jpg'),
+  );
+  when(() => mock.setFlashMode(any())).thenAnswer((_) async {});
   return mock;
 }
 
@@ -77,11 +81,23 @@ Widget _buildMask({
   );
 }
 
+/// Disposes the widget under test by replacing it with a [SizedBox] and
+/// draining the event loop so [DetectorLifecycle.safeDispose]'s
+/// [Future.delayed(Duration.zero)] timer completes before the test ends.
+Future<void> _disposeWidget(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox());
+  // Let the Duration.zero future in DetectorLifecycle.safeDispose fire.
+  await tester.pump(Duration.zero);
+  await tester.pump(Duration.zero);
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 void main() {
   setUpAll(() {
     registerFallbackValue(_FakeXFile());
+    registerFallbackValue(FlashMode.off);
+    registerFallbackValue(ImageFormatGroup.bgra8888);
   });
 
   group('DniCameraMask widget — controller wire-up', () {
@@ -94,6 +110,8 @@ void main() {
         await tester.pump();
 
         expect(find.byType(DniCameraMask), findsOneWidget);
+
+        await _disposeWidget(tester);
       },
     );
 
@@ -105,13 +123,12 @@ void main() {
         await tester.pumpWidget(_buildMask(cameraController: cam));
         await tester.pump();
 
-        // The state must expose `captureController` as a DniCameraController
-        // so integration tests can drive state transitions without bypassing
-        // the public widget API.
         final maskState =
             tester.state(find.byType(DniCameraMask)) as dynamic;
         final controller = maskState.captureController as DniCameraController;
         expect(controller, isNotNull);
+
+        await _disposeWidget(tester);
       },
     );
 
@@ -120,17 +137,33 @@ void main() {
       (tester) async {
         final cam = _idleMockCamera();
 
+        // Build the widget to establish layout (so _screenSize is set).
         await tester.pumpWidget(_buildMask(cameraController: cam));
+        // Allow the layout to build once so LayoutBuilder fires.
         await tester.pump();
 
         final maskState =
             tester.state(find.byType(DniCameraMask)) as dynamic;
         final controller = maskState.captureController as DniCameraController;
 
-        controller.captureManually();
-        await tester.pump();
+        // Verify initial scanning state.
+        expect(controller.captureState.value, isA<DniCaptureScanning>());
 
+        // Trigger manual capture — state should transition to InFlight.
+        controller.captureManually();
+
+        // Drain the sync state update.
         expect(controller.captureState.value, isA<DniCaptureInFlight>());
+
+        // Drain all async work: flash timer + takePicture + onCaptureDelivered.
+        await tester.pump(
+          const Duration(
+            milliseconds: CameraOverlayTuning.captureFlashMs + 50,
+          ),
+        );
+        await tester.pump(Duration.zero);
+
+        await _disposeWidget(tester);
       },
     );
 
@@ -144,13 +177,14 @@ void main() {
         );
         await tester.pump();
 
-        // Either the spinner or the check-mark icon appear for loading state.
         expect(
           find.byWidgetPredicate(
             (w) => w is CircularProgressIndicator || w is Icon,
           ),
           findsWidgets,
         );
+
+        await _disposeWidget(tester);
       },
     );
 
@@ -170,6 +204,8 @@ void main() {
           () => maskState.perfectSince,
           throwsA(isA<NoSuchMethodError>()),
         );
+
+        await _disposeWidget(tester);
       },
     );
 
@@ -188,6 +224,8 @@ void main() {
           () => maskState.manualModeActive,
           throwsA(isA<NoSuchMethodError>()),
         );
+
+        await _disposeWidget(tester);
       },
     );
 
@@ -206,6 +244,8 @@ void main() {
           () => maskState.capturing,
           throwsA(isA<NoSuchMethodError>()),
         );
+
+        await _disposeWidget(tester);
       },
     );
   });
@@ -225,6 +265,8 @@ void main() {
 
         expect(controller.telemetry.value, isA<DniTelemetry>());
         expect(controller.telemetry.value.stableFrames, 0);
+
+        await _disposeWidget(tester);
       },
     );
   });
