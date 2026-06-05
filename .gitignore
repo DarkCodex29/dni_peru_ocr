@@ -10,3 +10,16 @@ build/
 .vscode/
 .DS_Store
 coverage/
+
+# SDD / OpenSpec working directories — artifacts persisted to Engram
+.atl/
+.sdd/
+openspec/
+.openspec/
+
+# Local editor scratch
+*.swp
+.cursor/
+
+# OS
+Thumbs.db

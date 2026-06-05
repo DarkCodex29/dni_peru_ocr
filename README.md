@@ -72,6 +72,35 @@ class SentryOcrLogger implements OcrLogger {
 final extractor = OcrFieldExtractor(logger: const SentryOcrLogger());
 ```
 
+## Roadmap
+
+### v0.5.0 (current)
+- ✅ OCR pipeline: field normalization (`Ñ` recovery), MRZ parsing, address noise filtering, temporal consensus.
+- ✅ Full DNI scanning widget (`DniCameraMask`) with auto-capture, manual fallback, tilt detection, blink-free flow.
+- ✅ Theming via `KycTheme` + `KycThemeProvider`.
+- ✅ Pluggable logger (`OcrLogger`).
+
+### Planned — Clean Architecture refactor
+The codebase currently lives in a flat `lib/src/`. The next iteration reorganises it into:
+
+```
+lib/src/
+├── domain/           — entities + interfaces (pure Dart)
+├── data/             — strategies (MrzFieldStrategy, TextOcrFieldStrategy, AddressFieldStrategy)
+├── presentation/     — widgets + painters
+└── infrastructure/   — detector lifecycle, image converter, kyc image utils
+```
+
+Other planned changes:
+- Split `OcrFieldExtractor` (1207 LOC) into strategies.
+- Split `DniCameraMask` (1429 LOC) into `DniCameraController` (pure Dart) + `DniCameraMask` (widget) + `DniCaptureOrchestrator`.
+- Remove the global mutable `OcrExtractedFields.logger` in favour of constructor injection.
+- Move `borderColor` out of `DocumentValidationResult` (domain should not know UI).
+- Rename `OcrConsensusBuilder` to reflect that it is an accumulator, or refactor into a real builder.
+
+### Planned — sibling library
+- `face_validator_peru`: extract face validation + selfie capture into a separate package, mirroring this one's structure. Today face logic still lives in the consumer app.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

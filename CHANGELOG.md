@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- `KycTheme.darkDefaults()` — OLED-tuned dark variant.
+- `KycTheme.fromMaterialTheme(ThemeData)` — bridges Material 3 ColorScheme onto the KYC slots.
+- `KycTheme.copyWith(...)` — partial overrides without redefining the whole theme.
+- `DniCameraMask`: flash toggle moved next to the manual capture button (bottom-right) instead of top-right, so it sits closer to the primary CTA when the manual fallback panel surfaces.
+- All `debugPrint` calls are guarded with `kDebugMode` so release builds skip the string interpolation cost.
+
 ## 0.4.0
 
 - `DniCameraMask` — full DNI scanning widget. Renders the document hole, animated scan line, capture countdown, manual fallback panel, side-intro ribbon and the G.1 telemetry overlay (debug builds only). Hosts the MRZ + consensus pipeline.
