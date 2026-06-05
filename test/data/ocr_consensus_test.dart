@@ -730,4 +730,122 @@ void main() {
       },
     );
   });
+
+  // ── BUG 2 regression — configurable mrzConsecutiveRequired threshold ──────
+  //
+  // Real Peruvian electronic DNI back side: the fast-path MRZ trigger fires
+  // after 2 consecutive valid frames (~66ms at 30fps). That's too tight a
+  // window for the underlying still-camera pipeline to deliver a sharp photo:
+  // takePicture() latency + handheld motion = blurry capture.
+  //
+  // Fix: expose `mrzConsecutiveRequired` so the host widget can raise the
+  // threshold for back-side scans (recommended: 5 frames ≈ 165ms).
+  group('BUG 2 regression — configurable MRZ lock threshold', () {
+    test('default threshold is 2 (backwards compatible)', () {
+      final builder = OcrConsensusAccumulator();
+      expect(builder.mrzConsecutiveRequired, 2);
+      builder.dispose();
+    });
+
+    test('default still locks after 2 consecutive lockFromMrzFields calls', () {
+      final builder = OcrConsensusAccumulator()
+        ..lockFromMrzFields(
+          documentNumber: '71542895',
+          firstName: 'JOSE',
+          lastName: 'MORENO',
+          secondLastName: 'ALEMAN',
+          dateOfBirth: '01/09/1994',
+          expirationDate: '19/02/2028',
+        );
+      expect(builder.isMrzLocked, isFalse);
+      builder.lockFromMrzFields(
+        documentNumber: '71542895',
+        firstName: 'JOSE',
+        lastName: 'MORENO',
+        secondLastName: 'ALEMAN',
+        dateOfBirth: '01/09/1994',
+        expirationDate: '19/02/2028',
+      );
+      expect(builder.isMrzLocked, isTrue);
+      builder.dispose();
+    });
+
+    test('raised threshold of 5 requires 5 frames to lock', () {
+      final builder = OcrConsensusAccumulator(mrzConsecutiveRequired: 5);
+      expect(builder.mrzConsecutiveRequired, 5);
+
+      for (int i = 1; i <= 4; i++) {
+        builder.lockFromMrzFields(
+          documentNumber: '71542895',
+          firstName: 'JOSE',
+          lastName: 'MORENO',
+          secondLastName: 'ALEMAN',
+          dateOfBirth: '01/09/1994',
+          expirationDate: '19/02/2028',
+        );
+        expect(builder.isMrzLocked, isFalse,
+            reason: 'must not lock at frame $i (< 5)');
+      }
+
+      // 5th frame triggers the lock.
+      builder.lockFromMrzFields(
+        documentNumber: '71542895',
+        firstName: 'JOSE',
+        lastName: 'MORENO',
+        secondLastName: 'ALEMAN',
+        dateOfBirth: '01/09/1994',
+        expirationDate: '19/02/2028',
+      );
+      expect(builder.isMrzLocked, isTrue);
+      builder.dispose();
+    });
+
+    test('raised threshold also applies to recordMrz path', () {
+      final mrz = MRZResult(
+        documentType: 'TD1',
+        countryCode: 'PER',
+        surnames: 'MORENO',
+        givenNames: 'JOSE',
+        documentNumber: '71542895',
+        nationalityCountryCode: 'PER',
+        birthDate: DateTime(1994, 9, 1),
+        sex: Sex.male,
+        expiryDate: DateTime(2028, 2, 19),
+        personalNumber: '',
+      );
+
+      final builder = OcrConsensusAccumulator(mrzConsecutiveRequired: 3);
+
+      builder.recordMrz(mrz);
+      expect(builder.isMrzLocked, isFalse);
+
+      builder.recordMrz(mrz);
+      expect(builder.isMrzLocked, isFalse, reason: 'must not lock at frame 2 (<3)');
+
+      builder.recordMrz(mrz);
+      expect(builder.isMrzLocked, isTrue);
+      builder.dispose();
+    });
+
+    test('threshold of 1 locks on the first frame (edge case)', () {
+      final builder = OcrConsensusAccumulator(mrzConsecutiveRequired: 1);
+      builder.lockFromMrzFields(
+        documentNumber: '71542895',
+        firstName: 'JOSE',
+        lastName: 'MORENO',
+        secondLastName: 'ALEMAN',
+        dateOfBirth: '01/09/1994',
+        expirationDate: '19/02/2028',
+      );
+      expect(builder.isMrzLocked, isTrue);
+      builder.dispose();
+    });
+
+    test('threshold of 0 is rejected by assertion', () {
+      expect(
+        () => OcrConsensusAccumulator(mrzConsecutiveRequired: 0),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+  });
 }

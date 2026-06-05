@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.6.2 (bugfix)
+
+Second hotfix on top of v0.6.1 — addresses BUG 1A (Spanish address anchor) and
+BUG 2 (back-side motion blur) reported by JC against v0.6.0 (Engram obs #4669).
+**No breaking API changes** — consumers bump SHA only.
+
+### Bug 1A — `Dirección:` anchor now recognized
+
+Real Peruvian electronic DNIs print **"Dirección:"** (Spanish accent) on the
+reverse, NOT "Domicilio:". `AddressFieldStrategy` was DOMICILIO-only. Now
+accepts `DOMICILIO`, `DOM`, `DOM.`, `DIRECCIÓN`, and `DIRECCION` as Strategy 1
+anchors — both inline (`Dirección: ASENT.H15...`) and as a label on its own
+line followed by the address.
+
+The `DIRECCION` token stays in `kAddressNoiseDenylist` so it does not pollute
+joined address strings — the anchor is detected on the raw line BEFORE the
+noise filter runs.
+
+### Bug 2 — Configurable MRZ lock threshold (motion blur mitigation)
+
+`OcrConsensusAccumulator` lock-fires after 2 consecutive MRZ-valid frames
+(~66ms at 30fps). For the electronic DNI back side, the underlying
+`takePicture()` pipeline needs more stability time to deliver a sharp still.
+
+New constructor parameter `mrzConsecutiveRequired` exposes the threshold:
+
+```dart
+// Default: 2 (backwards compatible — booklet DNI or front)
+OcrConsensusAccumulator();
+// Back side electronic DNI: 5 frames ≈ 165ms stability window
+OcrConsensusAccumulator(mrzConsecutiveRequired: 5);
+```
+
+Host widgets can pick the right threshold per side. Consumers do NOT need to
+change anything to keep the v0.6.x behavior.
+
+### Tests
+
+10 new regression tests:
+- 4 for BUG 1A in `test/data/strategies/address_field_strategy_test.dart`.
+- 6 for BUG 2 in `test/data/ocr_consensus_test.dart`.
+
+**498/498 tests pass. `flutter analyze` clean (0 issues).**
+
 ## 0.6.1 (bugfix)
 
 Hotfix for two pre-existing bugs in `OcrConsensusAccumulator` reported by JC
