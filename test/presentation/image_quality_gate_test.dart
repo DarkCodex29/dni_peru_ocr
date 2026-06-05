@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as imglib;
-import 'package:dni_peru_ocr/src/image_quality_gate.dart';
+import 'package:dni_peru_ocr/src/presentation/image_quality_gate.dart';
 import 'package:mocktail/mocktail.dart';
 
 // ── Test doubles ─────────────────────────────────────────────────────────────

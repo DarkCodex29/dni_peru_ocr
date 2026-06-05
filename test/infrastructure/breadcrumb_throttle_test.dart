@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:dni_peru_ocr/src/breadcrumb_throttle.dart';
+import 'package:dni_peru_ocr/src/infrastructure/breadcrumb_throttle.dart';
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 //
