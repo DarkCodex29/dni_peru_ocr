@@ -145,5 +145,71 @@ void main() {
       expect(result, isNotNull);
       expect(result!.dateOfBirth, '01/01/1990');
     });
+
+    // ── BUG regression — DNI moderno unified "Apellidos" field ────────────
+    //
+    // Modern Peruvian DNI cards print a SINGLE "Apellidos" label with both
+    // paternal and maternal surnames joined (e.g. "QUIROZ REMIGIO"). The
+    // MRZ on the back only carries the paternal half — we need the text-OCR
+    // to split the joined "Apellidos" value into lastName + secondLastName
+    // so the back-side consensus accumulator has both via vote map fallback.
+    //
+    // Real case from JC's v0.6.5 verification: JAMES ERMITAÑO QUIROZ REMIGIO,
+    // CUI 43005787. MRZ trae "QUIROZ<<JAMES<ERMITANXX0", only "QUIROZ".
+    // The frente has "Apellidos: QUIROZ REMIGIO".
+    group('BUG regression — DNI moderno unified Apellidos label', () {
+      test(
+        'splits "Apellidos QUIROZ REMIGIO" into lastName + secondLastName',
+        () {
+          final recognized = _recognizedFromLines([
+            'REPUBLICA DEL PERU',
+            'Apellidos',
+            'QUIROZ REMIGIO',
+            'Prenombres',
+            'JAMES ERMITAÑO',
+            'Sexo M Nacionalidad PER',
+          ]);
+          final result = strategy.extract(recognized);
+          expect(result, isNotNull);
+          expect(result!.lastName, 'QUIROZ');
+          expect(result.secondLastName, 'REMIGIO');
+          expect(result.firstName, contains('JAMES'));
+        },
+      );
+
+      test(
+        'single-token Apellidos leaves secondLastName null (no fabrication)',
+        () {
+          final recognized = _recognizedFromLines([
+            'Apellidos',
+            'QUIROZ',
+            'Prenombres',
+            'JAMES',
+          ]);
+          final result = strategy.extract(recognized);
+          expect(result, isNotNull);
+          expect(result!.lastName, 'QUIROZ');
+          expect(result.secondLastName, isNull);
+        },
+      );
+
+      test(
+        '3+ token Apellidos uses first as paternal, rest joined as maternal',
+        () {
+          // Edge case: some registries store compound maternal surnames
+          // (e.g. "DE LA CRUZ"). Keep paternal as first token, join the rest.
+          final recognized = _recognizedFromLines([
+            'Apellidos',
+            'PEREZ DE LA CRUZ',
+            'Prenombres',
+            'JUAN',
+          ]);
+          final result = strategy.extract(recognized);
+          expect(result, isNotNull);
+          expect(result!.lastName, 'PEREZ');
+          expect(result.secondLastName, 'DE LA CRUZ');
+        },
+      );
+    });
   });
 }
