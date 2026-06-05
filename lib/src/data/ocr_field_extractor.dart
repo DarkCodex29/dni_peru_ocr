@@ -3,6 +3,10 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:mrz_parser/mrz_parser.dart';
 
 import 'ocr_field_normalizer.dart';
+import 'strategies/address_field_strategy.dart';
+import 'strategies/mrz_field_strategy.dart';
+import 'strategies/ocr_field_strategy.dart';
+import 'strategies/text_ocr_field_strategy.dart';
 import '../domain/interfaces/ocr_logger.dart';
 
 /// Container for fields extracted from a single OCR frame.
@@ -196,36 +200,101 @@ class OcrExtractedFields {
   }
 }
 
-/// Multi-strategy extractor that turns [RecognizedText] into [OcrExtractedFields].
+/// Thin coordinator that turns [RecognizedText] into [OcrExtractedFields]
+/// by delegating to three focused strategies.
 ///
 /// Strategy order:
-/// 1. Try MRZ parsing — highest confidence, all fields except address.
-/// 2. Fallback to text-block heuristics — label-anchored, ordinal,
-///    and prefix-anchored extraction with denylist filtering.
+/// 1. [MrzFieldStrategy] — highest confidence, all fields except address.
+/// 2. [TextOcrFieldStrategy] — label-anchored heuristics (skipped when MRZ
+///    succeeded, except for `secondLastName` back-fill on DNI azul).
+/// 3. [AddressFieldStrategy] — always runs (address is never in MRZ).
+///
+/// All strategies are stateless. The default instance uses the standard
+/// three strategies; pass a custom [List<OcrFieldStrategy>] to the
+/// constructor for testing or alternative pipelines.
 class OcrFieldExtractor {
+  /// Creates a coordinator with the default three strategies.
+  const OcrFieldExtractor([List<OcrFieldStrategy>? strategies])
+      : _strategies = strategies;
+
+  final List<OcrFieldStrategy>? _strategies;
+
+  /// Runs the extraction pipeline using this instance's strategy list.
+  OcrExtractedFields extractWith(RecognizedText recognized) {
+    final mrz = _mrzStrategy;
+    final text = _textStrategy;
+    final address = _addressStrategy;
+    return _runPipeline(recognized, mrz, text, address);
+  }
+
+  OcrFieldStrategy get _mrzStrategy =>
+      _strategies?.whereType<MrzFieldStrategy>().firstOrNull ??
+      const MrzFieldStrategy();
+
+  OcrFieldStrategy get _textStrategy =>
+      _strategies?.whereType<TextOcrFieldStrategy>().firstOrNull ??
+      const TextOcrFieldStrategy();
+
+  OcrFieldStrategy get _addressStrategy =>
+      _strategies?.whereType<AddressFieldStrategy>().firstOrNull ??
+      const AddressFieldStrategy();
+
   /// Runs the extraction pipeline on [recognized] and returns the merged
   /// [OcrExtractedFields]. Returns an empty instance when no blocks are
   /// present.
+  ///
+  /// Uses the default three strategies (MRZ → Text → Address).
   static OcrExtractedFields extract(RecognizedText recognized) {
-    final result = OcrExtractedFields();
-    if (recognized.blocks.isEmpty) return result;
+    return _runPipeline(
+      recognized,
+      const MrzFieldStrategy(),
+      const TextOcrFieldStrategy(),
+      const AddressFieldStrategy(),
+    );
+  }
 
-    // Try MRZ first — it is the most reliable source.
-    final mrzResult = _tryParseMrz(recognized);
+  static OcrExtractedFields _runPipeline(
+    RecognizedText recognized,
+    OcrFieldStrategy mrzStrategy,
+    OcrFieldStrategy textStrategy,
+    OcrFieldStrategy addressStrategy,
+  ) {
+    final empty = OcrExtractedFields();
+    if (recognized.blocks.isEmpty) return empty;
+
+    // Step 1: Try MRZ — highest confidence source.
+    final mrzResult = mrzStrategy.extract(recognized);
+
     if (mrzResult != null) {
-      // Address is never in MRZ — run a text-only pass over non-MRZ blocks.
-      _extractAddressOnly(recognized, mrzResult);
-      // DNI azul has MRZ on the front alongside the "Segundo Apellido" label.
-      // MRZ only carries one surname, so extract the second from text if missing.
-      if (mrzResult.secondLastName == null) {
-        _extractSecondLastNameOnly(recognized, mrzResult);
+      // Step 2 (address): always runs — address is never in MRZ.
+      final addressResult = addressStrategy.extract(recognized);
+      if (addressResult?.address != null) {
+        mrzResult.address = addressResult!.address;
       }
+
+      // Step 3 (secondLastName back-fill): DNI azul has the "Segundo Apellido"
+      // label on the same physical side as the MRZ. MRZ only carries one
+      // surname, so extract the second surname from text if MRZ missed it.
+      if (mrzResult.secondLastName == null) {
+        final textResult = textStrategy.extract(recognized);
+        if (textResult?.secondLastName != null) {
+          mrzResult.secondLastName = textResult!.secondLastName;
+        }
+      }
+
       return mrzResult;
     }
 
-    // Fallback: text-OCR extraction.
-    _extractFromTextBlocks(recognized, result);
-    return result;
+    // Step 1 failed: run text-OCR extraction.
+    final textResult = textStrategy.extract(recognized) ?? OcrExtractedFields();
+
+    // Step 2 (address): always runs.
+    final addressResult = addressStrategy.extract(recognized);
+    if (addressResult?.address != null) {
+      textResult.address = addressResult!.address;
+    }
+
+    return textResult;
   }
 
   /// Attempts to locate and parse MRZ lines from [recognized].
