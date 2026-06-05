@@ -54,6 +54,104 @@ class KycTheme {
     white70: Color(0xB3FFFFFF),
   );
 
+  /// Dark variant of the default theme. Tuned for OLED displays — uses
+  /// near-black surfaces and brighter accents to preserve contrast.
+  factory KycTheme.darkDefaults() => const KycTheme(
+    primary: Color(0xFF2EAFD4),
+    primarySolid: Color(0xFF052631),
+    accentOrange: Color(0xFFFF8A1F),
+    success: Color(0xFF22C55E),
+    warningIcon: Color(0xFFFFB020),
+    error: Color(0xFFFF4D6D),
+    errorLight: Color(0xFF2A0E14),
+    errorBorder: Color(0xFFFF4D6D),
+    textPrimary: Color(0xFFEDEDED),
+    textTertiary: Color(0xFFA0AEC0),
+    border: Color(0xFF2A2A2A),
+    backgroundFieldAlt: Color(0xFF101012),
+    backgroundGrey: Color(0xFF1A1A1C),
+    shadowCard: Color(0x33000000),
+    overlayDark: Color(0xCC000000),
+    overlayMedium: Color(0xA6000000),
+    white: Colors.white,
+    white60: Color(0x99FFFFFF),
+    white70: Color(0xB3FFFFFF),
+  );
+
+  /// Derives a [KycTheme] from a Material 3 [ThemeData], mapping Material
+  /// semantic roles onto the KYC color slots. Useful when the host app
+  /// already drives styling from Material 3 instead of bespoke palettes.
+  factory KycTheme.fromMaterialTheme(ThemeData material) {
+    final scheme = material.colorScheme;
+    return KycTheme(
+      primary: scheme.primary,
+      primarySolid: scheme.primaryContainer,
+      accentOrange: scheme.tertiary,
+      success: const Color(0xFF16A34A),
+      warningIcon: const Color(0xFFFF9800),
+      error: scheme.error,
+      errorLight: scheme.errorContainer,
+      errorBorder: scheme.error,
+      textPrimary: scheme.onSurface,
+      textTertiary: scheme.onSurfaceVariant,
+      border: scheme.outline,
+      backgroundFieldAlt: scheme.surfaceContainerHighest,
+      backgroundGrey: scheme.surfaceContainerHigh,
+      shadowCard: const Color(0x0A000000),
+      overlayDark: const Color(0xA6000000),
+      overlayMedium: const Color(0x8A000000),
+      white: Colors.white,
+      white60: const Color(0x99FFFFFF),
+      white70: const Color(0xB3FFFFFF),
+    );
+  }
+
+  /// Returns a copy of this theme with the given fields replaced.
+  /// Useful for one-off color overrides without redefining the whole theme.
+  KycTheme copyWith({
+    Color? primary,
+    Color? primarySolid,
+    Color? accentOrange,
+    Color? success,
+    Color? warningIcon,
+    Color? error,
+    Color? errorLight,
+    Color? errorBorder,
+    Color? textPrimary,
+    Color? textTertiary,
+    Color? border,
+    Color? backgroundFieldAlt,
+    Color? backgroundGrey,
+    Color? shadowCard,
+    Color? overlayDark,
+    Color? overlayMedium,
+    Color? white,
+    Color? white60,
+    Color? white70,
+  }) {
+    return KycTheme(
+      primary: primary ?? this.primary,
+      primarySolid: primarySolid ?? this.primarySolid,
+      accentOrange: accentOrange ?? this.accentOrange,
+      success: success ?? this.success,
+      warningIcon: warningIcon ?? this.warningIcon,
+      error: error ?? this.error,
+      errorLight: errorLight ?? this.errorLight,
+      errorBorder: errorBorder ?? this.errorBorder,
+      textPrimary: textPrimary ?? this.textPrimary,
+      textTertiary: textTertiary ?? this.textTertiary,
+      border: border ?? this.border,
+      backgroundFieldAlt: backgroundFieldAlt ?? this.backgroundFieldAlt,
+      backgroundGrey: backgroundGrey ?? this.backgroundGrey,
+      shadowCard: shadowCard ?? this.shadowCard,
+      overlayDark: overlayDark ?? this.overlayDark,
+      overlayMedium: overlayMedium ?? this.overlayMedium,
+      white: white ?? this.white,
+      white60: white60 ?? this.white60,
+      white70: white70 ?? this.white70,
+    );
+  }
+
   // Brand
   final Color primary;
   final Color primarySolid;

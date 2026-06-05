@@ -95,10 +95,12 @@ class ImageQualityGate {
     if (decoded == null) return QualityCheckResult.error;
 
     final result = await _analyzer.analyze(bytes);
-    debugPrint(
-      '── LivenessGate: isLive=${result.isLive} '
-      'laplacianScore=${result.laplacianScore.toStringAsFixed(1)}',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        '── LivenessGate: isLive=${result.isLive} '
+        'laplacianScore=${result.laplacianScore.toStringAsFixed(1)}',
+      );
+    }
     if (result.laplacianScore < blurThreshold) return QualityCheckResult.blurry;
     if (!result.isLive) return QualityCheckResult.spoofed;
     return QualityCheckResult.pass;

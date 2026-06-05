@@ -245,7 +245,7 @@ class OcrFieldExtractor {
               '<',
             );
             candidateLines.add(padded);
-            debugPrint('  MRZ candidata: "$padded"');
+            if (kDebugMode) debugPrint('  MRZ candidata: "$padded"');
           }
         }
       }

@@ -43,6 +43,54 @@ void main() {
     });
   });
 
+  group('KycTheme.darkDefaults — sane dark values', () {
+    final theme = KycTheme.darkDefaults();
+
+    test('primary differs from light defaults', () {
+      expect(theme.primary, isNot(equals(KycTheme.defaults().primary)));
+    });
+
+    test('textPrimary is light (high contrast on dark background)', () {
+      expect(theme.textPrimary, equals(const Color(0xFFEDEDED)));
+    });
+
+    test('overlayDark is darker than light variant', () {
+      expect(theme.overlayDark, equals(const Color(0xCC000000)));
+    });
+  });
+
+  group('KycTheme.fromMaterialTheme — maps Material 3 ColorScheme', () {
+    testWidgets('reads primary, error, surface from ColorScheme', (
+      tester,
+    ) async {
+      final material = ThemeData(
+        colorSchemeSeed: const Color(0xFF00838F),
+        useMaterial3: true,
+      );
+      final theme = KycTheme.fromMaterialTheme(material);
+
+      expect(theme.primary, equals(material.colorScheme.primary));
+      expect(theme.error, equals(material.colorScheme.error));
+      expect(theme.textPrimary, equals(material.colorScheme.onSurface));
+    });
+  });
+
+  group('KycTheme.copyWith — partial override', () {
+    test('only changes the specified fields', () {
+      final base = KycTheme.defaults();
+      final overridden = base.copyWith(primary: const Color(0xFF000000));
+
+      expect(overridden.primary, equals(const Color(0xFF000000)));
+      expect(overridden.success, equals(base.success));
+      expect(overridden.white, equals(base.white));
+    });
+
+    test('no overrides returns equivalent theme', () {
+      final base = KycTheme.defaults();
+      expect(base.copyWith(), equals(base));
+    });
+  });
+
   group('KycTheme — value equality and hashCode', () {
     test('two defaults() are equal', () {
       expect(KycTheme.defaults(), equals(KycTheme.defaults()));

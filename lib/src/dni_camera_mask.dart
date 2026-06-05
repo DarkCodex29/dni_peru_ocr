@@ -513,13 +513,15 @@ class _DniCameraMaskState extends State<DniCameraMask>
         }
       }
 
-      final src = _accumulatedFields.hasMrzData ? 'MRZ' : 'TEXT';
-      debugPrint(
-        '─── OCR [$src] [${recognized.blocks.length}/${raw.blocks.length} bloques] '
-        'cap=$canCapture match=$dataMatch '
-        '(${_accumulatedFields.foundCount}/${_accumulatedFields.totalCount}) ───',
-      );
-      debugPrint(_accumulatedFields.toString());
+      if (kDebugMode) {
+        final src = _accumulatedFields.hasMrzData ? 'MRZ' : 'TEXT';
+        debugPrint(
+          '─── OCR [$src] [${recognized.blocks.length}/${raw.blocks.length} bloques] '
+          'cap=$canCapture match=$dataMatch '
+          '(${_accumulatedFields.foundCount}/${_accumulatedFields.totalCount}) ───',
+        );
+        debugPrint(_accumulatedFields.toString());
+      }
     }
 
     // Gestionar _perfectSince y el controller de countdown ANTES del debounce
@@ -738,15 +740,25 @@ class _DniCameraMaskState extends State<DniCameraMask>
                 right: 52,
                 child: widget.topContent!,
               ),
-            if (true)
-              Positioned(
-                top: MediaQuery.of(context).padding.top + 16,
-                right: 16,
+            // Flash toggle: bottom-right, aligned with the manual capture
+            // panel so it sits next to the capture button when manual
+            // fallback appears. Stays accessible during auto-capture too.
+            Positioned(
+              bottom: _manualModeActive
+                  ? MediaQuery.of(context).padding.bottom + 56
+                  : MediaQuery.of(context).padding.bottom + 24,
+              right: 24,
+              child: AnimatedSwitcher(
+                duration: const Duration(
+                  milliseconds: CameraOverlayTuning.torchSwitcherFadeMs,
+                ),
                 child: _FlashToggle(
+                  key: ValueKey<bool>(_torchOn),
                   isOn: _torchOn,
                   onToggle: _toggleTorch,
                 ),
               ),
+            ),
             if (widget.isLoading || _capturing)
               ColoredBox(
                 color: _theme.overlayMedium,
@@ -1401,7 +1413,11 @@ class StabilityState {
 }
 
 class _FlashToggle extends StatelessWidget {
-  const _FlashToggle({required this.isOn, required this.onToggle});
+  const _FlashToggle({
+    required this.isOn,
+    required this.onToggle,
+    super.key,
+  });
   final bool isOn;
   final VoidCallback onToggle;
 
