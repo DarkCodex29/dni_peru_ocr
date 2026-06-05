@@ -24,6 +24,7 @@ export 'src/infrastructure/tilt_calculator.dart';
 export 'src/presentation/camera_overlay_logic.dart';
 export 'src/presentation/document_validator.dart';
 export 'src/presentation/image_quality_gate.dart';
+export 'src/presentation/controllers/dni_camera_controller.dart';
 export 'src/presentation/orchestrators/dni_capture_orchestrator.dart';
 export 'src/presentation/orchestrators/dni_capture_state.dart';
 export 'src/presentation/theme/kyc_theme.dart';
