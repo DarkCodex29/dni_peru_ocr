@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.6.0 (breaking changes)
+
+### Breaking changes
+
+#### `OcrExtractedFields.logger` removed (global static → constructor injection)
+
+**Before:**
+```dart
+OcrExtractedFields.logger = mySentryLogger;
+```
+
+**After:**
+```dart
+final extractor = OcrFieldExtractor(logger: mySentryLogger);
+```
+
+- `OcrExtractedFields.logger` static mutable field is removed.
+- `OcrFieldExtractor` accepts `logger: OcrLogger` in its constructor (defaults to `NoOpOcrLogger`).
+- `OcrExtractedFields.merge()` accepts an optional `logger:` parameter.
+- `DniCameraController` accepts `logger: OcrLogger` in its constructor.
+- Telemetry breadcrumbs are routed through the controller via `controller.emitBreadcrumb(...)`.
+
+#### `DocumentValidationResult.borderColor` removed (domain → presentation)
+
+**Before:**
+```dart
+final color = result.borderColor;  // Color from domain result
+```
+
+**After:**
+```dart
+import 'package:dni_peru_ocr/dni_peru_ocr.dart';
+final color = ValidationGateColors.colorFor(result.failingGate, theme);
+```
+
+- `DocumentValidationResult.borderColor` (`Color`) is removed.
+- `failingGate` is now typed `ValidationGate?` (enum) instead of `String?`.
+- New `ValidationGate` enum with values: `minBlocks`, `centering`, `fillHigh`, `fillLow`, `lineCount`, `tilt`.
+- Each gate has a stable Sentry code via `gate.sentryCode`.
+- New `ValidationGateColors.colorFor(ValidationGate?, KycTheme)` in the presentation layer.
+- `DocumentValidationResult.evaluate(theme:)` — the `theme` parameter is now `@Deprecated` and silently ignored. Remove it at your convenience. It will be removed in v0.7.0.
+
+#### `OcrConsensusBuilder` → `OcrConsensusAccumulator`
+
+**Before:**
+```dart
+final builder = OcrConsensusBuilder();
+```
+
+**After:**
+```dart
+final accumulator = OcrConsensusAccumulator();
+// OcrConsensusBuilder is a deprecated typedef alias — still compiles,
+// but remove it before v0.7.0.
+```
+
+- `OcrConsensusBuilder` is `@Deprecated` and will be removed in v0.7.0.
+- `OcrConsensusAccumulator` is the canonical class name.
+- `DniCameraController.onSideChanged()` now owns the accumulator lifecycle.
+  Pass `isBackSide: true` and optionally `frontSideFields:` to seed it.
+- New `DniCameraController.recordOcrFrame(OcrExtractedFields)` — call per frame on back side.
+- New `DniCameraController.snapshotConsensus()` — returns current `OcrConsensusResult?`.
+- `DniCameraMask` no longer holds the accumulator directly.
+
+### New APIs
+
+- `ValidationGate` enum — compile-time exhaustive gate identification.
+- `ValidationGateColors` — presentation helper mapping `ValidationGate?` to `Color`.
+- `OcrConsensusAccumulator` — renamed accumulator with same behavior.
+- `DniCameraController.emitBreadcrumb(category, message, {data})` — routes breadcrumbs through the injected logger.
+- `DniCameraController.recordOcrFrame(fields)` → `bool` (consensus reached).
+- `DniCameraController.snapshotConsensus()` → `OcrConsensusResult?`.
+
+### Internal (non-breaking)
+
+- Clean Architecture chapters 1–3 (file reorganization, strategy decomposition, controller/orchestrator extraction) already landed in v0.6.0 pre-releases.
+
 ## 0.5.0
 
 - `KycTheme.darkDefaults()` — OLED-tuned dark variant.

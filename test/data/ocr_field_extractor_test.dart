@@ -117,16 +117,9 @@ void main() {
   // ─────────────────────────────────────────────────────────────────────────
   group('merge — logger breadcrumb on OCR/MRZ mismatch', () {
     late _CapturingOcrLogger capturingLogger;
-    late OcrLogger originalLogger;
 
     setUp(() {
       capturingLogger = _CapturingOcrLogger();
-      originalLogger = OcrExtractedFields.logger;
-      OcrExtractedFields.logger = capturingLogger;
-    });
-
-    tearDown(() {
-      OcrExtractedFields.logger = originalLogger;
     });
 
     test(
@@ -135,7 +128,7 @@ void main() {
         final accumulator = textFields(documentNumber: '71542835');
         final incoming = mrzFields(documentNumber: '71542895');
 
-        accumulator.merge(incoming);
+        accumulator.merge(incoming, logger: capturingLogger);
 
         expect(capturingLogger.events, hasLength(1));
         final ev = capturingLogger.events.first;
@@ -155,7 +148,7 @@ void main() {
         final accumulator = textFields(documentNumber: '71542895');
         final incoming = mrzFields(documentNumber: '71542895');
 
-        accumulator.merge(incoming);
+        accumulator.merge(incoming, logger: capturingLogger);
 
         expect(capturingLogger.events, isEmpty);
       },
@@ -167,7 +160,7 @@ void main() {
         final accumulator = OcrExtractedFields(); // no documentNumber
         final incoming = mrzFields(documentNumber: '71542895');
 
-        accumulator.merge(incoming);
+        accumulator.merge(incoming, logger: capturingLogger);
 
         expect(capturingLogger.events, isEmpty);
       },

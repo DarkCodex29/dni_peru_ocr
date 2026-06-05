@@ -36,7 +36,7 @@ enum OcrConsensusSource {
   manualFallback,
 }
 
-/// Complete consensus snapshot emitted by [OcrConsensusBuilder].
+/// Complete consensus snapshot emitted by [OcrConsensusAccumulator].
 class OcrConsensusResult {
   const OcrConsensusResult({
     required this.success,
@@ -81,14 +81,14 @@ const _kDateWindowSize = 5;
 /// Consecutive MRZ parses required for fast-lock.
 const _kMrzConsecutiveRequired = 2;
 
-/// Builds OCR consensus by accumulating per-field votes across frames.
+/// Accumulates OCR consensus by collecting per-field votes across frames.
 ///
 /// Call [recordVote] for each processed frame with a map of field→value.
 /// Call [recordMrz] when `mrz_parser` returns a checksum-valid result.
 /// Call [checkAllThresholds] to see if consensus is reached.
 /// Call [snapshot] to emit the current [OcrConsensusResult].
 /// Call [dispose] when done (currently a no-op, included for future timers).
-class OcrConsensusBuilder {
+class OcrConsensusAccumulator {
   // ── Vote maps: field → (normalizedValue → count) ─────────────────────────
   final Map<String, Map<String, int>> _votes = {
     'documentNumber': {},
@@ -525,3 +525,16 @@ class _MrzFieldsBuffer {
   final String? dateOfBirth;
   final String? expirationDate;
 }
+
+/// Deprecated alias for [OcrConsensusAccumulator].
+///
+/// The class was renamed from `OcrConsensusBuilder` to `OcrConsensusAccumulator`
+/// in v0.6.0 to reflect its actual role (accumulating votes, not building a
+/// new object via a builder pattern). Replace usages with [OcrConsensusAccumulator].
+///
+/// TODO(0.7.0): Remove this alias.
+@Deprecated(
+  'Use OcrConsensusAccumulator instead. '
+  'OcrConsensusBuilder will be removed in v0.7.0.',
+)
+typedef OcrConsensusBuilder = OcrConsensusAccumulator;

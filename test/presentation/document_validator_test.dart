@@ -5,6 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
 
+// Helper: maps a result's failingGate to a Color via ValidationGateColors,
+// mirroring what the presentation layer does after PR4.
+Color _resultColor(DocumentValidationResult result) =>
+    ValidationGateColors.colorFor(result.failingGate, kTheme);
+
 /// Creates a [TextBlock] with sensible defaults for testing.
 /// Only override the fields your test cares about.
 TextBlock makeBlock({
@@ -63,7 +68,7 @@ void main() {
       );
 
       expect(result.isCaptureable, isFalse);
-      expect(result.borderColor, kTheme.white);
+      expect(_resultColor(result), kTheme.white);
       expect(result.message, 'Posiciona tu documento en el recuadro');
     });
 
@@ -75,7 +80,7 @@ void main() {
       );
 
       expect(result.isCaptureable, isFalse);
-      expect(result.borderColor, kTheme.white);
+      expect(_resultColor(result), kTheme.white);
       expect(result.message, 'Posiciona tu documento en el recuadro');
     });
 
@@ -145,7 +150,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isFalse);
-        expect(result.borderColor, kTheme.accentOrange);
+        expect(_resultColor(result), kTheme.accentOrange);
         expect(result.message, 'Centra tu documento en el recuadro');
       },
     );
@@ -159,7 +164,7 @@ void main() {
       );
 
       expect(result.isCaptureable, isFalse);
-      expect(result.borderColor, kTheme.accentOrange);
+      expect(_resultColor(result), kTheme.accentOrange);
       expect(result.message, 'Centra tu documento en el recuadro');
     });
 
@@ -172,7 +177,7 @@ void main() {
       );
 
       expect(result.isCaptureable, isFalse);
-      expect(result.borderColor, kTheme.accentOrange);
+      expect(_resultColor(result), kTheme.accentOrange);
       expect(result.message, 'Centra tu documento en el recuadro');
     });
 
@@ -186,7 +191,7 @@ void main() {
       );
 
       expect(result.isCaptureable, isFalse);
-      expect(result.borderColor, kTheme.accentOrange);
+      expect(_resultColor(result), kTheme.accentOrange);
       expect(result.message, 'Centra tu documento en el recuadro');
     });
 
@@ -241,7 +246,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isFalse);
-        expect(result.borderColor, kTheme.accentOrange);
+        expect(_resultColor(result), kTheme.accentOrange);
         expect(result.message, 'Acércate un poco más');
       },
     );
@@ -266,7 +271,7 @@ void main() {
       );
 
       expect(result.isCaptureable, isFalse);
-      expect(result.borderColor, kTheme.accentOrange);
+      expect(_resultColor(result), kTheme.accentOrange);
       expect(result.message, 'Acércate un poco más');
     });
   });
@@ -283,7 +288,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isTrue);
-        expect(result.borderColor, kTheme.success);
+        expect(_resultColor(result), kTheme.success);
         expect(result.message, '¡Perfecto! Mantén el documento quieto');
       },
     );
@@ -318,7 +323,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isFalse);
-        expect(result.borderColor, kTheme.white);
+        expect(_resultColor(result), kTheme.white);
         expect(result.message, 'Posiciona tu documento en el recuadro');
       },
     );
@@ -335,7 +340,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isFalse);
-        expect(result.borderColor, kTheme.accentOrange);
+        expect(_resultColor(result), kTheme.accentOrange);
         expect(result.message, 'Centra tu documento en el recuadro');
       },
     );
@@ -364,7 +369,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isTrue);
-        expect(result.borderColor, kTheme.success);
+        expect(_resultColor(result), kTheme.success);
         expect(result.message, '¡DNI verificado! Mantén quieto');
       },
     );
@@ -445,7 +450,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isFalse);
-        expect(result.borderColor, kTheme.accentOrange);
+        expect(_resultColor(result), kTheme.accentOrange);
         expect(result.message, contains('Aléjate'));
       },
     );
@@ -462,7 +467,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isFalse);
-        expect(result.borderColor, kTheme.accentOrange);
+        expect(_resultColor(result), kTheme.accentOrange);
         expect(result.message, contains('Aléjate'));
       },
     );
@@ -558,7 +563,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isFalse);
-        expect(result.borderColor, kTheme.accentOrange);
+        expect(_resultColor(result), kTheme.accentOrange);
         expect(result.message, 'Endereza el documento');
       },
     );
@@ -577,7 +582,7 @@ void main() {
         );
 
         expect(result.isCaptureable, isFalse);
-        expect(result.borderColor, kTheme.accentOrange);
+        expect(_resultColor(result), kTheme.accentOrange);
         expect(result.message, 'Endereza el documento');
       },
     );

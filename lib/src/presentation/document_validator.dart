@@ -1,9 +1,10 @@
 import 'dart:math';
+import 'dart:ui' show Offset, Rect, Size;
 
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
-import 'theme/kyc_theme.dart';
+import '../domain/entities/validation_gate.dart';
 import '../infrastructure/tilt_calculator.dart';
 
 /// Validates document framing via geometry + optional OCR matching.
@@ -13,7 +14,6 @@ import '../infrastructure/tilt_calculator.dart';
 class DocumentValidationResult {
   const DocumentValidationResult._({
     required this.message,
-    required this.borderColor,
     required this.isCaptureable,
     this.failingGate,
   });
@@ -22,32 +22,22 @@ class DocumentValidationResult {
   ///
   /// Use only in tests to build a minimal result when the full [evaluate]
   /// pipeline (ML Kit + Flutter `Size`) is not available. Only [isCaptureable]
-  /// is meaningful on instances created this way; [message] and [borderColor]
-  /// are stub values.
+  /// is meaningful on instances created this way; [message] is a stub value.
   @visibleForTesting
   DocumentValidationResult.forTest({required bool isCaptureable})
       : this._(
           message: '',
-          borderColor: const Color(0xFFFFFFFF),
           isCaptureable: isCaptureable,
         );
 
   final String message;
-  final Color borderColor;
   final bool isCaptureable;
 
-  /// Diagnostic-only — name of the gate that rejected the frame, or `null`
-  /// when [isCaptureable] is true. Used by the G.1 telemetry overlay and
-  /// Sentry breadcrumbs to pinpoint which gate is failing on JC's device.
+  /// The gate that rejected this frame, or `null` when [isCaptureable] is true.
   ///
-  /// Stable string codes (do NOT translate — Sentry filters on these):
-  ///   - `min_blocks`        : fewer recognized blocks than required
-  ///   - `centering`         : group bounding box not inside the padded hole
-  ///   - `fill_high`         : `fillRatio > _maxFillRatio` (too close)
-  ///   - `fill_low`          : `fillRatio < requiredFill` (too far)
-  ///   - `line_count`        : `< 5` blocks inside the hole (REQ-TILT-1)
-  ///   - `tilt`              : `|tilt| > _maxTiltDegrees`
-  final String? failingGate;
+  /// Use [failingGate.sentryCode] for stable Sentry breadcrumb codes.
+  /// All possible gates are enumerated in [ValidationGate].
+  final ValidationGate? failingGate;
 
   static const double _holeNormW = 0.85;
   static const double _holeNormH = 0.65;
@@ -76,10 +66,24 @@ class DocumentValidationResult {
   @visibleForTesting
   static double Function(RecognizedText)? tiltCalculator;
 
+  /// Evaluates document framing from [recognizedText] against [imageSize].
+  ///
+  /// The [theme] parameter is deprecated and will be removed in v0.7.0.
+  /// It was previously used to compute `borderColor` (now removed).
+  /// Existing callers that pass `theme:` will continue to compile — the value
+  /// is silently ignored. Remove the named argument at your convenience.
+  ///
+  /// TODO(0.7.0): Remove the `theme` parameter.
   static DocumentValidationResult evaluate({
     required RecognizedText recognizedText,
     required Size imageSize,
-    required KycTheme theme,
+    @Deprecated(
+      'theme is no longer used by evaluate(). '
+      'Use ValidationGateColors.colorFor(result.failingGate, theme) '
+      'in your presentation layer instead. '
+      'Will be removed in v0.7.0.',
+    )
+    dynamic theme,
     bool ocrMatchesUser = false,
     bool isBackSide = false,
   }) {
@@ -87,11 +91,10 @@ class DocumentValidationResult {
     final requiredBlocks = isBackSide ? _minBlocksBack : _minBlocks;
 
     if (blocks.length < requiredBlocks) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Posiciona tu documento en el recuadro',
-        borderColor: theme.white,
         isCaptureable: false,
-        failingGate: 'min_blocks',
+        failingGate: ValidationGate.minBlocks,
       );
     }
 
@@ -134,11 +137,10 @@ class DocumentValidationResult {
         gbb.bottom <= paddedHole.bottom;
 
     if (!isContained && !ocrMatchesUser && !isBackSide) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Centra tu documento en el recuadro',
-        borderColor: theme.accentOrange,
         isCaptureable: false,
-        failingGate: 'centering',
+        failingGate: ValidationGate.centering,
       );
     }
 
@@ -146,11 +148,10 @@ class DocumentValidationResult {
 
     // Upper bound applies to BOTH sides — crop kills OCR + MRZ alike.
     if (fillRatio > _maxFillRatio) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Aléjate un poco — documento muy cerca',
-        borderColor: theme.accentOrange,
         isCaptureable: false,
-        failingGate: 'fill_high',
+        failingGate: ValidationGate.fillHigh,
       );
     }
 
@@ -165,9 +166,8 @@ class DocumentValidationResult {
           message: ocrMatchesUser
               ? 'Acerca un poco más el documento'
               : 'Acércate un poco más',
-          borderColor: theme.accentOrange,
           isCaptureable: false,
-          failingGate: 'fill_low',
+          failingGate: ValidationGate.fillLow,
         );
       }
     }
@@ -176,11 +176,10 @@ class DocumentValidationResult {
     // means the frame doesn't have enough text signal to compute a reliable
     // tilt — skip tilt entirely and ask user to realign the document.
     if (blocks.length < 5) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Alinea el documento dentro del recuadro',
-        borderColor: theme.white,
         isCaptureable: false,
-        failingGate: 'line_count',
+        failingGate: ValidationGate.lineCount,
       );
     }
 
@@ -188,11 +187,10 @@ class DocumentValidationResult {
     // A skewed capture makes backend OCR fail, same as tilted MRZ.
     final tilt = (tiltCalculator ?? computeMedianTiltDegrees)(recognizedText);
     if (tilt.abs() > _maxTiltDegrees) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Endereza el documento',
-        borderColor: theme.accentOrange,
         isCaptureable: false,
-        failingGate: 'tilt',
+        failingGate: ValidationGate.tilt,
       );
     }
 
@@ -200,7 +198,6 @@ class DocumentValidationResult {
       message: ocrMatchesUser
           ? '¡DNI verificado! Mantén quieto'
           : '¡Perfecto! Mantén el documento quieto',
-      borderColor: theme.success,
       isCaptureable: true,
     );
   }
