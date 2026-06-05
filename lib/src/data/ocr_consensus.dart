@@ -217,13 +217,18 @@ class OcrConsensusAccumulator {
   }) {
     if (_mrzLocked) return;
     _consecutiveMrzCount++;
+    // Merge with the previous buffer instead of overwriting: a later frame
+    // with the MRZ checksum still valid but a garbled name line must NOT
+    // erase the fields captured by an earlier clean frame.
+    // Fix for BUG 3B (obs #4673).
+    final prev = _mrzFieldsBuffer;
     _mrzFieldsBuffer = _MrzFieldsBuffer(
-      documentNumber: documentNumber,
-      firstName: firstName,
-      lastName: lastName,
-      secondLastName: secondLastName,
-      dateOfBirth: dateOfBirth,
-      expirationDate: expirationDate,
+      documentNumber: documentNumber ?? prev?.documentNumber,
+      firstName: firstName ?? prev?.firstName,
+      lastName: lastName ?? prev?.lastName,
+      secondLastName: secondLastName ?? prev?.secondLastName,
+      dateOfBirth: dateOfBirth ?? prev?.dateOfBirth,
+      expirationDate: expirationDate ?? prev?.expirationDate,
     );
     if (_consecutiveMrzCount >= _kMrzConsecutiveRequired) {
       _mrzLocked = true;
@@ -456,7 +461,20 @@ class OcrConsensusAccumulator {
 
   OcrConsensusResult _buildMrzResultFromFields(_MrzFieldsBuffer buf) {
     final addressResult = _voteResult('address', _kAddressThreshold);
+    // Vote-map fallbacks for the name fields. If the MRZ buffer is null on
+    // any name (because the back-side MRZ block was partial), fall back to
+    // text-OCR votes accumulated from the front-side seed or earlier frames.
+    // Fix for BUG 3A (obs #4673): firstName/lastName were previously asymmetric
+    // vs secondLastName — only the latter fell back to votes.
+    final firstNameVote = _voteResult('firstName', _kNameThreshold);
+    final lastNameVote = _voteResult('lastName', _kNameThreshold);
     final slnVote = _voteResult('secondLastName', _kNameThreshold);
+    final documentVote = _voteResult(
+      'documentNumber',
+      _kDocumentNumberThreshold,
+    );
+    final dobVote = _dateResult('dateOfBirth');
+    final expVote = _dateResult('expirationDate');
 
     // Prefer the tilde-bearing variant that text-OCR may have recorded
     // for the same ASCII root.
@@ -474,19 +492,19 @@ class OcrConsensusAccumulator {
       success: true,
       source: OcrConsensusSource.mrzChecksum,
       documentNumber: OcrFieldResult(
-        value: buf.documentNumber,
-        confidence: 1.0,
-        locked: buf.documentNumber != null,
+        value: buf.documentNumber ?? documentVote.value,
+        confidence: buf.documentNumber != null ? 1.0 : documentVote.confidence,
+        locked: buf.documentNumber != null || documentVote.locked,
       ),
       firstName: OcrFieldResult(
-        value: firstNameDisplay,
-        confidence: 1.0,
-        locked: firstNameDisplay != null,
+        value: firstNameDisplay ?? firstNameVote.value,
+        confidence: firstNameDisplay != null ? 1.0 : firstNameVote.confidence,
+        locked: firstNameDisplay != null || firstNameVote.locked,
       ),
       lastName: OcrFieldResult(
-        value: lastNameDisplay,
-        confidence: 1.0,
-        locked: lastNameDisplay != null,
+        value: lastNameDisplay ?? lastNameVote.value,
+        confidence: lastNameDisplay != null ? 1.0 : lastNameVote.confidence,
+        locked: lastNameDisplay != null || lastNameVote.locked,
       ),
       secondLastName: OcrFieldResult(
         value: secondLastNameDisplay ?? slnVote.value,
@@ -494,14 +512,14 @@ class OcrConsensusAccumulator {
         locked: secondLastNameDisplay != null || slnVote.locked,
       ),
       dateOfBirth: OcrFieldResult(
-        value: buf.dateOfBirth,
-        confidence: 1.0,
-        locked: buf.dateOfBirth != null,
+        value: buf.dateOfBirth ?? dobVote.value,
+        confidence: buf.dateOfBirth != null ? 1.0 : dobVote.confidence,
+        locked: buf.dateOfBirth != null || dobVote.locked,
       ),
       expirationDate: OcrFieldResult(
-        value: buf.expirationDate,
-        confidence: 1.0,
-        locked: buf.expirationDate != null,
+        value: buf.expirationDate ?? expVote.value,
+        confidence: buf.expirationDate != null ? 1.0 : expVote.confidence,
+        locked: buf.expirationDate != null || expVote.locked,
       ),
       address: addressResult,
     );

@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.6.1 (bugfix)
+
+Hotfix for two pre-existing bugs in `OcrConsensusAccumulator` reported by JC
+against v0.6.0. **No public API changes** — patch release, consumers bump SHA only.
+
+### Bug 3A — `firstName` / `lastName` now fall back to the vote map
+
+`_buildMrzResultFromFields` was asymmetric: `secondLastName` already fell back to
+the text-OCR vote map when the MRZ buffer was null, but `firstName` and `lastName`
+did not. A back-side MRZ frame with the names line garbled would erase the
+front-side seed, leading to `null` names in the final snapshot. All MRZ-sourced
+fields (`documentNumber`, `firstName`, `lastName`, `secondLastName`, `dateOfBirth`,
+`expirationDate`) now consistently fall back to the vote map.
+
+### Bug 3B — `lockFromMrzFields` now merges with the previous buffer
+
+Each call to `lockFromMrzFields` used to **replace** the entire buffer. If frame 1
+captured all fields cleanly and frame 2 had any field come `null` (e.g. ML Kit
+dropped a character on the names line), the buffer would be overwritten with the
+partial frame and the lock would fire on incomplete data. The buffer now merges
+field-by-field — a new `null` does not erase a previously captured value.
+
+### Tests
+
+Three new regression tests in `test/data/ocr_consensus_test.dart`:
+- BUG 3A: snapshot falls back to vote map for `firstName` / `lastName` when buffer is null.
+- BUG 3B: `lockFromMrzFields` merges with previous buffer instead of overwriting.
+- End-to-end: front seed + 2 back-side frames with partial MRZ → snapshot is complete.
+
+488/488 tests pass. `flutter analyze` clean.
+
 ## 0.6.0 (breaking changes)
 
 ### Breaking changes
