@@ -252,6 +252,20 @@ class OcrFieldExtractor {
     );
   }
 
+  /// Deprecated alias for [extract]. Will be removed in 0.7.0.
+  ///
+  /// Kept for InClub migration softening — the `static` name was the
+  /// original API before the Strategy decomposition. Replace call sites
+  /// with `OcrFieldExtractor.extract(recognized)` at your convenience.
+  ///
+  /// TODO(0.7.0): Remove this alias.
+  @Deprecated(
+    'Use OcrFieldExtractor.extract() instead. '
+    'extractStatic will be removed in v0.7.0.',
+  )
+  static OcrExtractedFields extractStatic(RecognizedText recognized) =>
+      extract(recognized);
+
   static OcrExtractedFields _runPipeline(
     RecognizedText recognized,
     OcrFieldStrategy mrzStrategy,
