@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.6.3 (bugfix)
+
+Hotfix for "two-sided scan loses OCR" symptom reported against v0.6.x.
+
+### Root cause
+
+The package widget is destroyed and recreated when the host navigates from
+the front step to the back step (Flutter's `switch` over enum steps does
+NOT reuse state, even when the widget type is the same). The previous
+`_accumulatedFields` is destroyed and the new back-side widget calls
+`onSideChanged(isBackSide: true)` **without a seed** — so the back-side
+accumulator starts blank.
+
+When the back-side MRZ frames came partial, v0.6.1's `_buildMrzResultFromFields`
+fallback to the vote map had nothing to fall back to (vote map also empty)
+and the snapshot returned null names. The consumer then fell back to local
+profile data, violating "OCR ALWAYS WINS".
+
+### Fix — two new opt-in `DniCameraMask` parameters
+
+**`onFrontSideOcrUpdated`** — callback emitted during front-side scanning
+every time the internal `_accumulatedFields` learns a new field. Hosts
+persist these values across the step transition (Bloc/Cubit/state holder).
+
+**`frontSideFields`** — back-side widget receives the persisted fields and
+the package seeds the back-side accumulator via
+`onSideChanged(isBackSide: true, frontSideFields: ...)`.
+
+Both parameters are **opt-in**. Existing consumers keep their behavior;
+hosts that want correct two-sided scanning wire both.
+
+### Consumer integration sketch
+
+```dart
+// Front step
+DniCameraMask(
+  isBackSide: false,
+  onFrontSideOcrUpdated: (fields) {
+    context.read<KycCubit>().rememberFrontSideOcr(fields);
+  },
+  onValidCapture: (file, _) => cubit.captureFront(file.path),
+  controller: cameraController,
+)
+
+// Back step
+DniCameraMask(
+  isBackSide: true,
+  frontSideFields: state.frontSideOcr,  // ← from your state holder
+  onValidCapture: (file, consensus) =>
+      cubit.captureBackWithConsensus(file.path, consensus: consensus!),
+  controller: cameraController,
+)
+```
+
+### Tests
+
+498/498 pass (unchanged — the new params are inert in the existing test
+scenarios). `flutter analyze` clean.
+
 ## 0.6.2 (bugfix)
 
 Second hotfix on top of v0.6.1 — addresses BUG 1A (Spanish address anchor) and
