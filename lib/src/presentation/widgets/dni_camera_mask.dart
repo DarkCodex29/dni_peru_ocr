@@ -611,14 +611,14 @@ class _DniCameraMaskState extends State<DniCameraMask>
       stableFrames: _stableFrames,
       userDataMatch: dataMatch,
       expirationDate: expirationDate,
-      failingGate: result.failingGate,
+      failingGate: result.failingGate?.sentryCode,
       tiltDegrees: _telemetryTilt,
       rawBlockCount: _telemetryRawBlocks,
       filteredBlockCount: _telemetryLines,
     );
 
     _emitGateBreadcrumb(
-      failingGate: result.failingGate,
+      failingGate: result.failingGate?.sentryCode,
       stableFrames: _stableFrames,
     );
   }
