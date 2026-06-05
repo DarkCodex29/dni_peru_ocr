@@ -58,15 +58,6 @@ RecognizedText makeRecognizedText({
 }
 
 void main() {
-  // Global setUp: reset the test-only [DocumentValidationResult.tiltCalculator]
-  // static seam before every test. Without this, a test that crashes between
-  // setting the seam and resetting it would contaminate every subsequent
-  // test in the same file (and across files in a single `flutter test` run).
-  // Tracked in judgment-day obs #4688 (anti-pattern W5).
-  setUp(() {
-    DocumentValidationResult.tiltCalculator = null;
-  });
-
   // Group 1 — Presence validation (Step 1) — _minBlocks = 2
   group('Presence validation (Step 1)', () {
     test('0 blocks → not capturable, white border, "Posiciona" message', () {
@@ -474,14 +465,9 @@ void main() {
 
   // Group 9 — Line-count guard (REQ-TILT-1): tilt gate skipped when < 5 OCR lines
   group('Line-count guard — tilt skipped when < 5 OCR lines (REQ-TILT-1)', () {
-    setUp(() {
-      // Inject a tilt that would trigger "Endereza" — guard must prevent it for < 5 blocks.
-      DocumentValidationResult.tiltCalculator = (_) => 20.0;
-    });
-
-    tearDown(() {
-      DocumentValidationResult.tiltCalculator = null;
-    });
+    // A tilt of 20° would trigger "Endereza" — the line-count guard must
+    // prevent the tilt gate from running when there are fewer than 5 blocks.
+    double tilt20(RecognizedText _) => 20.0;
 
     test(
       '0 OCR lines → isCaptureable=false, tilt NOT evaluated (no Endereza message)',
@@ -489,6 +475,7 @@ void main() {
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 0),
           imageSize: kTestImageSize,
+          tiltCalculator: tilt20,
         );
 
         expect(result.isCaptureable, isFalse);
@@ -502,6 +489,7 @@ void main() {
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 4),
           imageSize: kTestImageSize,
+          tiltCalculator: tilt20,
         );
 
         expect(result.isCaptureable, isFalse);
@@ -515,6 +503,7 @@ void main() {
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
+          tiltCalculator: tilt20,
         );
 
         expect(result.isCaptureable, isFalse);
@@ -525,21 +514,15 @@ void main() {
 
   // Group 8 — Tilt detection (Step 4) — _maxTiltDegrees = 15.0
   group('Tilt detection (Step 4)', () {
-    setUp(() {
-      DocumentValidationResult.tiltCalculator = (_) => 0; // default: no tilt
-    });
-
-    tearDown(() {
-      DocumentValidationResult.tiltCalculator = null;
-    });
+    double tiltOf(double degrees) => degrees;
 
     test(
       'front: tilt 20° (above 15° threshold) → not capturable, orange, "Endereza"',
       () {
-        DocumentValidationResult.tiltCalculator = (_) => 20.0;
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
+          tiltCalculator: (_) => tiltOf(20),
         );
 
         expect(result.isCaptureable, isFalse);
@@ -553,11 +536,11 @@ void main() {
       () {
         // Back side: _minBlocksBack = 1, so presence passes with 1 block.
         // But line-count guard requires 5 — use 5 blocks.
-        DocumentValidationResult.tiltCalculator = (_) => 20.0;
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
           isBackSide: true,
+          tiltCalculator: (_) => tiltOf(20),
         );
 
         expect(result.isCaptureable, isFalse);
@@ -569,10 +552,10 @@ void main() {
     test(
       'front: tilt 5° (below threshold) passes tilt check → capturable',
       () {
-        DocumentValidationResult.tiltCalculator = (_) => 5.0;
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
+          tiltCalculator: (_) => tiltOf(5),
         );
 
         expect(result.isCaptureable, isTrue);
@@ -583,12 +566,12 @@ void main() {
       'front: tilt 12° (leveled handheld 720p, within noise floor) → capturable',
       () {
         // A leveled DNI captured handheld at 720p produces median tilts of 7-10°
-        // from cornerPoint jitter (±2-3px/line) + human steadiness slack (±3°).
-        // 12° must be accepted to avoid a false-positive "Endereza" loop. See obs #3161.
-        DocumentValidationResult.tiltCalculator = (_) => 12.0;
+        // from cornerPoint jitter (±2-3 px/line) plus human steadiness slack
+        // (±3°). 12° must be accepted to avoid a false-positive "Endereza" loop.
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
+          tiltCalculator: (_) => tiltOf(12),
         );
 
         expect(result.isCaptureable, isTrue);
@@ -598,10 +581,10 @@ void main() {
     test(
       'tilt exactly at threshold (15°) passes — boundary is inclusive',
       () {
-        DocumentValidationResult.tiltCalculator = (_) => 15.0;
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
+          tiltCalculator: (_) => tiltOf(15),
         );
 
         expect(result.isCaptureable, isTrue);
@@ -611,10 +594,10 @@ void main() {
     test(
       'negative tilt -20° is detected as tilted (abs > threshold)',
       () {
-        DocumentValidationResult.tiltCalculator = (_) => -20.0;
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
+          tiltCalculator: (_) => tiltOf(-20),
         );
 
         expect(result.isCaptureable, isFalse);
@@ -627,11 +610,11 @@ void main() {
       () {
         // Fill check fires before tilt: even with tilt=20°, a tiny box still
         // returns the fill message, not "Endereza".
-        DocumentValidationResult.tiltCalculator = (_) => 20.0;
         const smallBox = Rect.fromLTRB(400, 300, 500, 400); // fill ≈ 0.009
         final result = DocumentValidationResult.evaluate(
           recognizedText: makeRecognizedText(count: 5, boundingBox: smallBox),
           imageSize: kTestImageSize,
+          tiltCalculator: (_) => tiltOf(20),
         );
 
         expect(result.message, 'Acércate un poco más');

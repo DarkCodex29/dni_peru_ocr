@@ -1,5 +1,113 @@
 # Changelog
 
+## 0.7.0 (breaking — deprecated alias removal + ubigeo feature)
+
+Closes every follow-up item identified by the v0.6.x judgment-day audit.
+Breaking surface is intentionally small; the v0.6.x APIs we removed were
+already marked `@Deprecated` since v0.6.0–v0.6.4.
+
+### Breaking changes
+
+#### 1. `OcrConsensusBuilder` typedef removed
+
+The deprecated alias on top of `OcrConsensusAccumulator` was kept for
+in-place migration across v0.6.x. It is now gone — replace any remaining
+usage with `OcrConsensusAccumulator` directly. Behaviour is identical.
+
+#### 2. `OcrFieldExtractor.extractStatic` removed
+
+The static alias for `OcrFieldExtractor.extract` is gone. The two names
+always referred to the same logic; the alias only existed to soften the
+v0.6.0 migration.
+
+#### 3. `DocumentValidationResult.tiltCalculator` is now a constructor parameter
+
+The static mutable test seam:
+
+```dart
+DocumentValidationResult.tiltCalculator = (_) => 20.0;
+final r = DocumentValidationResult.evaluate(...);
+```
+
+is replaced by an optional named parameter on `evaluate()`:
+
+```dart
+final r = DocumentValidationResult.evaluate(
+  recognizedText: text,
+  imageSize: size,
+  tiltCalculator: (_) => 20.0, // optional, defaults to computeMedianTiltDegrees
+);
+```
+
+Defaults to `computeMedianTiltDegrees` so production callers do not need
+to change anything. Tests that previously assigned to the static field
+must pass the function as a named argument instead. This eliminates the
+last global mutable static in the package surface.
+
+#### 4. `DocumentValidationResult.evaluate(theme:)` removed
+
+The `theme` parameter on `evaluate()` had been silently ignored since
+v0.6.4 (it was only used by the removed `borderColor` field). The
+parameter is now gone — drop it from the call site.
+
+### Non-breaking improvements
+
+#### 5. Three new optional fields on `OcrExtractedFields`
+
+`department`, `province`, `district` are populated by `AddressFieldStrategy`
+when the back-side OCR exposes the `DEPARTAMENTO/PROVINCIA/DISTRITO` line.
+Handles three real-world shapes:
+
+- `ANCASH/SANTA/CHIMBOTE` → positional `[department, province, district]`
+- `/CALLAO/VENTANILLA` → `department + district`, province null
+  (RENIEC convention for constitutional provinces)
+- `LIMA/LIMA/VILLA MARIA DEL TRIUNFO` → multi-word district preserved
+
+Consumers can read these fields directly without parsing the slash line
+themselves. All three default to `null` when the line is missing.
+
+#### 6. Name vote consolidation by strict prefix containment
+
+When the consensus accumulator has votes like
+`{lastName: MORENO} x1` and `{lastName: MORENO ALEMAN} x1`, the snapshot
+now consolidates them: the longer variant wins and both votes count
+toward its confidence. Uses **strict prefix containment** (no fuzzy
+matching) so that `JUAN` and `JOSE` stay independent — fuzzy matching on
+short names is too risky.
+
+This is the same family of fix that v0.6.8 introduced for address, but
+limited to prefix matches because name fields are short and high-signal.
+
+#### 7. Address `locked` flag requires ≥ 2 votes
+
+Single-vote address buckets cannot reach `OcrFieldResult.locked = true`
+anymore — at least two corroborating frames are required. The displayed
+value is unaffected (still emitted from the first vote), only the
+`locked` flag is gated. Prevents premature lock on noisy single-frame
+captures.
+
+### Tests
+
+7 new regression tests across `ocr_consensus_test.dart`,
+`address_field_strategy_test.dart`, and `dni_camera_mask_widget_test.dart`:
+
+- Name-prefix consolidation (3 cases).
+- Ubigeo extraction for 3-part / 2-part / multi-word / absent variants
+  (4 cases).
+- Property-based order independence: shuffle 5 address votes 30× with
+  different seeds, same winner every run.
+- Widget-level E2E: `DniCameraMask.isBackSide: false → true` rebuild
+  propagates the flag to the inner `DniCameraController` (regression
+  guard for the v0.6.4 stale-flag bug).
+
+**529/529 tests pass.** `flutter analyze` clean.
+
+### Consumer impact for InClub
+
+No code changes required. InClub does not use any of the four removed
+APIs (`OcrConsensusBuilder`, `extractStatic`, the static `tiltCalculator`,
+or `evaluate(theme:)`). Bump the SHA only.
+
 ## 0.6.10 (docs)
 
 Documentation pass over the public surface and the most-touched internals.

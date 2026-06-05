@@ -270,4 +270,49 @@ void main() {
       },
     );
   });
+
+  // ── E2E state lifecycle — front → back rebuild keeps controller in sync
+  //
+  // Flutter reuses the [State] instance when the host rebuilds the same
+  // widget type at the same position in the tree with a different value
+  // for one of its parameters. The `DniCameraMask` controller MUST follow
+  // that rebuild: if the host swaps `isBackSide: false` → `isBackSide: true`,
+  // the underlying [DniCameraController] flag must update so subsequent
+  // captures emit the back-side consensus instead of being scrubbed by a
+  // stale front-side flag.
+  group('Widget E2E — front→back rebuild keeps controller in sync', () {
+    testWidgets(
+      'controller.isBackSide tracks widget.isBackSide across rebuilds',
+      (tester) async {
+        final cam = _idleMockCamera();
+
+        await tester.pumpWidget(_buildMask(cameraController: cam));
+        await tester.pump();
+
+        final state =
+            tester.state(find.byType(DniCameraMask)) as dynamic;
+        final controller = state.captureController as DniCameraController;
+        expect(
+          controller.isBackSide,
+          isFalse,
+          reason: 'fresh-mounted front-side widget',
+        );
+
+        // Re-pump the same widget tree shape with `isBackSide: true`.
+        // Flutter reuses the State; `didUpdateWidget` must propagate the
+        // flag to the controller via `onSideChanged`.
+        await tester.pumpWidget(
+          _buildMask(cameraController: cam, isBackSide: true),
+        );
+        await tester.pump();
+        expect(
+          controller.isBackSide,
+          isTrue,
+          reason: 'controller flag must follow widget.isBackSide rebuild',
+        );
+
+        await _disposeWidget(tester);
+      },
+    );
+  });
 }

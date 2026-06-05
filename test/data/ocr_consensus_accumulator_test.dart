@@ -1,9 +1,5 @@
-/// RED tests for OcrConsensusAccumulator rename (PR4 — task 4.3).
-///
-/// Verifies:
-/// 1. OcrConsensusAccumulator class exists with same behavior as OcrConsensusBuilder.
-/// 2. OcrConsensusBuilder remains as a @Deprecated typedef alias.
-/// 3. DniCameraController exposes onSideChanged() to seed the accumulator.
+/// Smoke tests for [OcrConsensusAccumulator] public surface and the
+/// controller-side accumulator lifecycle hook.
 library;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -11,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
 
 void main() {
-  group('OcrConsensusAccumulator — rename from OcrConsensusBuilder', () {
+  group('OcrConsensusAccumulator — public surface', () {
     test('OcrConsensusAccumulator can be instantiated', () {
       final accumulator = OcrConsensusAccumulator();
       expect(accumulator, isNotNull);
@@ -37,20 +33,6 @@ void main() {
     test('OcrConsensusAccumulator.isMrzLocked starts false', () {
       final accumulator = OcrConsensusAccumulator();
       expect(accumulator.isMrzLocked, isFalse);
-    });
-
-    // ── OcrConsensusBuilder must remain accessible (deprecated alias) ──────
-
-    test('OcrConsensusBuilder still compiles (deprecated typedef alias)', () {
-      // ignore: deprecated_member_use_from_same_package
-      final builder = OcrConsensusBuilder();
-      expect(builder, isNotNull);
-    });
-
-    test('OcrConsensusBuilder is a subtype of OcrConsensusAccumulator', () {
-      // ignore: deprecated_member_use_from_same_package
-      final builder = OcrConsensusBuilder();
-      expect(builder, isA<OcrConsensusAccumulator>());
     });
   });
 

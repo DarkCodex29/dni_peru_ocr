@@ -25,6 +25,23 @@ class OcrExtractedFields {
   String? nationality;
   String? address;
 
+  /// Administrative region (department) parsed from the ubigeo line on the
+  /// back of the DNI. Format example: `ANCASH`, `LIMA`, `CALLAO`.
+  ///
+  /// The MRZ does NOT carry ubigeo data; this field is always populated
+  /// by [AddressFieldStrategy] from the text-OCR `DEPARTAMENTO/PROVINCIA/
+  /// DISTRITO` line on the reverse side. Will be `null` when the line is
+  /// missing from the scan or fails to parse.
+  String? department;
+
+  /// Administrative sub-region (province) within [department]. Same source
+  /// and same null-semantics as [department].
+  String? province;
+
+  /// Administrative locality (district) within [province]. Same source and
+  /// same null-semantics as [department].
+  String? district;
+
   /// Merges [other] into this instance.
   ///
   /// MRZ-sourced incoming always wins over text-OCR current.
@@ -92,6 +109,28 @@ class OcrExtractedFields {
     address = _best(
       address,
       other.address,
+      incomingIsMrz: false,
+      currentIsMrz: false,
+    );
+
+    // Ubigeo fields (department / province / district) are exclusively
+    // text-OCR-sourced — the MRZ does NOT carry them. We merge with the
+    // same "non-null wins, longer wins on tie" rule used for address.
+    department = _best(
+      department,
+      other.department,
+      incomingIsMrz: false,
+      currentIsMrz: false,
+    );
+    province = _best(
+      province,
+      other.province,
+      incomingIsMrz: false,
+      currentIsMrz: false,
+    );
+    district = _best(
+      district,
+      other.district,
       incomingIsMrz: false,
       currentIsMrz: false,
     );
@@ -189,6 +228,9 @@ class OcrExtractedFields {
     'Caducidad': expirationDate,
     'Nacionalidad': nationality,
     'Dirección': address,
+    'Departamento': department,
+    'Provincia': province,
+    'Distrito': district,
   };
 
   /// Fields that the MRZ parser can populate (when MRZ checksum is valid).
@@ -287,20 +329,6 @@ class OcrFieldExtractor {
     );
   }
 
-  /// Deprecated alias for [extract]. Will be removed in 0.7.0.
-  ///
-  /// Kept for InClub migration softening — the `static` name was the
-  /// original API before the Strategy decomposition. Replace call sites
-  /// with `OcrFieldExtractor.extract(recognized)` at your convenience.
-  ///
-  /// TODO(0.7.0): Remove this alias.
-  @Deprecated(
-    'Use OcrFieldExtractor.extract() instead. '
-    'extractStatic will be removed in v0.7.0.',
-  )
-  static OcrExtractedFields extractStatic(RecognizedText recognized) =>
-      extract(recognized);
-
   static OcrExtractedFields _runPipeline(
     RecognizedText recognized,
     OcrFieldStrategy mrzStrategy,
@@ -315,10 +343,22 @@ class OcrFieldExtractor {
     final mrzResult = mrzStrategy.extract(recognized);
 
     if (mrzResult != null) {
-      // Step 2 (address): always runs — address is never in MRZ.
+      // Step 2 (address + ubigeo): always runs — neither the address nor
+      // the administrative location fields live in the MRZ.
       final addressResult = addressStrategy.extract(recognized);
-      if (addressResult?.address != null) {
-        mrzResult.address = addressResult!.address;
+      if (addressResult != null) {
+        if (addressResult.address != null) {
+          mrzResult.address = addressResult.address;
+        }
+        if (addressResult.department != null) {
+          mrzResult.department = addressResult.department;
+        }
+        if (addressResult.province != null) {
+          mrzResult.province = addressResult.province;
+        }
+        if (addressResult.district != null) {
+          mrzResult.district = addressResult.district;
+        }
       }
 
       // Step 3 (secondLastName back-fill): DNI azul has the "Segundo Apellido"
@@ -337,10 +377,21 @@ class OcrFieldExtractor {
     // Step 1 failed: run text-OCR extraction.
     final textResult = textStrategy.extract(recognized) ?? OcrExtractedFields();
 
-    // Step 2 (address): always runs.
+    // Step 2 (address + ubigeo): always runs.
     final addressResult = addressStrategy.extract(recognized);
-    if (addressResult?.address != null) {
-      textResult.address = addressResult!.address;
+    if (addressResult != null) {
+      if (addressResult.address != null) {
+        textResult.address = addressResult.address;
+      }
+      if (addressResult.department != null) {
+        textResult.department = addressResult.department;
+      }
+      if (addressResult.province != null) {
+        textResult.province = addressResult.province;
+      }
+      if (addressResult.district != null) {
+        textResult.district = addressResult.district;
+      }
     }
 
     return textResult;
