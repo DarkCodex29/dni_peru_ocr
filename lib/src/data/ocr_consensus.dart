@@ -79,37 +79,88 @@ const _kAddressThreshold = 0.60;
 const _kDateMatchRequired = 4;
 const _kDateWindowSize = 5;
 
-/// Consecutive MRZ parses required for fast-lock (default).
+/// Default number of consecutive MRZ-valid frames required to fast-lock.
 ///
-/// 2 frames at 30fps ≈ 66ms — enough for the back side of older booklet DNIs.
-/// For the electronic DNI back side, raise this via the
-/// [OcrConsensusAccumulator.mrzConsecutiveRequired] constructor parameter
-/// to give the camera more time to stabilize before triggering capture
-/// (mitigates motion blur — BUG 2, obs #4669).
+/// At a 30 fps preview, 2 frames is ~66 ms — fast enough for the front of a
+/// document or the back of older booklet-style cards, where the camera is
+/// usually stable. The electronic DNI back side benefits from a higher
+/// value (~5 frames, ~165 ms) because the OCR pipeline runs in parallel
+/// with the still-camera pipeline and a too-aggressive lock can fire a
+/// `takePicture()` while the device is still moving.
+///
+/// Overridable per instance via [OcrConsensusAccumulator.mrzConsecutiveRequired].
 const _kMrzConsecutiveRequired = 2;
 
-/// Accumulates OCR consensus by collecting per-field votes across frames.
+/// Accumulates per-field OCR consensus across multiple camera frames.
 ///
-/// Call [recordVote] for each processed frame with a map of field→value.
-/// Call [recordMrz] when `mrz_parser` returns a checksum-valid result.
-/// Call [checkAllThresholds] to see if consensus is reached.
-/// Call [snapshot] to emit the current [OcrConsensusResult].
-/// Call [dispose] when done (currently a no-op, included for future timers).
+/// ## Role
+///
+/// This is the **Accumulator** in a Strategy + Accumulator pipeline:
+///
+///   [OcrFieldExtractor] (strategies extract per-frame)
+///         │
+///         ▼
+///   [OcrConsensusAccumulator] (this class — aggregates across frames)
+///         │
+///         ▼
+///   [OcrConsensusResult] (final value, emitted by [snapshot])
+///
+/// Each frame is a hypothesis. The accumulator collects hypotheses as
+/// votes per field, applies field-specific normalization, and emits the
+/// most likely value once enough agreement is reached (lock threshold)
+/// or on demand (manual fallback).
+///
+/// ## SOLID
+///
+/// - **SRP**: this class accumulates votes and emits snapshots. It does
+///   NOT extract fields (that is [OcrFieldExtractor]'s job), normalize
+///   names (delegated to [OcrFieldNormalizer]), or compare strings
+///   (delegated to [StringSimilarity]).
+/// - **OCP**: per-field normalization is dispatched via [_normalize] +
+///   [_computeDisplay], extensible without changing the public API.
+/// - **DIP**: depends on the abstract `MRZResult` interface of the MRZ
+///   parser and on lightweight value types — no I/O, no Flutter widget
+///   dependency.
+///
+/// ## Invariants
+///
+/// - `_votes` and `_displayValues` are always keyed identically; both
+///   maps have the same set of field keys after every public mutation.
+/// - Once [_mrzLocked] flips to `true`, MRZ-sourced fields override any
+///   text-OCR votes in [snapshot] output.
+/// - [snapshot] is idempotent: calling it twice without intervening
+///   [recordVote] / [recordMrz] / [lockFromMrzFields] returns equal data.
+///
+/// ## Lifecycle
+///
+/// 1. Construct (optionally with a custom [mrzConsecutiveRequired]).
+/// 2. Call [recordVote] for each processed frame's extracted fields,
+///    OR [recordMrz] when the MRZ parser returns a checksum-valid result,
+///    OR [lockFromMrzFields] when the field-extractor already split out
+///    the MRZ fields (no raw [MRZResult] available).
+/// 3. Read [isMrzLocked] / [checkAllThresholds] to decide whether to
+///    trigger capture in the host widget.
+/// 4. Call [snapshot] to obtain the final [OcrConsensusResult].
+/// 5. Call [dispose] when the host widget tears down.
 class OcrConsensusAccumulator {
-  /// Creates an accumulator.
+  /// Creates an empty accumulator.
   ///
-  /// [mrzConsecutiveRequired] sets how many consecutive MRZ-valid frames are
-  /// required before the accumulator marks itself MRZ-locked (which the
-  /// host widget typically uses to trigger `takePicture()`). Defaults to 2
-  /// for backwards compatibility. Recommended values:
-  ///  - 2 — booklet DNI back side or front (legacy).
-  ///  - 5 — electronic DNI back side (~165ms stability window to avoid
-  ///        motion blur in the captured still). Fix for BUG 2 (obs #4669).
-  OcrConsensusAccumulator({this.mrzConsecutiveRequired = _kMrzConsecutiveRequired})
-      : assert(mrzConsecutiveRequired >= 1,
-            'mrzConsecutiveRequired must be >= 1');
+  /// [mrzConsecutiveRequired] sets how many consecutive MRZ-valid frames
+  /// the accumulator collects before flipping [isMrzLocked] to `true`.
+  /// Tunes the trade-off between speed (lower value → captures earlier)
+  /// and motion-blur risk (higher value → more stable still frame).
+  ///
+  /// See [_kMrzConsecutiveRequired] for the rationale and recommended
+  /// per-side values.
+  OcrConsensusAccumulator({
+    this.mrzConsecutiveRequired = _kMrzConsecutiveRequired,
+  }) : assert(
+          mrzConsecutiveRequired >= 1,
+          'mrzConsecutiveRequired must be >= 1',
+        );
 
-  /// How many consecutive MRZ-valid frames are required to fast-lock.
+  /// Number of consecutive MRZ-valid frames required to fast-lock.
+  /// Immutable for the lifetime of the accumulator.
   final int mrzConsecutiveRequired;
 
   // ── Vote maps: field → (normalizedValue → count) ─────────────────────────
@@ -240,10 +291,11 @@ class OcrConsensusAccumulator {
   }) {
     if (_mrzLocked) return;
     _consecutiveMrzCount++;
-    // Merge with the previous buffer instead of overwriting: a later frame
-    // with the MRZ checksum still valid but a garbled name line must NOT
-    // erase the fields captured by an earlier clean frame.
-    // Fix for BUG 3B (obs #4673).
+    // Merge into the previous buffer: a frame whose MRZ checksum is still
+    // valid but whose name line ML Kit garbled to nulls must NOT erase the
+    // fields captured by an earlier clean frame. The accumulator favours
+    // monotonic enrichment — once a field is known, only a non-null new
+    // value can change it.
     final prev = _mrzFieldsBuffer;
     _mrzFieldsBuffer = _MrzFieldsBuffer(
       documentNumber: documentNumber ?? prev?.documentNumber,
@@ -615,11 +667,12 @@ class OcrConsensusAccumulator {
 
   OcrConsensusResult _buildMrzResultFromFields(_MrzFieldsBuffer buf) {
     final addressResult = _voteResult('address', _kAddressThreshold);
-    // Vote-map fallbacks for the name fields. If the MRZ buffer is null on
-    // any name (because the back-side MRZ block was partial), fall back to
-    // text-OCR votes accumulated from the front-side seed or earlier frames.
-    // Fix for BUG 3A (obs #4673): firstName/lastName were previously asymmetric
-    // vs secondLastName — only the latter fell back to votes.
+    // Field-uniform fallback chain: every MRZ-sourced field falls back to
+    // its text-OCR vote when the MRZ buffer is null for that field. This
+    // guarantees symmetry — firstName, lastName, secondLastName, document
+    // number, and dates all behave the same. The vote map is populated
+    // either from the host's front-side seed (via [recordVote]) or from
+    // earlier back-side frames whose MRZ was readable.
     final firstNameVote = _voteResult('firstName', _kNameThreshold);
     final lastNameVote = _voteResult('lastName', _kNameThreshold);
     final slnVote = _voteResult('secondLastName', _kNameThreshold);

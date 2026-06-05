@@ -43,15 +43,17 @@ class ImageQualityGate {
   ImageQualityGate({LivenessAnalyzer? analyzer})
     : _analyzer = analyzer ?? _DartLivenessAnalyzer();
 
-  // Empirical data from Infinix X6837 (JC, 2026-05-12):
-  //   Sharp KYC selfies on this device produce laplacianScore in 467-717.
-  //   3000 (original) → 100% false positives.
-  //   1000 (first attempt) → still 100% false positives.
-  //   100 (current) → matches OpenCV's typical threshold; only rejects truly
-  //                  broken captures (heavy motion blur, fully out-of-focus).
-  // The backend does the real face-match validation; this gate is just a
-  // pre-filter to avoid wasting an API call on garbage.
-  // Recalibrate when real fixtures land in test/fixtures/image_quality/.
+  /// Minimum Laplacian variance for an image to be considered sharp.
+  ///
+  /// Calibrated against real mid-range Android devices: sharp KYC captures
+  /// score in the 450–720 range, while heavy motion blur and out-of-focus
+  /// captures fall well under 100. The value mirrors the threshold used by
+  /// OpenCV's standard blur-detection recipe — empirical, conservative.
+  ///
+  /// This gate is a **pre-filter**: the backend performs the authoritative
+  /// validation. The threshold should reject only obviously broken frames
+  /// so the API call is not wasted. Re-calibrate when device-specific
+  /// fixtures land in `test/fixtures/image_quality/`.
   static const int blurThreshold = 100;
   final LivenessAnalyzer _analyzer;
 

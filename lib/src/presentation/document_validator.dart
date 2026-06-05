@@ -47,12 +47,17 @@ class DocumentValidationResult {
   static const double _maxFillRatio = 0.85;
   static const int _minBlocks = 2;
   static const int _minBlocksBack = 1;
-  // Calibrated for 720p handheld capture: cornerPoint jitter (±2-3px per
-  // line) produces 7-10° of median tilt noise on perfectly leveled
-  // documents, plus ±3° of human steadiness slack. An 8° threshold sat
-  // inside that noise floor and produced false-positive "Endereza" loops
-  // (reported by JC). 15° accepts genuine leveled handheld captures while
-  // still rejecting visibly skewed documents that would harm backend OCR.
+
+  /// Maximum acceptable median document tilt before the gate rejects the
+  /// frame and asks the user to straighten the card.
+  ///
+  /// Calibrated for 720p handheld capture: cornerPoint jitter sits at
+  /// ±2–3 px per line which translates to roughly 7–10° of median tilt
+  /// noise on a perfectly level document, on top of ±3° of human-hand
+  /// steadiness slack. Anything tighter than ~12° falls inside the noise
+  /// floor and produces false-positive "Endereza" prompts; the 15°
+  /// threshold accepts genuine leveled handheld captures while still
+  /// rejecting documents tilted enough to degrade backend OCR.
   static const double _maxTiltDegrees = 15.0;
 
   /// Test seam — override to inject a fixed tilt value without constructing

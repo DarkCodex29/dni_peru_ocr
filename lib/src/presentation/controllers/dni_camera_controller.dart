@@ -143,20 +143,20 @@ class DniCameraController {
     _logger.breadcrumb(category, message, data: data);
   }
 
-  /// Whether this controller instance manages the back side of the document.
+  /// Whether this controller instance currently represents the back side
+  /// of the document.
   ///
-  /// Used by [processFrame] and [onCaptureDelivered] to determine whether the
-  /// consensus result should be included in the capture callback. On front-side
-  /// captures the consensus argument is always `null`.
+  /// Used by [onCaptureDelivered] to decide whether the consensus snapshot
+  /// is meaningful (back side) or must be scrubbed (front side, where the
+  /// consensus pipeline is not active).
   ///
-  /// Mutable so that hosts can flip the controller from front to back when
-  /// Flutter REUSES the State across step transitions (the `DniCameraMask`
-  /// widget shares one controller instance across the front→back toggle).
-  /// Updated by [onSideChanged]. Without this fix, a controller initialized
-  /// with `isBackSide: false` would never start emitting the back-side
-  /// consensus even after the widget transitioned to back — symptom from
-  /// JC's v0.6.x report: snapshot reaches the widget with valid data but
-  /// arrives null at the host callback.
+  /// **Mutable by design.** Flutter may reuse a [State] instance across a
+  /// host's widget rebuild when the widget tree shape is preserved (e.g.
+  /// the host swaps `isBackSide: false` → `isBackSide: true` on the same
+  /// `DniCameraMask` slot). In that case `initState` does NOT re-run, so
+  /// the controller's side flag must be updateable at runtime. The
+  /// authoritative update path is [onSideChanged], which synchronises this
+  /// flag with the caller's intent before touching the accumulator.
   bool _isBackSide;
 
   /// Fired when a capture is delivered to the host.
@@ -237,13 +237,10 @@ class DniCameraController {
     _manualFallbackTimer?.cancel();
     _expiredHandled = false;
 
-    // Sync the controller's side flag with the caller. Without this, a
-    // controller initialized as front-side that later transitions to back
-    // (Flutter reuses the State) would still report `_isBackSide = false`
-    // in [onCaptureDelivered] and discard the back-side consensus snapshot.
-    // Fix for v0.6.x "back-side consensus arrives null at host" symptom
-    // (reported by JC against v0.6.3 — package emits snapshot with valid
-    // names but the host callback receives null).
+    // Authoritative side-flag update path. Synchronises the controller
+    // with the caller's intent before mutating the accumulator so that
+    // [onCaptureDelivered] decisions stay consistent for any frame
+    // processed after this call.
     _isBackSide = isBackSide;
 
     // Tear down previous accumulator regardless of direction.
