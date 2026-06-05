@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.6.5 (bugfix)
+
+Address parsing quality fix for real Peruvian DNI back-side scans. Reported
+after JC's v0.6.4 verification — once the controller flag fix unblocked the
+data flow, parsing-side issues became visible.
+
+### Symptom
+
+Real DNI back-side prints:
+```
+Dirección
+ASENT.H15 DE ABRIL CALLE EL MILAGRO
+MZ.B LT.19
+```
+
+`AddressFieldStrategy._buildAddress` was stopping after the first line
+because `MZA 12 LTE 8` (full-form variants) did not match
+`_isAddressContinuation`. Long-form Peruvian address codes were dropped.
+
+### Fix
+
+Extended `_isAddressContinuation` prefix list with the long-form variants
+of Manzana / Lote (used on rural and formal addresses):
+
+```diff
+  const prefixes = [
+    'MZ.', 'MZ ',
++   'MZA.', 'MZA ',
+    'LT.', 'LT ',
++   'LTE.', 'LTE ',
+    'NRO.', 'NRO ',
+    'INT.', 'DPTO.',
++   'INT ', 'DPTO ',
+  ];
+```
+
+Also added the bare-space variants of INT / DPTO that the previous list
+missed (only dotted forms were recognized).
+
+### Tests
+
+Four new regression tests in `test/data/strategies/address_field_strategy_test.dart`:
+
+1. `MZ.B and LT.19 are preserved in the final address` — JC's exact case.
+2. `ABRIL is preserved (no token mangling)` — guard against shantytown name corruption.
+3. `MZ A LT 5 (space-separated, no dots) variant` — alt format.
+4. `MZA / LTE (full-word variants) preserved` — the case that triggered the fix.
+
+**504/504 tests pass.** `flutter analyze` clean (0 issues).
+
+### Consumer impact
+
+No public API changes. Patch release. Bump SHA only.
+
 ## 0.6.4 (bugfix — CRITICAL)
 
 Closes the "two-sided scan loses OCR" symptom for real. v0.6.1 fixed the

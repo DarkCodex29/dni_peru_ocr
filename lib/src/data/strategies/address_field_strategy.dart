@@ -175,12 +175,18 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     const prefixes = [
       'MZ.',
       'MZ ',
+      'MZA.',
+      'MZA ',
       'LT.',
       'LT ',
+      'LTE.',
+      'LTE ',
       'NRO.',
       'NRO ',
       'INT.',
       'DPTO.',
+      'INT ',
+      'DPTO ',
     ];
     return prefixes.any(upper.startsWith);
   }
