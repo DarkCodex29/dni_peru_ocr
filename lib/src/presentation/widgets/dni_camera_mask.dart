@@ -41,6 +41,8 @@ class DniCameraMask extends StatefulWidget {
     this.userVerificationData,
     this.onDocumentExpired,
     this.kycV2Enabled = true,
+    this.frontSideFields,
+    this.onFrontSideOcrUpdated,
   });
 
   final CameraController controller;
@@ -62,6 +64,32 @@ class DniCameraMask extends StatefulWidget {
   /// Enables the consensus-driven back-side capture pipeline. Hosts can
   /// disable to fall back to a single-frame capture without consensus.
   final bool kycV2Enabled;
+
+  /// Optional seed for the back-side consensus accumulator.
+  ///
+  /// When the host navigates from a front-side scan to a back-side scan as
+  /// separate widget instances (Flutter's `switch` over enum steps does NOT
+  /// reuse state), the back-side widget would otherwise start with an empty
+  /// accumulator and discard the front-side OCR. Pass the OCR fields
+  /// accumulated on the front side here so the back-side snapshot can fall
+  /// back to them when the back MRZ frames come partial.
+  ///
+  /// Ignored on front-side captures (`isBackSide == false`).
+  ///
+  /// Fix for the "two-sided scan loses OCR" symptom reported against v0.6.x:
+  /// the package widget is re-created when the step changes, so the previous
+  /// `_accumulatedFields` is destroyed and `onSideChanged` runs without a
+  /// seed. Hosts persist OCR in a Bloc/Cubit/state holder across the step
+  /// transition and feed it back here.
+  final OcrExtractedFields? frontSideFields;
+
+  /// Optional callback emitted while scanning the FRONT side, every time the
+  /// internal `_accumulatedFields` learns a new field. Hosts can persist
+  /// these values (e.g. into a Bloc state) so they can be fed back as
+  /// [frontSideFields] when the back-side widget is mounted.
+  ///
+  /// Ignored on back-side captures (`isBackSide == true`).
+  final void Function(OcrExtractedFields fields)? onFrontSideOcrUpdated;
 
   @override
   State<DniCameraMask> createState() => _DniCameraMaskState();
@@ -177,7 +205,15 @@ class _DniCameraMaskState extends State<DniCameraMask>
     _captureController.captureState.addListener(_onCaptureStateChanged);
 
     if (widget.isBackSide) {
-      _captureController.onSideChanged(isBackSide: true);
+      // Seed the back-side accumulator with the front-side fields the host
+      // captured (and stored across the step transition). Without this seed
+      // the back-side starts blank and the snapshot can return null names
+      // when the back MRZ frames come partial — even though v0.6.1's
+      // _buildMrzResultFromFields fallback would have rescued them.
+      _captureController.onSideChanged(
+        isBackSide: true,
+        frontSideFields: widget.frontSideFields,
+      );
     }
     _startStream();
     unawaited(_captureController.start());
@@ -462,6 +498,13 @@ class _DniCameraMaskState extends State<DniCameraMask>
     if (recognized.blocks.isNotEmpty) {
       final frameFields = OcrFieldExtractor.extract(recognized);
       _accumulatedFields.merge(frameFields);
+      // Notify the host about front-side OCR progress so it can persist the
+      // fields across the step transition and feed them back as
+      // [DniCameraMask.frontSideFields] when the back-side widget mounts.
+      // Throttle: only fire when the merge produced a change.
+      if (!widget.isBackSide && widget.onFrontSideOcrUpdated != null) {
+        widget.onFrontSideOcrUpdated!(_accumulatedFields);
+      }
 
       // KYC v2: expiration gate
       if (widget.kycV2Enabled &&
