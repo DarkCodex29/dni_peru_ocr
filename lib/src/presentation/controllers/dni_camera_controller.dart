@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import '../document_validator.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
+import '../../data/ocr_consensus.dart';
+import '../../data/ocr_field_extractor.dart';
 import '../../domain/interfaces/ocr_logger.dart';
 
 /// Diagnostic telemetry emitted each time a camera frame is processed.
@@ -166,6 +168,9 @@ class DniCameraController {
   bool _expiredHandled = false;
   Timer? _manualFallbackTimer;
 
+  // ── Consensus accumulator (back-side only) ────────────────────────────────
+  OcrConsensusAccumulator? _accumulator;
+
   // ── Public API ───────────────────────────────────────────────────────────
 
   /// Observable capture state — single source of truth for the widget.
@@ -209,13 +214,105 @@ class DniCameraController {
   /// Called when the user toggles between front/back side.
   ///
   /// Resets countdown, manual mode, and timers; re-arms the fallback timer.
-  void onSideChanged() {
+  ///
+  /// When transitioning to the back side ([isBackSide] = true), pass the
+  /// [frontSideFields] accumulated on the front so the new accumulator is
+  /// seeded immediately. Omit both parameters when calling for a generic reset.
+  ///
+  /// Widget callers should use this instead of managing the accumulator directly.
+  void onSideChanged({
+    bool isBackSide = false,
+    OcrExtractedFields? frontSideFields,
+  }) {
     if (_isDisposed) return;
     _manualFallbackTimer?.cancel();
     _expiredHandled = false;
+
+    // Tear down previous accumulator regardless of direction.
+    _accumulator?.dispose();
+    _accumulator = null;
+
+    if (isBackSide) {
+      _accumulator = OcrConsensusAccumulator();
+      // Seed with front-side fields when available.
+      final seed = frontSideFields;
+      if (seed != null) {
+        final seedVotes = <String, String?>{};
+        if (seed.firstName != null) seedVotes['firstName'] = seed.firstName;
+        if (seed.lastName != null) seedVotes['lastName'] = seed.lastName;
+        if (seed.secondLastName != null) seedVotes['secondLastName'] = seed.secondLastName;
+        if (seed.documentNumber != null) seedVotes['documentNumber'] = seed.documentNumber;
+        if (seed.dateOfBirth != null) seedVotes['dateOfBirth'] = seed.dateOfBirth;
+        if (seed.expirationDate != null) seedVotes['expirationDate'] = seed.expirationDate;
+        if (seed.address != null) seedVotes['address'] = seed.address;
+        if (seedVotes.isNotEmpty) _accumulator!.recordVote(seedVotes);
+        // DNI azul: seed MRZ fast-lock from front-side MRZ data.
+        if (seed.hasMrzData) {
+          _accumulator!.lockFromMrzFields(
+            documentNumber: seed.documentNumber,
+            firstName: seed.firstName,
+            lastName: seed.lastName,
+            secondLastName: seed.secondLastName,
+            dateOfBirth: seed.dateOfBirth,
+            expirationDate: seed.expirationDate,
+          );
+        }
+      }
+    }
+
     _updateState(_orchestrator.onSideToggle(_captureStateNotifier.value));
     _startManualFallbackTimer();
   }
+
+  /// Records a processed OCR frame result in the active consensus accumulator.
+  ///
+  /// No-op when the accumulator is not initialized (front side or already disposed).
+  /// Returns `true` when the accumulator has reached consensus (MRZ locked or
+  /// all thresholds met), which the widget uses to trigger capture.
+  bool recordOcrFrame(OcrExtractedFields frameFields) {
+    final acc = _accumulator;
+    if (acc == null) return false;
+
+    if (frameFields.hasMrzData) {
+      acc
+        ..lockFromMrzFields(
+          documentNumber: frameFields.documentNumber,
+          firstName: frameFields.firstName,
+          lastName: frameFields.lastName,
+          secondLastName: frameFields.secondLastName,
+          dateOfBirth: frameFields.dateOfBirth,
+          expirationDate: frameFields.expirationDate,
+        )
+        ..recordVote({
+          'documentNumber': frameFields.documentNumber,
+          'firstName': frameFields.firstName,
+          'lastName': frameFields.lastName,
+          'secondLastName': frameFields.secondLastName,
+          'dateOfBirth': frameFields.dateOfBirth,
+          'expirationDate': frameFields.expirationDate,
+          'address': frameFields.address,
+        });
+      return acc.isMrzLocked;
+    } else {
+      acc
+        ..resetMrzConsecutiveCount()
+        ..recordVote({
+          'documentNumber': frameFields.documentNumber,
+          'firstName': frameFields.firstName,
+          'lastName': frameFields.lastName,
+          'secondLastName': frameFields.secondLastName,
+          'dateOfBirth': frameFields.dateOfBirth,
+          'expirationDate': frameFields.expirationDate,
+          'address': frameFields.address,
+        });
+      return acc.checkAllThresholds();
+    }
+  }
+
+  /// Emits the current consensus snapshot.
+  ///
+  /// Returns `null` when no accumulator is active (front side).
+  OcrConsensusResult? snapshotConsensus() => _accumulator?.snapshot();
 
   /// Processes a single camera frame.
   ///
@@ -303,12 +400,15 @@ class DniCameraController {
   /// 1. Flip [_isDisposed] — blocks all new frame/timer callbacks
   /// 2. Cancel timers
   /// 3. Transition state to [DniCaptureDone]
-  /// 4. Dispose [ValueNotifier]s
+  /// 4. Dispose consensus accumulator (if any)
+  /// 5. Dispose [ValueNotifier]s
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
     _manualFallbackTimer?.cancel();
     _captureStateNotifier.value = const DniCaptureDone();
+    _accumulator?.dispose();
+    _accumulator = null;
     _captureStateNotifier.dispose();
     _telemetryNotifier.dispose();
   }
