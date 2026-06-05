@@ -1,66 +1,10 @@
 // ignore_for_file: prefer_const_constructors
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dni_peru_ocr/src/presentation/controllers/dni_camera_controller.dart';
+import 'package:dni_peru_ocr/src/presentation/document_validator.dart';
 import 'package:dni_peru_ocr/src/presentation/orchestrators/dni_capture_orchestrator.dart';
 import 'package:dni_peru_ocr/src/presentation/orchestrators/dni_capture_state.dart';
-
-// ─── Fake CameraController contract ──────────────────────────────────────────
-//
-// The real camera plugin requires a platform channel (device). We define a
-// minimal contract that DniCameraController needs from a camera and provide
-// a fake that works purely in Dart with no platform channels.
-
-/// Minimal contract DniCameraController needs from the camera plugin.
-abstract class FakeCameraInterface {
-  bool get isStreamingImages;
-  bool get isInitialized;
-  Future<void> startImageStream(void Function(dynamic image) onImage);
-  Future<void> stopImageStream();
-  Future<void> setFlashMode(dynamic mode);
-}
-
-/// Fake CameraController that works in unit tests (no platform channel).
-class FakeCameraController implements FakeCameraInterface {
-  bool _isStreamingImages = false;
-  bool _isInitialized = true;
-
-  void Function(dynamic image)? _imageStreamHandler;
-
-  final List<String> calls = [];
-
-  @override
-  bool get isStreamingImages => _isStreamingImages;
-
-  @override
-  bool get isInitialized => _isInitialized;
-
-  @override
-  Future<void> startImageStream(void Function(dynamic image) onImage) async {
-    calls.add('startImageStream');
-    _isStreamingImages = true;
-    _imageStreamHandler = onImage;
-  }
-
-  @override
-  Future<void> stopImageStream() async {
-    calls.add('stopImageStream');
-    _isStreamingImages = false;
-    _imageStreamHandler = null;
-  }
-
-  @override
-  Future<void> setFlashMode(dynamic mode) async {
-    calls.add('setFlashMode:$mode');
-  }
-
-  /// Manually push a fake camera image to the stream.
-  void pushImage(dynamic image) {
-    _imageStreamHandler?.call(image);
-  }
-}
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -75,6 +19,28 @@ DniCaptureOrchestrator _orchestrator({
     manualFallbackMs: manualFallbackMs,
     minStableFrames: minStableFrames,
   );
+
+/// Builds a [DocumentValidationResult] for tests without ML Kit.
+DocumentValidationResult _fakeValidation({required bool isCaptureable}) =>
+    DocumentValidationResult.forTest(isCaptureable: isCaptureable);
+
+/// Calls [DniCameraController.processFrame] with a synthetic frame result.
+///
+/// Convenience helper so individual tests don't repeat the full parameter list.
+void _injectFrame(
+  DniCameraController controller, {
+  required bool isCaptureable,
+  required int stableFrames,
+  bool? userDataMatch,
+  String? failingGate,
+}) {
+  controller.processFrame(
+    validation: _fakeValidation(isCaptureable: isCaptureable),
+    stableFrames: stableFrames,
+    userDataMatch: userDataMatch,
+    failingGate: failingGate,
+  );
+}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -113,12 +79,12 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      // ValueListenable contract: can add/remove listeners
+      // ValueListenable contract: can add/remove listeners without crashing
       var notified = false;
       void listener() => notified = true;
       controller.captureState.addListener(listener);
       controller.captureState.removeListener(listener);
-      expect(notified, isFalse); // just structural: addListener doesn't crash
+      expect(notified, isFalse);
     });
 
     test('exposes telemetry as ValueListenable', () {
@@ -129,17 +95,16 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      // Should be accessible without crashing
       expect(controller.telemetry.value, isA<DniTelemetry>());
     });
   });
 
-  // ── Group 2: State transitions via _updateState ───────────────────────────
+  // ── Group 2: State transitions ────────────────────────────────────────────
 
   group('DniCameraController — state transitions', () {
     test('state notifies listeners when changed', () {
       final controller = DniCameraController(
-        orchestrator: _orchestrator(),
+        orchestrator: _orchestrator(minStableFrames: 1),
         isBackSide: false,
         onValidCapture: (_, __) {},
       );
@@ -148,10 +113,15 @@ void main() {
       var notifyCount = 0;
       controller.captureState.addListener(() => notifyCount++);
 
-      // Trigger a transition via onSideChanged — resets to fresh scanning state
-      controller.onSideChanged();
+      // A captureable frame moves Scanning → CountingDown (a real change)
+      _injectFrame(
+        controller,
+        isCaptureable: true,
+        stableFrames: 1,
+      );
 
       expect(notifyCount, greaterThan(0));
+      expect(controller.captureState.value, isA<DniCaptureCountingDown>());
     });
 
     test('onSideChanged resets to DniCaptureScanning with manualModeActive=false', () {
@@ -195,7 +165,7 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      // Start stream to arm the timer
+      // start() arms the timer
       await controller.start();
 
       // Wait for the timer to fire
@@ -206,16 +176,15 @@ void main() {
       expect((state as DniCaptureScanning).manualModeActive, isTrue);
     });
 
-    test('onSideChanged cancels manual fallback timer and resets manualModeActive', () async {
+    test('onSideChanged resets manualModeActive even after timer fires', () async {
       final controller = DniCameraController(
-        orchestrator: _orchestrator(manualFallbackMs: 50), // fast for tests
+        orchestrator: _orchestrator(manualFallbackMs: 50),
         isBackSide: false,
         onValidCapture: (_, __) {},
       );
       addTearDown(controller.dispose);
 
       await controller.start();
-      // Wait for timer to fire
       await Future<void>.delayed(const Duration(milliseconds: 150));
 
       expect(
@@ -223,7 +192,6 @@ void main() {
         isTrue,
       );
 
-      // Side change should reset
       controller.onSideChanged();
       expect(
         (controller.captureState.value as DniCaptureScanning).manualModeActive,
@@ -255,11 +223,10 @@ void main() {
       );
 
       await controller.dispose();
-      // Should not throw
       await expectLater(controller.dispose(), completes);
     });
 
-    test('state notifications stop after dispose', () async {
+    test('calling onSideChanged after dispose is a no-op (does not throw)', () async {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
@@ -268,7 +235,6 @@ void main() {
 
       await controller.dispose();
 
-      // After dispose, calling onSideChanged should be a no-op (not crash)
       expect(() => controller.onSideChanged(), returnsNormally);
     });
   });
@@ -276,7 +242,7 @@ void main() {
   // ── Group 5: Frame processing via orchestrator ────────────────────────────
 
   group('DniCameraController — frame processing delegates to orchestrator', () {
-    test('processFrame with captureable=true transitions from Scanning to CountingDown', () async {
+    test('captureable frame with enough stableFrames → CountingDown', () {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 1),
         isBackSide: false,
@@ -284,17 +250,12 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      // Simulate a "perfect" frame: captureable=true, enough stable frames
-      controller.injectTestFrame(
-        isCaptureable: true,
-        stableFrames: 1,
-        userDataMatch: null,
-      );
+      _injectFrame(controller, isCaptureable: true, stableFrames: 1);
 
       expect(controller.captureState.value, isA<DniCaptureCountingDown>());
     });
 
-    test('processFrame with captureable=false keeps Scanning state', () async {
+    test('non-captureable frame keeps Scanning state', () {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 2),
         isBackSide: false,
@@ -302,16 +263,12 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      controller.injectTestFrame(
-        isCaptureable: false,
-        stableFrames: 0,
-        userDataMatch: null,
-      );
+      _injectFrame(controller, isCaptureable: false, stableFrames: 0);
 
       expect(controller.captureState.value, isA<DniCaptureScanning>());
     });
 
-    test('processFrame after countdown completion triggers InFlight', () async {
+    test('countdown completion (elapsed >= autoCaptureMs) → InFlight', () async {
       final controller = DniCameraController(
         orchestrator: _orchestrator(autoCaptureMs: 1, minStableFrames: 1),
         isBackSide: false,
@@ -319,28 +276,20 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      // First frame: start countdown
-      controller.injectTestFrame(
-        isCaptureable: true,
-        stableFrames: 1,
-        userDataMatch: null,
-      );
+      // Start countdown
+      _injectFrame(controller, isCaptureable: true, stableFrames: 1);
       expect(controller.captureState.value, isA<DniCaptureCountingDown>());
 
-      // Small delay to let autoCaptureMs=1ms elapse
+      // Let autoCaptureMs=1ms elapse
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      // Second frame after elapsed time: triggers InFlight
-      controller.injectTestFrame(
-        isCaptureable: true,
-        stableFrames: 1,
-        userDataMatch: null,
-      );
+      // Next captureable frame: elapsed ≥ 1ms → InFlight
+      _injectFrame(controller, isCaptureable: true, stableFrames: 1);
 
       expect(controller.captureState.value, isA<DniCaptureInFlight>());
     });
 
-    test('processFrame after dispose is a no-op (does not change state)', () async {
+    test('processFrame after dispose is a no-op (state stays Done)', () async {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 1),
         isBackSide: false,
@@ -350,14 +299,33 @@ void main() {
       await controller.dispose();
       final stateAfterDispose = controller.captureState.value;
 
-      // Inject a frame after dispose: should be ignored
-      controller.injectTestFrame(
-        isCaptureable: true,
-        stableFrames: 5,
-        userDataMatch: null,
-      );
+      _injectFrame(controller, isCaptureable: true, stableFrames: 5);
 
+      // State must not change — controller is disposed
       expect(controller.captureState.value, equals(stateAfterDispose));
+    });
+
+    test('quality regression within grace period keeps CountingDown', () async {
+      final controller = DniCameraController(
+        orchestrator: _orchestrator(
+          autoCaptureMs: 1500,
+          gracePeriodMs: 600,
+          minStableFrames: 1,
+        ),
+        isBackSide: false,
+        onValidCapture: (_, __) {},
+      );
+      addTearDown(controller.dispose);
+
+      // Start countdown
+      _injectFrame(controller, isCaptureable: true, stableFrames: 1);
+      expect(controller.captureState.value, isA<DniCaptureCountingDown>());
+
+      // Brief quality regression while still within grace period (< 600ms)
+      _injectFrame(controller, isCaptureable: false, stableFrames: 0);
+
+      // Should still be counting down (grace period protects against reset)
+      expect(controller.captureState.value, isA<DniCaptureCountingDown>());
     });
   });
 
@@ -377,7 +345,7 @@ void main() {
       expect(t.failingGate, isNull);
     });
 
-    test('telemetry updates after a processed frame', () async {
+    test('telemetry updates after a processed frame', () {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 1),
         isBackSide: false,
@@ -385,16 +353,35 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      controller.injectTestFrame(
+      _injectFrame(
+        controller,
         isCaptureable: false,
         stableFrames: 3,
-        userDataMatch: null,
         failingGate: 'tilt',
       );
 
       final t = controller.telemetry.value;
       expect(t.stableFrames, equals(3));
       expect(t.failingGate, equals('tilt'));
+    });
+
+    test('telemetry with no failingGate when captureable', () {
+      final controller = DniCameraController(
+        orchestrator: _orchestrator(minStableFrames: 1),
+        isBackSide: false,
+        onValidCapture: (_, __) {},
+      );
+      addTearDown(controller.dispose);
+
+      _injectFrame(
+        controller,
+        isCaptureable: true,
+        stableFrames: 2,
+        failingGate: null,
+      );
+
+      expect(controller.telemetry.value.failingGate, isNull);
+      expect(controller.telemetry.value.stableFrames, equals(2));
     });
   });
 
@@ -408,22 +395,11 @@ void main() {
         onValidCapture: (_, __) {},
       );
 
-      // Advance to CountingDown
-      controller.injectTestFrame(
-        isCaptureable: true,
-        stableFrames: 1,
-        userDataMatch: null,
-      );
+      _injectFrame(controller, isCaptureable: true, stableFrames: 1);
       await Future<void>.delayed(const Duration(milliseconds: 10));
-      // Advance to InFlight
-      controller.injectTestFrame(
-        isCaptureable: true,
-        stableFrames: 1,
-        userDataMatch: null,
-      );
+      _injectFrame(controller, isCaptureable: true, stableFrames: 1);
       expect(controller.captureState.value, isA<DniCaptureInFlight>());
 
-      // Dispose during InFlight — must not throw
       await expectLater(controller.dispose(), completes);
     });
 
@@ -435,24 +411,37 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      // Advance to InFlight
-      controller.injectTestFrame(
-        isCaptureable: true,
-        stableFrames: 1,
-        userDataMatch: null,
-      );
+      _injectFrame(controller, isCaptureable: true, stableFrames: 1);
       await Future<void>.delayed(const Duration(milliseconds: 10));
-      controller.injectTestFrame(
-        isCaptureable: true,
-        stableFrames: 1,
-        userDataMatch: null,
-      );
+      _injectFrame(controller, isCaptureable: true, stableFrames: 1);
       expect(controller.captureState.value, isA<DniCaptureInFlight>());
 
-      // Second captureManually should be a no-op, not crash
+      // captureManually on InFlight should be a no-op
       expect(() => controller.captureManually(), returnsNormally);
-      // State remains InFlight (no double-capture)
       expect(controller.captureState.value, isA<DniCaptureInFlight>());
+    });
+
+    test('captureManually while Expired is a no-op', () {
+      final controller = DniCameraController(
+        orchestrator: _orchestrator(),
+        isBackSide: false,
+        onValidCapture: (_, __) {},
+        onDocumentExpired: (_) {},
+      );
+      addTearDown(controller.dispose);
+
+      // Inject expiration via processFrame
+      controller.processFrame(
+        validation: _fakeValidation(isCaptureable: false),
+        stableFrames: 0,
+        userDataMatch: null,
+        expirationDate: DateTime(2020, 1, 1),
+      );
+      expect(controller.captureState.value, isA<DniCaptureExpired>());
+
+      // captureManually on Expired must be no-op
+      controller.captureManually();
+      expect(controller.captureState.value, isA<DniCaptureExpired>());
     });
   });
 
@@ -470,13 +459,18 @@ void main() {
       addTearDown(controller.dispose);
 
       final pastDate = DateTime(2020, 1, 1);
-      controller.injectExpiredDocument(expirationDate: pastDate);
+      controller.processFrame(
+        validation: _fakeValidation(isCaptureable: false),
+        stableFrames: 0,
+        userDataMatch: null,
+        expirationDate: pastDate,
+      );
 
       expect(firedDate, equals(pastDate));
       expect(controller.captureState.value, isA<DniCaptureExpired>());
     });
 
-    test('expired document only fires once even if injected twice', () {
+    test('expired document only fires once even if processFrame called again', () {
       var fireCount = 0;
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
@@ -487,10 +481,95 @@ void main() {
       addTearDown(controller.dispose);
 
       final pastDate = DateTime(2020, 1, 1);
-      controller.injectExpiredDocument(expirationDate: pastDate);
-      controller.injectExpiredDocument(expirationDate: pastDate);
+      controller.processFrame(
+        validation: _fakeValidation(isCaptureable: false),
+        stableFrames: 0,
+        userDataMatch: null,
+        expirationDate: pastDate,
+      );
+      controller.processFrame(
+        validation: _fakeValidation(isCaptureable: false),
+        stableFrames: 0,
+        userDataMatch: null,
+        expirationDate: pastDate,
+      );
 
       expect(fireCount, equals(1));
+    });
+
+    test('future expiration date is NOT treated as expired', () {
+      var fired = false;
+      final controller = DniCameraController(
+        orchestrator: _orchestrator(),
+        isBackSide: false,
+        onValidCapture: (_, __) {},
+        onDocumentExpired: (_) => fired = true,
+      );
+      addTearDown(controller.dispose);
+
+      final futureDate = DateTime.now().add(const Duration(days: 365));
+      controller.processFrame(
+        validation: _fakeValidation(isCaptureable: false),
+        stableFrames: 0,
+        userDataMatch: null,
+        expirationDate: futureDate,
+      );
+
+      expect(fired, isFalse);
+      expect(controller.captureState.value, isA<DniCaptureScanning>());
+    });
+  });
+
+  // ── Group 9: onCaptureDelivered ───────────────────────────────────────────
+
+  group('DniCameraController — onCaptureDelivered', () {
+    test('onCaptureDelivered fires onValidCapture and transitions to Done', () {
+      dynamic capturedFile;
+      dynamic capturedConsensus;
+      final controller = DniCameraController(
+        orchestrator: _orchestrator(),
+        isBackSide: false,
+        onValidCapture: (file, consensus) {
+          capturedFile = file;
+          capturedConsensus = consensus;
+        },
+      );
+      addTearDown(controller.dispose);
+
+      controller.onCaptureDelivered(file: 'photo.jpg', consensus: 'some_consensus');
+
+      expect(capturedFile, equals('photo.jpg'));
+      // isBackSide=false: consensus is always null on front side
+      expect(capturedConsensus, isNull);
+      expect(controller.captureState.value, isA<DniCaptureDone>());
+    });
+
+    test('onCaptureDelivered on back side passes consensus through', () {
+      dynamic capturedConsensus;
+      final controller = DniCameraController(
+        orchestrator: _orchestrator(),
+        isBackSide: true,
+        onValidCapture: (_, consensus) => capturedConsensus = consensus,
+      );
+      addTearDown(controller.dispose);
+
+      controller.onCaptureDelivered(file: 'photo.jpg', consensus: 'back_consensus');
+
+      expect(capturedConsensus, equals('back_consensus'));
+    });
+
+    test('onCaptureDelivered after dispose is a no-op', () async {
+      var called = false;
+      final controller = DniCameraController(
+        orchestrator: _orchestrator(),
+        isBackSide: false,
+        onValidCapture: (_, __) => called = true,
+      );
+
+      await controller.dispose();
+      controller.onCaptureDelivered(file: 'photo.jpg');
+
+      expect(called, isFalse);
     });
   });
 }
