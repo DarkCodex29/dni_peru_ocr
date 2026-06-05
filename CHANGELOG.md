@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.6.9 (polish + test hygiene)
+
+Two non-breaking polish items from the judgment-day audit (Engram obs #4688):
+
+### 1. Per-field MRZ source tag in logs
+
+`OcrExtractedFields.toString()` was tagging every field with `[MRZ]` when
+the accumulator was MRZ-sourced — including the address, which the MRZ
+NEVER carries. Cosmetic but misleading during debug.
+
+Fix: only fields the MRZ actually emits (`documentNumber`, paternal /
+maternal surnames, given names, birth date, sex, expiration, nationality)
+carry the tag now. Address and any future free-text field stay untagged.
+
+### 2. Global `setUp` reset for `tiltCalculator` test seam
+
+`DocumentValidationResult.tiltCalculator` is a static mutable seam used
+only by tests. Per-test `addTearDown` already cleaned it up, but if a
+test crashed BEFORE the tearDown registered, the value leaked to every
+subsequent test. Added a global `setUp` reset in both files that touch
+the seam — defensive belt-and-suspenders against test contamination.
+
+(The seam itself is the v0.6.0 antipattern survivor `tiltCalculator` —
+will be replaced with constructor injection in v0.7.0.)
+
+### Tests
+
+2 new tests in `test/data/ocr_field_extractor_test.dart`:
+- MRZ-sourced fields tagged, address untagged.
+- Non-MRZ accumulator: no tags at all.
+
+**521/521 tests pass.** `flutter analyze` clean.
+
+### Consumer impact
+
+No public API changes. Patch release. Bump SHA only.
+
 ## 0.6.8 (bugfix)
 
 Address vote consolidation across OCR micro-variants. Reported by JC against

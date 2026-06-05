@@ -191,12 +191,33 @@ class OcrExtractedFields {
     'Dirección': address,
   };
 
+  /// Fields that the MRZ parser can populate (when MRZ checksum is valid).
+  /// The MRZ ICAO 9303 TD1 format used by Peruvian DNI carries the document
+  /// number, surnames, given names, birth date, sex, expiry, and nationality.
+  /// It does NOT carry the address — that field always comes from text-OCR.
+  static const _kMrzSourcedKeys = {
+    'N° Documento',
+    'Apellido paterno',
+    'Apellido materno',
+    'Nombres',
+    'Nacimiento',
+    'Sexo',
+    'Caducidad',
+    'Nacionalidad',
+  };
+
   @override
   String toString() {
     final buf = StringBuffer();
-    final src = _fromMrz ? ' [MRZ]' : '';
     for (final entry in fields.entries) {
       final status = entry.value != null ? '✅' : '⬜';
+      // Per-field source tag: an MRZ-sourced accumulator can only attach
+      // [MRZ] to fields the MRZ actually carries. The address is never in
+      // the MRZ — even when this accumulator is MRZ-sourced, the address
+      // came from text-OCR, so it must NOT be tagged [MRZ].
+      final src = (_fromMrz && _kMrzSourcedKeys.contains(entry.key))
+          ? ' [MRZ]'
+          : '';
       buf.writeln('$status ${entry.key}: ${entry.value ?? '—'}$src');
     }
     return buf.toString();
