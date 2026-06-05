@@ -955,4 +955,118 @@ void main() {
       },
     );
   });
+
+  // ── BUG G regression — address vote consolidation across OCR variants ───
+  //
+  // ML Kit emits the same DNI address in many micro-variants across frames
+  // because each frame has slightly different OCR noise. Without
+  // consolidation, every variant lands in its own single-vote bucket and
+  // the `reduce(max)` winner is non-deterministic — often the corrupted
+  // variant ends up displayed on screen.
+  //
+  // Real JC case against v0.6.7: log shows MILAGRO across frames, UI shows
+  // MLAGRO (missing I). Root cause: ambiguous bucket tie-break.
+  group('BUG G regression — address vote consolidation', () {
+    test(
+      'progressive completion: shorter variants merge into the longest',
+      () {
+        // Frames captured the address growing across captures. Earlier
+        // frames have the prefix, later frames have the full address.
+        final builder = OcrConsensusAccumulator()
+          ..recordVote({'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO'})
+          ..recordVote({'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ'})
+          ..recordVote({'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B'})
+          ..recordVote({
+            'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B LT.19',
+          });
+
+        final snap = builder.snapshot();
+        expect(
+          snap.address.value,
+          'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B LT.19',
+          reason: 'longest variant in the prefix chain must win',
+        );
+        builder.dispose();
+      },
+    );
+
+    test(
+      'OCR glitch in one frame is outvoted by the well-read majority',
+      () {
+        // 3 frames read MILAGRO correctly, 1 frame mangled to MLAGRO.
+        // The mangled frame must NOT win even though all 4 variants
+        // would otherwise have 1 vote each.
+        final builder = OcrConsensusAccumulator()
+          ..recordVote({
+            'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B LT.19',
+          })
+          ..recordVote({
+            'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B LT.19',
+          })
+          ..recordVote({
+            'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B LT.19',
+          })
+          ..recordVote({
+            'address': 'ASENT H15 DE ABRIL CALLE EL MLAGRO MZ.B LT.19',
+          });
+
+        final snap = builder.snapshot();
+        expect(
+          snap.address.value,
+          contains('MILAGRO'),
+          reason: 'majority MILAGRO wins; single MLAGRO frame is consolidated',
+        );
+        expect(snap.address.value, isNot(contains('MLAGRO')));
+        builder.dispose();
+      },
+    );
+
+    test(
+      'all variants 1-vote, longest wins (deterministic tie-break)',
+      () {
+        // Worst case: every frame got a different micro-variant. The
+        // previous behaviour returned whichever variant Map.reduce
+        // happened to encounter last (non-deterministic). The new logic
+        // groups them all together and the LONGEST variant wins.
+        final builder = OcrConsensusAccumulator()
+          ..recordVote({'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO'})
+          ..recordVote({'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ'})
+          ..recordVote({'address': 'ASENT HI5 DE ABRIL CALLE EL MILAGRO MZ'})
+          ..recordVote({
+            'address': 'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B LT.19',
+          })
+          ..recordVote({
+            'address': 'ASENT H15 DE ABRIL CALLE EL MLAGRO MZ.B LT.19',
+          });
+
+        final snap = builder.snapshot();
+        // The longest variant (which is the well-read one in this case)
+        // must win.
+        expect(
+          snap.address.value,
+          'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B LT.19',
+        );
+        builder.dispose();
+      },
+    );
+
+    test(
+      'unrelated addresses do NOT consolidate',
+      () {
+        // Defensive: if two completely different addresses are voted (very
+        // unlikely in practice but possible if the user moves the document
+        // mid-scan), they should remain separate groups and the majority
+        // wins. We do NOT want to merge unrelated content.
+        final builder = OcrConsensusAccumulator()
+          ..recordVote({'address': 'AV LOS PINOS 123 MAGDALENA'})
+          ..recordVote({'address': 'AV LOS PINOS 123 MAGDALENA'})
+          ..recordVote({'address': 'JR HUANUCO 456 LIMA'});
+
+        final snap = builder.snapshot();
+        expect(snap.address.value, contains('LOS PINOS'));
+        expect(snap.address.value, isNot(contains('HUANUCO')));
+        builder.dispose();
+      },
+    );
+  });
 }

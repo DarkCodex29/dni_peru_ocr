@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.6.8 (bugfix)
+
+Address vote consolidation across OCR micro-variants. Reported by JC against
+v0.6.7: log showed `MILAGRO` across frames, UI showed `MLAGRO` (missing `I`).
+
+### Root cause
+
+ML Kit emits the same DNI address in many micro-variants across frames
+because each frame has slightly different OCR noise:
+
+| Frame | OCR output |
+|---|---|
+| 1 | `ASENT H15 DE ABRIL CALLE EL MILAGRO` |
+| 2 | `ASENT H15 DE ABRIL CALLE EL MILAGRO MZ` |
+| 3 | `ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B LT.19` |
+| 4 | `ASENT H15 DE ABRIL CALLE EL MLAGRO MZ.B LT.19` |
+
+The previous `_voteResult` gave each variant its own bucket, so a
+`reduce(max)` over single-vote buckets returned a non-deterministic winner
+— whichever variant Dart's `Map.entries` iteration happened to encounter
+last. In JC's case the corrupted `MLAGRO` variant kept winning.
+
+### Fix
+
+Address voting now consolidates near-duplicate variants:
+
+1. Sort buckets by string length descending.
+2. For each bucket starting from the longest, absorb every shorter bucket
+   that is either:
+   - A whitespace+dot-collapsed PREFIX of the longer string, OR
+   - ≥ 80% Levenshtein-similar to the longer string.
+3. The longest string in each consolidated group wins; its absorbed votes
+   sum.
+4. The group with the highest combined vote count wins.
+
+This guarantees deterministic, monotonically-preferring-completeness
+behaviour:
+
+| Scenario | Winner (v0.6.8) |
+|---|---|
+| Progressive completion across frames | The longest variant |
+| 3× `MILAGRO` + 1× `MLAGRO` | `MILAGRO` (3-vote group beats 1-vote) |
+| 5 different micro-variants, all 1 vote | The longest |
+| Two unrelated addresses (rare) | The majority — no false merge |
+
+Non-address fields (`firstName`, `lastName`, `secondLastName`,
+`documentNumber`) keep the original strict equality voting. Only `address`
+needed this looser policy because its content is free-text and ML Kit OCR
+of the back-side stub is the noisiest signal in the pipeline.
+
+### Tests
+
+4 new regression tests in `test/data/ocr_consensus_test.dart`:
+
+1. `progressive completion: shorter variants merge into the longest`
+2. `OCR glitch in one frame is outvoted by the well-read majority`
+3. `all variants 1-vote, longest wins (deterministic tie-break)`
+4. `unrelated addresses do NOT consolidate` (defensive)
+
+**519/519 tests pass.** `flutter analyze` clean.
+
+### Consumer impact
+
+No public API changes. Patch release. Bump SHA only.
+
 ## 0.6.7 (bugfix)
 
 Address continuation across ML Kit line splits — reported by JC against v0.6.6.
