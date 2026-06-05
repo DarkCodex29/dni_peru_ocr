@@ -548,4 +548,186 @@ void main() {
       builder.dispose();
     });
   });
+
+  // ── BUG 3 regression tests — JC v0.6.0 feedback (obs #4673) ────────────────
+  //
+  // Two distinct bugs in OcrConsensusAccumulator that cause empty firstName /
+  // lastName to leak through to the consumer:
+  //
+  // BUG 3A — `_buildMrzResultFromFields` is ASYMMETRIC:
+  //   `secondLastName` falls back to the vote map when MRZ buffer is null,
+  //   but `firstName` and `lastName` DO NOT. A back-side frame with partial
+  //   MRZ (missing names) overrides the front-side seed votes.
+  //
+  // BUG 3B — `lockFromMrzFields` OVERWRITES the entire buffer:
+  //   Each call replaces the buffer rather than merging field-by-field.
+  //   If frame 1 has all fields and frame 2 has nulls, the buffer ends up
+  //   with the nulls and the lock fires with empty data.
+  //
+  // Combined symptom: real Peruvian DNI back-side where MRZ checksum passes
+  // but ML Kit OCR drops a character on a name line → snapshot returns
+  // `firstName: null`, `lastName: null`, and InClub falls back to UserPreference
+  // (violating the "OCR ALWAYS WINS" architectural decision).
+  group('BUG 3 regression — front-side seed must survive partial back-side MRZ', () {
+    test(
+      'BUG 3A: snapshot falls back to vote map for firstName/lastName when buffer is null',
+      () {
+        // Simulate the front-side scan: text-OCR captured firstName/lastName
+        // and the widget seeded the back-side accumulator with these votes.
+        final builder = OcrConsensusAccumulator()
+          ..recordVote({
+            'firstName': 'JOSE CARLOS JOAO',
+            'lastName': 'MORENO',
+            'secondLastName': 'ALEMAN',
+            'documentNumber': '71542895',
+            'dateOfBirth': '01/09/1994',
+            'expirationDate': '19/02/2028',
+          })
+          // Front seeds again to reach the vote threshold.
+          ..recordVote({
+            'firstName': 'JOSE CARLOS JOAO',
+            'lastName': 'MORENO',
+            'secondLastName': 'ALEMAN',
+            'documentNumber': '71542895',
+            'dateOfBirth': '01/09/1994',
+            'expirationDate': '19/02/2028',
+          });
+
+        // Back-side MRZ frame parses documentNumber + dates but ML Kit
+        // garbled the names line, so firstName/lastName come null.
+        // This MUST NOT erase the front-side seed.
+        builder.lockFromMrzFields(
+          documentNumber: '71542895',
+          firstName: null,
+          lastName: null,
+          secondLastName: null,
+          dateOfBirth: '01/09/1994',
+          expirationDate: '19/02/2028',
+        );
+
+        final snap = builder.snapshot();
+        expect(
+          snap.firstName.value,
+          'JOSE CARLOS JOAO',
+          reason: 'firstName must fall back to vote map when MRZ buffer is null',
+        );
+        expect(
+          snap.lastName.value,
+          'MORENO',
+          reason: 'lastName must fall back to vote map when MRZ buffer is null',
+        );
+        expect(
+          snap.documentNumber.value,
+          '71542895',
+          reason: 'documentNumber comes from MRZ buffer directly',
+        );
+        builder.dispose();
+      },
+    );
+
+    test(
+      'BUG 3B: lockFromMrzFields merges with previous buffer instead of overwriting',
+      () {
+        final builder = OcrConsensusAccumulator();
+
+        // Frame 1 of back-side: MRZ parses fully.
+        builder.lockFromMrzFields(
+          documentNumber: '71542895',
+          firstName: 'JOSE CARLOS JOAO',
+          lastName: 'MORENO',
+          secondLastName: 'ALEMAN',
+          dateOfBirth: '01/09/1994',
+          expirationDate: '19/02/2028',
+        );
+
+        // Frame 2 of back-side: MRZ checksum still valid (so the lock counter
+        // advances) but ML Kit dropped a character on the names line so
+        // firstName/lastName/secondLastName come null. documentNumber still ok.
+        builder.lockFromMrzFields(
+          documentNumber: '71542895',
+          firstName: null,
+          lastName: null,
+          secondLastName: null,
+          dateOfBirth: '01/09/1994',
+          expirationDate: '19/02/2028',
+        );
+
+        // After both frames the accumulator should be locked AND retain
+        // the names from frame 1.
+        expect(builder.isMrzLocked, isTrue);
+        final snap = builder.snapshot();
+        expect(
+          snap.firstName.value,
+          'JOSE CARLOS JOAO',
+          reason: 'frame 2 must NOT erase the names captured in frame 1',
+        );
+        expect(snap.lastName.value, 'MORENO');
+        expect(snap.secondLastName.value, 'ALEMAN');
+        expect(snap.documentNumber.value, '71542895');
+        builder.dispose();
+      },
+    );
+
+    test(
+      'end-to-end: front seed + 2 back-side frames with partial MRZ → snapshot is complete',
+      () {
+        // This is the exact scenario from JC's logs (obs #4673):
+        //   - Front-side scan accumulated text-OCR fields
+        //   - Widget seeded back-side accumulator via recordVote (front fields)
+        //   - Back-side MRZ frame 1 parses cleanly
+        //   - Back-side MRZ frame 2 parses checksum-valid but with name garbled
+        //   - Snapshot must return COMPLETE data (not null names)
+        final builder = OcrConsensusAccumulator()
+          // Front seed (simulates camera_overlay_mask.dart:266 recordVote).
+          ..recordVote({
+            'firstName': 'JOSE CARLOS JOAO',
+            'lastName': 'MORENO',
+            'secondLastName': 'ALEMAN',
+            'documentNumber': '71542895',
+            'dateOfBirth': '01/09/1994',
+            'expirationDate': '19/02/2028',
+          })
+          ..recordVote({
+            'firstName': 'JOSE CARLOS JOAO',
+            'lastName': 'MORENO',
+            'secondLastName': 'ALEMAN',
+            'documentNumber': '71542895',
+            'dateOfBirth': '01/09/1994',
+            'expirationDate': '19/02/2028',
+          })
+          // Back frame 1: clean MRZ.
+          ..lockFromMrzFields(
+            documentNumber: '71542895',
+            firstName: 'JOSE CARLOS JOAO',
+            lastName: 'MORENO',
+            secondLastName: 'ALEMAN',
+            dateOfBirth: '01/09/1994',
+            expirationDate: '19/02/2028',
+          )
+          // Back frame 2: MRZ checksum valid but name line garbled → nulls.
+          ..lockFromMrzFields(
+            documentNumber: '71542895',
+            firstName: null,
+            lastName: null,
+            secondLastName: null,
+            dateOfBirth: '01/09/1994',
+            expirationDate: '19/02/2028',
+          );
+
+        final snap = builder.snapshot();
+        expect(snap.success, isTrue);
+        expect(snap.documentNumber.value, '71542895');
+        expect(
+          snap.firstName.value,
+          'JOSE CARLOS JOAO',
+          reason: 'firstName must be preserved across all stages',
+        );
+        expect(snap.lastName.value, 'MORENO');
+        expect(snap.secondLastName.value, 'ALEMAN');
+        expect(snap.dateOfBirth.value, '01/09/1994');
+        expect(snap.expirationDate.value, '19/02/2028');
+        builder.dispose();
+      },
+    );
+  });
 }
