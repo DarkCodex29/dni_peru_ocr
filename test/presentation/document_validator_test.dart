@@ -62,7 +62,6 @@ void main() {
   group('Presence validation (Step 1)', () {
     test('0 blocks → not capturable, white border, "Posiciona" message', () {
       final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
         recognizedText: makeRecognizedText(count: 0),
         imageSize: kTestImageSize,
       );
@@ -74,7 +73,6 @@ void main() {
 
     test('1 block → not capturable', () {
       final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
         recognizedText: makeRecognizedText(count: 1),
         imageSize: kTestImageSize,
       );
@@ -89,7 +87,6 @@ void main() {
       () {
         // 2 blocks passes presence (≥2) but hits the < 5 line-count guard → align_document.
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 2),
           imageSize: kTestImageSize,
         );
@@ -103,7 +100,6 @@ void main() {
       '3 blocks inside hole with good fill → NOT capturable (line-count guard)',
       () {
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 3),
           imageSize: kTestImageSize,
         );
@@ -117,7 +113,6 @@ void main() {
       '5 blocks inside hole with good fill → capturable (passes line-count guard)',
       () {
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
         );
@@ -144,7 +139,6 @@ void main() {
       () {
         const box = Rect.fromLTRB(-200, 250, 1000, 750);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: textWith2Blocks(box),
           imageSize: kTestImageSize,
         );
@@ -158,7 +152,6 @@ void main() {
     test('GBB outside padded hole to the right → not capturable', () {
       const box = Rect.fromLTRB(250, 250, 2100, 750);
       final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
         recognizedText: textWith2Blocks(box),
         imageSize: kTestImageSize,
       );
@@ -171,7 +164,6 @@ void main() {
     test('GBB outside padded hole to the top → not capturable', () {
       const box = Rect.fromLTRB(250, 20, 1650, 500);
       final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
         recognizedText: textWith2Blocks(box),
         imageSize: kTestImageSize,
       );
@@ -185,7 +177,6 @@ void main() {
       // bottom=1060 > paddedHole.bottom(1053); narrow width keeps fill ≤ 0.85
       const box = Rect.fromLTRB(350, 250, 950, 1060);
       final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
         recognizedText: textWith2Blocks(box),
         imageSize: kTestImageSize,
       );
@@ -201,7 +192,6 @@ void main() {
         // Box sits inside paddedHole with fill ≤ 0.85; 5 blocks for guard bypass.
         const box = Rect.fromLTRB(200, 103, 1650, 750);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: textWith5Blocks(box),
           imageSize: kTestImageSize,
         );
@@ -214,7 +204,6 @@ void main() {
       // left=-145 < paddedHole.left(-144) → fails containment
       const box = Rect.fromLTRB(-145, 250, 655, 800);
       final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
         recognizedText: textWith2Blocks(box),
         imageSize: kTestImageSize,
       );
@@ -240,7 +229,6 @@ void main() {
       () {
         const box = Rect.fromLTRB(400, 300, 500, 400);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: textWith2Blocks(box),
           imageSize: kTestImageSize,
         );
@@ -254,7 +242,6 @@ void main() {
     test('GBB inside hole with fill ≈ 0.36 → capturable', () {
       const box = Rect.fromLTRB(300, 200, 980, 810);
       final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
         recognizedText: textWith5Blocks(box),
         imageSize: kTestImageSize,
       );
@@ -265,7 +252,6 @@ void main() {
     test('GBB inside hole with fill ≈ 0.10 → not capturable', () {
       const box = Rect.fromLTRB(400, 250, 740, 590);
       final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
         recognizedText: textWith2Blocks(box),
         imageSize: kTestImageSize,
       );
@@ -282,7 +268,6 @@ void main() {
       '5 blocks, well-positioned, good fill → capturable, green, "¡Perfecto!"',
       () {
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
         );
@@ -297,7 +282,6 @@ void main() {
       '4 blocks, well-positioned → NOT capturable (line-count guard fires)',
       () {
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 4),
           imageSize: kTestImageSize,
         );
@@ -314,7 +298,6 @@ void main() {
       'presence checked before containment: 1 block even if well-positioned → Step 1 message',
       () {
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(
             count: 1,
             boundingBox: kGoodDocumentBox,
@@ -334,7 +317,6 @@ void main() {
         // GBB left=-200 < paddedHole.left(-144) → containment fires before fill
         const outsideBox = Rect.fromLTRB(-200, 250, 1650, 750);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 2, boundingBox: outsideBox),
           imageSize: kTestImageSize,
         );
@@ -362,7 +344,6 @@ void main() {
         // left=-200 fails containment without OCR; narrow width keeps fill ≤ 0.85
         const box = Rect.fromLTRB(-200, 250, 600, 800);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: textWith5Blocks(box),
           imageSize: kTestImageSize,
           ocrMatchesUser: true,
@@ -380,7 +361,6 @@ void main() {
         // fill ≈ 0.196 passes _minFillRatioWithOcr=0.15 but would fail _minFillRatio=0.20
         const box = Rect.fromLTRB(400, 250, 900, 700);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: textWith5Blocks(box),
           imageSize: kTestImageSize,
           ocrMatchesUser: true,
@@ -397,7 +377,6 @@ void main() {
         // fill ≈ 0.009 < 0.15 — below even the relaxed OCR threshold
         const box = Rect.fromLTRB(400, 300, 500, 400);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: textWith2Blocks(box),
           imageSize: kTestImageSize,
           ocrMatchesUser: true,
@@ -414,7 +393,6 @@ void main() {
         // left=-200 < paddedHole.left(-144); narrow box keeps fill ≤ 0.85
         const box = Rect.fromLTRB(-200, 250, 600, 800);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: textWith2Blocks(box),
           imageSize: kTestImageSize,
         );
@@ -444,7 +422,6 @@ void main() {
         // W=1580, H=618 → area=976440 → fill≈0.852 > 0.85
         const box = Rect.fromLTRB(170, 111, 1750, 729);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: front2Blocks(box),
           imageSize: kTestImageSize,
         );
@@ -460,7 +437,6 @@ void main() {
       () {
         const box = Rect.fromLTRB(170, 111, 1750, 729);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: back2Blocks(box),
           imageSize: kTestImageSize,
           isBackSide: true,
@@ -478,7 +454,6 @@ void main() {
         // W=1560, H=624 → area=973440 → fill≈0.8496 ≤ 0.85; 5 blocks for guard bypass
         const box = Rect.fromLTRB(180, 108, 1740, 732);
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: front5Blocks(box),
           imageSize: kTestImageSize,
         );
@@ -503,7 +478,6 @@ void main() {
       '0 OCR lines → isCaptureable=false, tilt NOT evaluated (no Endereza message)',
       () {
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 0),
           imageSize: kTestImageSize,
         );
@@ -517,7 +491,6 @@ void main() {
       '4 OCR lines → isCaptureable=false, message="align_document", tilt NOT evaluated',
       () {
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 4),
           imageSize: kTestImageSize,
         );
@@ -531,7 +504,6 @@ void main() {
       '5 OCR lines → tilt gate runs; injected 20° tilt → "Endereza" (not guard)',
       () {
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
         );
@@ -557,7 +529,6 @@ void main() {
       () {
         DocumentValidationResult.tiltCalculator = (_) => 20.0;
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
         );
@@ -575,7 +546,6 @@ void main() {
         // But line-count guard requires 5 — use 5 blocks.
         DocumentValidationResult.tiltCalculator = (_) => 20.0;
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
           isBackSide: true,
@@ -592,7 +562,6 @@ void main() {
       () {
         DocumentValidationResult.tiltCalculator = (_) => 5.0;
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
         );
@@ -609,7 +578,6 @@ void main() {
         // 12° must be accepted to avoid a false-positive "Endereza" loop. See obs #3161.
         DocumentValidationResult.tiltCalculator = (_) => 12.0;
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
         );
@@ -623,7 +591,6 @@ void main() {
       () {
         DocumentValidationResult.tiltCalculator = (_) => 15.0;
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
         );
@@ -637,7 +604,6 @@ void main() {
       () {
         DocumentValidationResult.tiltCalculator = (_) => -20.0;
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5),
           imageSize: kTestImageSize,
         );
@@ -655,7 +621,6 @@ void main() {
         DocumentValidationResult.tiltCalculator = (_) => 20.0;
         const smallBox = Rect.fromLTRB(400, 300, 500, 400); // fill ≈ 0.009
         final result = DocumentValidationResult.evaluate(
-      theme: kTheme,
           recognizedText: makeRecognizedText(count: 5, boundingBox: smallBox),
           imageSize: kTestImageSize,
         );

@@ -47,8 +47,6 @@ RecognizedText _makeRecognizedText({
 const _kImageSize = Size(1920, 1080);
 
 void main() {
-  final theme = KycTheme.defaults();
-
   group('ValidationGate enum — enum values', () {
     // ── All 6 cases must exist ──────────────────────────────────────────────
 
@@ -116,7 +114,6 @@ void main() {
       final result = DocumentValidationResult.evaluate(
         recognizedText: _makeRecognizedText(count: 5),
         imageSize: _kImageSize,
-        theme: theme,
       );
       expect(result.isCaptureable, isTrue);
       expect(result.failingGate, isNull);
@@ -126,7 +123,6 @@ void main() {
       final result = DocumentValidationResult.evaluate(
         recognizedText: _makeRecognizedText(count: 0),
         imageSize: _kImageSize,
-        theme: theme,
       );
       expect(result.failingGate, ValidationGate.minBlocks);
     });
@@ -135,7 +131,6 @@ void main() {
       final result = DocumentValidationResult.evaluate(
         recognizedText: _makeRecognizedText(count: 2),
         imageSize: _kImageSize,
-        theme: theme,
       );
       expect(result.failingGate, ValidationGate.lineCount);
     });
@@ -148,7 +143,6 @@ void main() {
       final result = DocumentValidationResult.evaluate(
         recognizedText: _makeRecognizedText(count: 5, boundingBox: bigBox),
         imageSize: _kImageSize,
-        theme: theme,
       );
       expect(result.failingGate, ValidationGate.fillHigh);
     });
@@ -160,7 +154,6 @@ void main() {
       final result = DocumentValidationResult.evaluate(
         recognizedText: _makeRecognizedText(count: 5, boundingBox: smallBox),
         imageSize: _kImageSize,
-        theme: theme,
       );
       expect(result.failingGate, ValidationGate.fillLow);
     });
@@ -173,7 +166,6 @@ void main() {
       final result = DocumentValidationResult.evaluate(
         recognizedText: _makeRecognizedText(count: 5),
         imageSize: _kImageSize,
-        theme: theme,
       );
       expect(result.failingGate, ValidationGate.tilt);
     });
@@ -184,7 +176,6 @@ void main() {
       final result = DocumentValidationResult.evaluate(
         recognizedText: _makeRecognizedText(count: 0),
         imageSize: _kImageSize,
-        theme: theme,
       );
       // This line will fail to compile if failingGate is String? — the
       // switch expression requires exhaustive matching on ValidationGate.

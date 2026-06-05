@@ -434,7 +434,6 @@ class _DniCameraMaskState extends State<DniCameraMask>
     final result = DocumentValidationResult.evaluate(
       recognizedText: recognized,
       imageSize: imageSize,
-      theme: _theme,
       ocrMatchesUser: dataMatch == true,
       isBackSide: widget.isBackSide,
     );
@@ -689,14 +688,14 @@ class _DniCameraMaskState extends State<DniCameraMask>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (widget.isLoading && !widget.isBackSide)
-                        Icon(
+                        const Icon(
                           Icons.check_circle_rounded,
                           color: Color(0xFF69F0AE),
                           size: 52,
                         )
                       else
                         CircularProgressIndicator(color: theme.white),
-                      SizedBox(height: 16),
+                      const SizedBox(height: 16),
                       Text(
                         _loadingMessage,
                         textAlign: TextAlign.center,
