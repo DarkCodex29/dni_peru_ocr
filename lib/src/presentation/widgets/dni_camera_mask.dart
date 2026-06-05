@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '_mask_painter.dart';
+
 import '../../data/ocr_consensus.dart';
 import '../../data/ocr_field_extractor.dart';
 import '../../domain/entities/user_verification_data.dart';
@@ -722,7 +724,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
                     final isPulsing =
                         !_isCaptureable && !widget.isLoading && !_isCapturingFromState;
                     return CustomPaint(
-                      painter: _MaskPainter(
+                      painter: MaskPainter(
                         holeWidth: widget.holeWidth,
                         holeHeight: widget.holeHeight,
                         borderColor: isPulsing
@@ -863,6 +865,37 @@ class _DniCameraMaskState extends State<DniCameraMask>
   }
 }
 
+/// Pure helper for the document stability counter.
+///
+/// Encapsulates the update logic for `_stableFrames` so it can be tested
+/// independently from the widget's camera image stream.
+///
+/// The `update` method receives the current counter value, the absolute
+/// block-count diff between frames, and an isEmpty flag. It returns the
+/// new counter value to assign to `_stableFrames`.
+@visibleForTesting
+class StabilityState {
+  const StabilityState._();
+
+  /// Returns the next value of the stability counter.
+  ///
+  /// A frame is "stable" when [blockDiff] ≤ 2 AND [isEmpty] is false.
+  /// Stable → increment by 1.
+  /// Unstable → decrement by 1, floored at 0 (REQ-STAB-1 forgiveness).
+  static int update({
+    required int current,
+    required int blockDiff,
+    required bool isEmpty,
+  }) {
+    if (blockDiff <= 2 && !isEmpty) {
+      return current + 1;
+    }
+    return math.max(0, current - 1);
+  }
+}
+
+// ─── Private UI sub-widgets ────────────────────────────────────────────────
+
 class _ManualCapturePanel extends StatelessWidget {
   const _ManualCapturePanel({
     required this.isBackSide,
@@ -877,7 +910,7 @@ class _ManualCapturePanel extends StatelessWidget {
     final theme = KycTheme.of(context);
     return Container(
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: Color(0xCC0D0D1A),
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -889,12 +922,9 @@ class _ManualCapturePanel extends StatelessWidget {
                 ? 'Encuadra el reverso del DNI y toca para capturar'
                 : 'Encuadra el anverso del DNI y toca para capturar',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: theme.white70,
-              fontSize: 13,
-            ),
+            style: TextStyle(color: theme.white70, fontSize: 13),
           ),
-          SizedBox(height: 20),
+          const SizedBox(height: 20),
           GestureDetector(
             onTap: onPressed,
             child: Container(
@@ -914,14 +944,14 @@ class _ManualCapturePanel extends StatelessWidget {
               ),
             ),
           ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           Text(
             'Capturar',
             style: TextStyle(
               color: theme.white,
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              shadows: [Shadow(blurRadius: 4)],
+              shadows: const [Shadow(blurRadius: 4)],
             ),
           ),
         ],
@@ -941,9 +971,7 @@ class _SideIntroRibbon extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.overlayMedium,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: theme.white.withValues(alpha: 0.2),
-        ),
+        border: Border.all(color: theme.white.withValues(alpha: 0.2)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -973,8 +1001,8 @@ class _SideIntroRibbon extends StatelessWidget {
 }
 
 /// Debug-only HUD that surfaces the G.1 telemetry signals on top of the
-/// camera preview. Renders nothing in release builds (the entry point in
-/// `DniCameraMask.build` is wrapped in `if (kDebugMode)`).
+/// camera preview. Entry point in [DniCameraMask.build] is wrapped in
+/// `if (kDebugMode)` so this renders nothing in release builds.
 class _G1TelemetryOverlay extends StatelessWidget {
   const _G1TelemetryOverlay({
     required this.tilt,
@@ -1010,7 +1038,6 @@ class _G1TelemetryOverlay extends StatelessWidget {
       fontFamily: 'monospace',
       height: 1.25,
     );
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
@@ -1083,248 +1110,6 @@ class _GuideTextBanner extends StatelessWidget {
   }
 }
 
-// ─── Mask painter ─────────────────────────────────────────────────────────────
-
-class _MaskPainter extends CustomPainter {
-  const _MaskPainter({
-    required this.holeWidth,
-    required this.holeHeight,
-    required this.borderColor,
-    required this.overlayColor,
-    required this.countdownProgress,
-    this.scanProgress = 0,
-  });
-
-  final double holeWidth;
-  final double holeHeight;
-  final Color borderColor;
-  final Color overlayColor;
-  final double countdownProgress;
-  final double scanProgress;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-
-    final fullPath = Path()
-      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-
-    final holePath = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: Offset(cx, cy),
-            width: holeWidth,
-            height: holeHeight,
-          ),
-          const Radius.circular(8),
-        ),
-      );
-
-    canvas.drawPath(
-      Path.combine(PathOperation.difference, fullPath, holePath),
-      Paint()..color = overlayColor,
-    );
-
-    _drawCornerMarkers(canvas, cx, cy);
-    _drawScanLine(canvas, cx, cy);
-    if (countdownProgress > 0) _drawRectCountdown(canvas, cx, cy);
-  }
-
-  /// Horizontal scan line sweeping vertically through the document hole.
-  void _drawScanLine(Canvas canvas, double cx, double cy) {
-    final l = cx - holeWidth / 2;
-    final t = cy - holeHeight / 2;
-    final r = cx + holeWidth / 2;
-    final b = cy + holeHeight / 2;
-    final scanY = t + (b - t) * scanProgress;
-    final gradientRect = Rect.fromLTRB(l, scanY - 6, r, scanY + 6);
-
-    canvas
-      ..save()
-      ..clipRect(Rect.fromLTRB(l, t, r, b))
-      // Glow layer
-      ..drawLine(
-        Offset(l, scanY),
-        Offset(r, scanY),
-        Paint()
-          ..shader = const LinearGradient(
-            colors: [Color(0x00FFFFFF), Color(0x1EFFFFFF), Color(0x00FFFFFF)],
-          ).createShader(gradientRect)
-          ..strokeWidth = 12
-          ..style = PaintingStyle.stroke,
-      )
-      // Core line
-      ..drawLine(
-        Offset(l, scanY),
-        Offset(r, scanY),
-        Paint()
-          ..shader = const LinearGradient(
-            colors: [Color(0x00FFFFFF), Color(0x8CFFFFFF), Color(0x00FFFFFF)],
-          ).createShader(gradientRect)
-          ..strokeWidth = 1.5
-          ..style = PaintingStyle.stroke,
-      )
-      ..restore();
-  }
-
-  /// Draws a clockwise-filling border around the document rect as the
-  /// auto-capture countdown progresses (0 → 1).
-  void _drawRectCountdown(Canvas canvas, double cx, double cy) {
-    final l = cx - holeWidth / 2;
-    final t = cy - holeHeight / 2;
-    final r = cx + holeWidth / 2;
-    final b = cy + holeHeight / 2;
-
-    final perimeter = 2 * (holeWidth + holeHeight);
-    var remaining = perimeter * countdownProgress;
-
-    final path = Path()..moveTo(l, t);
-
-    final seg1 = math.min(remaining, holeWidth);
-    path.lineTo(l + seg1, t);
-    remaining -= seg1;
-
-    if (remaining > 0) {
-      final seg2 = math.min(remaining, holeHeight);
-      path.lineTo(r, t + seg2);
-      remaining -= seg2;
-    }
-    if (remaining > 0) {
-      final seg3 = math.min(remaining, holeWidth);
-      path.lineTo(r - seg3, b);
-      remaining -= seg3;
-    }
-    if (remaining > 0) {
-      final seg4 = math.min(remaining, holeHeight);
-      path.lineTo(l, b - seg4);
-    }
-
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = borderColor
-        ..strokeWidth = 3.5
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
-  }
-
-  void _drawCornerMarkers(Canvas canvas, double cx, double cy) {
-    const markerLen = 24.0;
-    const strokeW = 4.0;
-    const radius = 8.0;
-
-    final paint = Paint()
-      ..color = borderColor
-      ..strokeWidth = strokeW
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    final l = cx - holeWidth / 2;
-    final t = cy - holeHeight / 2;
-    final r = cx + holeWidth / 2;
-    final b = cy + holeHeight / 2;
-
-    canvas
-      ..drawLine(
-        Offset(l + radius, t),
-        Offset(l + radius + markerLen, t),
-        paint,
-      )
-      ..drawLine(
-        Offset(l, t + radius),
-        Offset(l, t + radius + markerLen),
-        paint,
-      )
-      ..drawArc(
-        Rect.fromCircle(center: Offset(l + radius, t + radius), radius: radius),
-        3.14159,
-        0.5 * 3.14159,
-        false,
-        paint,
-      )
-      ..drawLine(
-        Offset(r - radius, t),
-        Offset(r - radius - markerLen, t),
-        paint,
-      )
-      ..drawLine(
-        Offset(r, t + radius),
-        Offset(r, t + radius + markerLen),
-        paint,
-      )
-      ..drawArc(
-        Rect.fromCircle(center: Offset(r - radius, t + radius), radius: radius),
-        1.5 * 3.14159,
-        0.5 * 3.14159,
-        false,
-        paint,
-      )
-      ..drawLine(
-        Offset(l + radius, b),
-        Offset(l + radius + markerLen, b),
-        paint,
-      )
-      ..drawLine(
-        Offset(l, b - radius),
-        Offset(l, b - radius - markerLen),
-        paint,
-      )
-      ..drawArc(
-        Rect.fromCircle(center: Offset(l + radius, b - radius), radius: radius),
-        0.5 * 3.14159,
-        0.5 * 3.14159,
-        false,
-        paint,
-      )
-      ..drawLine(
-        Offset(r - radius, b),
-        Offset(r - radius - markerLen, b),
-        paint,
-      )
-      ..drawLine(
-        Offset(r, b - radius),
-        Offset(r, b - radius - markerLen),
-        paint,
-      )
-      ..drawArc(
-        Rect.fromCircle(center: Offset(r - radius, b - radius), radius: radius),
-        0,
-        0.5 * 3.14159,
-        false,
-        paint,
-      );
-  }
-
-  // ignore: unused_element
-  void _drawDashedPath(Canvas canvas, Path path, Paint paint) {
-    const dash = 10.0;
-    const gap = 6.0;
-    for (final metric in path.computeMetrics()) {
-      double d = 0;
-      bool draw = true;
-      while (d < metric.length) {
-        final len = draw ? dash : gap;
-        if (draw) canvas.drawPath(metric.extractPath(d, d + len), paint);
-        d += len;
-        draw = !draw;
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(_MaskPainter old) =>
-      old.holeWidth != holeWidth ||
-      old.holeHeight != holeHeight ||
-      old.borderColor != borderColor ||
-      old.overlayColor != overlayColor ||
-      old.countdownProgress != countdownProgress ||
-      old.scanProgress != scanProgress;
-}
-
 class _DataMatchIndicator extends StatelessWidget {
   const _DataMatchIndicator({required this.matches, this.bottom = 80});
   final bool matches;
@@ -1360,7 +1145,7 @@ class _DataMatchIndicator extends StatelessWidget {
                 color: theme.white,
                 size: 16,
               ),
-              SizedBox(width: 6),
+              const SizedBox(width: 6),
               Flexible(
                 child: Text(
                   matches
@@ -1381,31 +1166,6 @@ class _DataMatchIndicator extends StatelessWidget {
   }
 }
 
-/// Pure helper for the document stability counter.
-///
-/// Encapsulates the update logic for `_stableFrames` so it can be tested
-/// independently from the widget's camera image stream.
-@visibleForTesting
-class StabilityState {
-  const StabilityState._();
-
-  /// Returns the next value of the stability counter.
-  ///
-  /// A frame is "stable" when [blockDiff] ≤ 2 AND [isEmpty] is false.
-  /// Stable → increment by 1.
-  /// Unstable → decrement by 1, floored at 0 (REQ-STAB-1 forgiveness).
-  static int update({
-    required int current,
-    required int blockDiff,
-    required bool isEmpty,
-  }) {
-    if (blockDiff <= 2 && !isEmpty) {
-      return current + 1;
-    }
-    return math.max(0, current - 1);
-  }
-}
-
 class _FlashToggle extends StatelessWidget {
   const _FlashToggle({
     required this.isOn,
@@ -1423,9 +1183,7 @@ class _FlashToggle extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: isOn
-              ? theme.white.withValues(alpha: 0.3)
-              : theme.overlayMedium,
+          color: isOn ? theme.white.withValues(alpha: 0.3) : theme.overlayMedium,
           shape: BoxShape.circle,
         ),
         child: Icon(
