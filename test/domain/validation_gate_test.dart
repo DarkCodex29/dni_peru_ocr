@@ -47,6 +47,14 @@ RecognizedText _makeRecognizedText({
 const _kImageSize = Size(1920, 1080);
 
 void main() {
+  // Defensive reset of the test-only DocumentValidationResult.tiltCalculator
+  // seam. Same rationale as document_validator_test.dart — addTearDown
+  // already handles per-test cleanup, this setUp belt-and-suspenders the
+  // case where a prior test crashes before its addTearDown runs.
+  setUp(() {
+    DocumentValidationResult.tiltCalculator = null;
+  });
+
   group('ValidationGate enum — enum values', () {
     // ── All 6 cases must exist ──────────────────────────────────────────────
 

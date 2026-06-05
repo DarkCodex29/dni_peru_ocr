@@ -1611,4 +1611,40 @@ void main() {
       );
     });
   });
+
+  // ── toString() per-field MRZ tag (cosmetic fix v0.6.9) ──────────────────
+  //
+  // Logs were tagging every field with [MRZ] when the accumulator was
+  // MRZ-sourced — including the address, which the MRZ never carries.
+  // The fix tags only fields the MRZ actually emits (documentNumber,
+  // surnames, given names, birth, sex, expiry, nationality). Address
+  // and any future free-text field stays untagged.
+  group('OcrExtractedFields.toString() — per-field MRZ tag', () {
+    test('MRZ-sourced fields tagged [MRZ], address never tagged', () {
+      final fields = OcrExtractedFields()
+        ..documentNumber = '12345678'
+        ..firstName = 'JUAN'
+        ..lastName = 'PEREZ'
+        ..address = 'AV LOS PINOS 123'
+        ..fromMrzForTest = true;
+
+      final output = fields.toString();
+      // MRZ-sourced fields carry the tag.
+      expect(output, contains('N° Documento: 12345678 [MRZ]'));
+      expect(output, contains('Apellido paterno: PEREZ [MRZ]'));
+      expect(output, contains('Nombres: JUAN [MRZ]'));
+      // Address NEVER carries [MRZ] because the MRZ does not encode it.
+      expect(output, contains('Dirección: AV LOS PINOS 123\n'));
+      expect(output, isNot(contains('Dirección: AV LOS PINOS 123 [MRZ]')));
+    });
+
+    test('non-MRZ accumulator: no tags at all', () {
+      final fields = OcrExtractedFields()
+        ..documentNumber = '12345678'
+        ..address = 'AV LOS PINOS 123';
+
+      final output = fields.toString();
+      expect(output, isNot(contains('[MRZ]')));
+    });
+  });
 }

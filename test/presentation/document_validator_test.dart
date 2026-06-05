@@ -58,6 +58,15 @@ RecognizedText makeRecognizedText({
 }
 
 void main() {
+  // Global setUp: reset the test-only [DocumentValidationResult.tiltCalculator]
+  // static seam before every test. Without this, a test that crashes between
+  // setting the seam and resetting it would contaminate every subsequent
+  // test in the same file (and across files in a single `flutter test` run).
+  // Tracked in judgment-day obs #4688 (anti-pattern W5).
+  setUp(() {
+    DocumentValidationResult.tiltCalculator = null;
+  });
+
   // Group 1 — Presence validation (Step 1) — _minBlocks = 2
   group('Presence validation (Step 1)', () {
     test('0 blocks → not capturable, white border, "Posiciona" message', () {
