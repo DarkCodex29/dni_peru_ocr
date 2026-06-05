@@ -969,10 +969,8 @@ class OcrFieldExtractor {
   /// [_kAddressNoiseRatioThreshold] (40%) or the line lacks a structural
   /// address anchor.
   ///
-  /// Exposed for testing because direct unit tests on each rule (QR module
-  /// rejection, alphanumeric code preservation, Ñ/tilde handling) are more
-  /// useful than going through the full ML Kit block pipeline.
-  @visibleForTesting
+  /// Public so [AddressFieldStrategy] and unit tests can call it directly
+  /// without going through the full ML Kit block pipeline.
   static String? cleanAddressLine(String rawLine) {
     final trimmed = rawLine.trim();
     if (trimmed.isEmpty) return null;
@@ -1090,7 +1088,8 @@ class OcrFieldExtractor {
   ///   `DE SUFRAGIO DE SUFRAGIO STA ROSA 1080 MARIATEGUI` → `STA ROSA 1080 MARIATEGUI`
   ///   `STA ROSA 1080 GRUPO DE VOTACION` → `STA ROSA 1080`
   ///   `DIRECCION MZ.C LT.20` → `MZ.C LT.20`
-  @visibleForTesting
+  ///
+  /// Public so [AddressFieldStrategy] and unit tests can call it directly.
   static String stripAddressLabelTail(String address) {
     if (address.trim().isEmpty) return '';
     final tokens = address.trim().split(RegExp(r'\s+'));
