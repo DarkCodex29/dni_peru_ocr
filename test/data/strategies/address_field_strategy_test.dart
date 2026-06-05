@@ -137,4 +137,70 @@ void main() {
       expect(result?.address, isNull);
     });
   });
+
+  // ── BUG 1A regression — Spanish "Dirección" anchor (JC v0.6.0 feedback) ───
+  //
+  // Real Peruvian electronic DNI prints "Dirección:" (Spanish accent) on the
+  // reverse, NOT "Domicilio:". The strategy was DOMICILIO-only, AND
+  // "DIRECCION" sat in the noise denylist — so the anchor line was discarded
+  // before the parser could use it.
+  //
+  // Fix:
+  //  - Accept DIRECCIÓN / DIRECCION / DIRECCION: as a Strategy 1 anchor
+  //    (alongside DOMICILIO/DOM/DOM.).
+  //  - Remove DIRECCION from kAddressNoiseDenylist (so anchor line is kept).
+  //
+  // Source: real DNI photo (obs #4669, image WhatsApp 2026-06-05 at 10.03.05).
+  group('BUG 1A regression — Spanish Dirección anchor', () {
+    late AddressFieldStrategy strategy;
+
+    setUp(() {
+      strategy = const AddressFieldStrategy();
+    });
+
+    test('Dirección: with inline value extracts the address', () {
+      final recognized = _recognizedFromLines([
+        'REPUBLICA DEL PERU',
+        'Dirección: ASENT.H15 DE ABRIL CALLE EL MILAGRO',
+      ]);
+      final result = strategy.extract(recognized);
+      expect(result?.address, isNotNull);
+      expect(result?.address, contains('ASENT'));
+      expect(result?.address, contains('CALLE EL MILAGRO'));
+    });
+
+    test('Dirección anchor with value on next line extracts the address', () {
+      final recognized = _recognizedFromLines([
+        'REPUBLICA DEL PERU',
+        'Dirección:',
+        'ASENT.H15 DE ABRIL CALLE EL MILAGRO',
+        'MZ B LT 19',
+      ]);
+      final result = strategy.extract(recognized);
+      expect(result?.address, isNotNull);
+      expect(result?.address, contains('ASENT'));
+    });
+
+    test('DIRECCION uppercase no accent is also recognized', () {
+      final recognized = _recognizedFromLines([
+        'REPUBLICA DEL PERU',
+        'DIRECCION:',
+        'AV. LOS PINOS 123',
+      ]);
+      final result = strategy.extract(recognized);
+      expect(result?.address, isNotNull);
+      expect(result?.address, contains('LOS PINOS'));
+    });
+
+    test('DIRECCIÓN with accent uppercase is recognized', () {
+      final recognized = _recognizedFromLines([
+        'REPUBLICA DEL PERU',
+        'DIRECCIÓN:',
+        'JR. AREQUIPA 456',
+      ]);
+      final result = strategy.extract(recognized);
+      expect(result?.address, isNotNull);
+      expect(result?.address, contains('AREQUIPA'));
+    });
+  });
 }

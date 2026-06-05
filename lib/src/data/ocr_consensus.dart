@@ -78,7 +78,13 @@ const _kAddressThreshold = 0.60;
 const _kDateMatchRequired = 4;
 const _kDateWindowSize = 5;
 
-/// Consecutive MRZ parses required for fast-lock.
+/// Consecutive MRZ parses required for fast-lock (default).
+///
+/// 2 frames at 30fps ≈ 66ms — enough for the back side of older booklet DNIs.
+/// For the electronic DNI back side, raise this via the
+/// [OcrConsensusAccumulator.mrzConsecutiveRequired] constructor parameter
+/// to give the camera more time to stabilize before triggering capture
+/// (mitigates motion blur — BUG 2, obs #4669).
 const _kMrzConsecutiveRequired = 2;
 
 /// Accumulates OCR consensus by collecting per-field votes across frames.
@@ -89,6 +95,22 @@ const _kMrzConsecutiveRequired = 2;
 /// Call [snapshot] to emit the current [OcrConsensusResult].
 /// Call [dispose] when done (currently a no-op, included for future timers).
 class OcrConsensusAccumulator {
+  /// Creates an accumulator.
+  ///
+  /// [mrzConsecutiveRequired] sets how many consecutive MRZ-valid frames are
+  /// required before the accumulator marks itself MRZ-locked (which the
+  /// host widget typically uses to trigger `takePicture()`). Defaults to 2
+  /// for backwards compatibility. Recommended values:
+  ///  - 2 — booklet DNI back side or front (legacy).
+  ///  - 5 — electronic DNI back side (~165ms stability window to avoid
+  ///        motion blur in the captured still). Fix for BUG 2 (obs #4669).
+  OcrConsensusAccumulator({this.mrzConsecutiveRequired = _kMrzConsecutiveRequired})
+      : assert(mrzConsecutiveRequired >= 1,
+            'mrzConsecutiveRequired must be >= 1');
+
+  /// How many consecutive MRZ-valid frames are required to fast-lock.
+  final int mrzConsecutiveRequired;
+
   // ── Vote maps: field → (normalizedValue → count) ─────────────────────────
   final Map<String, Map<String, int>> _votes = {
     'documentNumber': {},
@@ -192,13 +214,13 @@ class OcrConsensusAccumulator {
 
   /// Records a checksum-valid MRZ parse.
   ///
-  /// After [_kMrzConsecutiveRequired] consecutive valid parses, all MRZ
+  /// After [mrzConsecutiveRequired] consecutive valid parses, all MRZ
   /// fields are fast-locked, overriding any text-OCR votes.
   void recordMrz(MRZResult mrz) {
     if (_mrzLocked) return;
     _consecutiveMrzCount++;
 
-    if (_consecutiveMrzCount >= _kMrzConsecutiveRequired) {
+    if (_consecutiveMrzCount >= mrzConsecutiveRequired) {
       _mrzLocked = true;
       _lockedMrz = mrz;
     }
@@ -206,7 +228,7 @@ class OcrConsensusAccumulator {
 
   /// Fast-locks consensus from MRZ-extracted fields when the extractor
   /// already parsed the MRZ (and a raw [MRZResult] is not available).
-  /// Locks after [_kMrzConsecutiveRequired] consecutive observations.
+  /// Locks after [mrzConsecutiveRequired] consecutive observations.
   void lockFromMrzFields({
     required String? documentNumber,
     required String? firstName,
@@ -230,7 +252,7 @@ class OcrConsensusAccumulator {
       dateOfBirth: dateOfBirth ?? prev?.dateOfBirth,
       expirationDate: expirationDate ?? prev?.expirationDate,
     );
-    if (_consecutiveMrzCount >= _kMrzConsecutiveRequired) {
+    if (_consecutiveMrzCount >= mrzConsecutiveRequired) {
       _mrzLocked = true;
     }
   }

@@ -63,12 +63,20 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     if (result.address != null) return;
     final upper = lines[i].toUpperCase().trim();
 
-    // Strategy 1: `DOMICILIO` label.
-    if (upper.contains('DOMICILIO') ||
+    // Strategy 1: `DOMICILIO` or `DIRECCIÓN/DIRECCION` label.
+    //
+    // Real Peruvian electronic DNIs print "Dirección:" on the reverse;
+    // older booklet-style cards print "DOMICILIO". Both anchors are accepted.
+    // Fix for BUG 1A (obs #4669).
+    final isDomicilioAnchor = upper.contains('DOMICILIO') ||
         upper.startsWith('DOM ') ||
-        upper == 'DOM.') {
+        upper == 'DOM.';
+    final isDireccionAnchor = upper.contains('DIRECCIÓN') ||
+        upper.contains('DIRECCION');
+    if (isDomicilioAnchor || isDireccionAnchor) {
       final inlineValue = upper
           .replaceAll(RegExp(r'DOMICILIO\.?:?\s*'), '')
+          .replaceAll(RegExp(r'DIRECCI[ÓO]N\.?:?\s*'), '')
           .trim();
       if (inlineValue.length >= 5 && _isValidAddress(inlineValue)) {
         _assignFilteredAddress(result, inlineValue);
