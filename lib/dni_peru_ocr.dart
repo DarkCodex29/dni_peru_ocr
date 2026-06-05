@@ -5,10 +5,15 @@
 /// addresses, and merge surnames across OCR + stored profile sources.
 library dni_peru_ocr;
 
+export 'src/data/address_noise_filter.dart';
 export 'src/data/ocr_consensus.dart';
 export 'src/data/ocr_field_extractor.dart';
 export 'src/data/ocr_field_normalizer.dart';
 export 'src/data/string_similarity.dart';
+export 'src/data/strategies/address_field_strategy.dart';
+export 'src/data/strategies/mrz_field_strategy.dart';
+export 'src/data/strategies/ocr_field_strategy.dart';
+export 'src/data/strategies/text_ocr_field_strategy.dart';
 export 'src/domain/entities/user_verification_data.dart';
 export 'src/domain/interfaces/ocr_logger.dart';
 export 'src/infrastructure/breadcrumb_throttle.dart';
