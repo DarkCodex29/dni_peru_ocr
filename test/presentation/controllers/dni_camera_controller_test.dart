@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_const_constructors
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dni_peru_ocr/src/data/ocr_consensus.dart';
 import 'package:dni_peru_ocr/src/presentation/controllers/dni_camera_controller.dart';
 import 'package:dni_peru_ocr/src/presentation/document_validator.dart';
 import 'package:dni_peru_ocr/src/presentation/orchestrators/dni_capture_orchestrator.dart';
@@ -606,5 +607,155 @@ void main() {
 
       expect(a, isNot(equals(b)));
     });
+  });
+
+  // ── BUG regression — controller side-flag must update on onSideChanged ────
+  //
+  // Symptom (JC v0.6.3 report): `DniCameraMask` shutter prints
+  //   🔴 isBackSide=true consensus=NOT-NULL firstName=JOSE
+  // but InClub host callback prints
+  //   🟠 ENTRY isFront=false consensus=NULL
+  //
+  // Root cause: the controller's _isBackSide flag was `final` and only set
+  // in the constructor. When Flutter REUSES the widget state across the
+  // front→back step transition, initState does not re-run, so the controller
+  // stays with _isBackSide=false. onCaptureDelivered then passes
+  // `_isBackSide ? consensus : null` = `false ? ... : null` = null, dropping
+  // the snapshot on the floor before it reaches the host.
+  //
+  // Fix: _isBackSide is now mutable and synced inside onSideChanged.
+  group('BUG regression — controller side-flag follows onSideChanged', () {
+    test(
+      'controller created front-side then flipped to back delivers consensus',
+      () {
+        OcrConsensusResult? deliveredConsensus;
+        var deliveredFile = '';
+
+        final controller = DniCameraController(
+          orchestrator: _orchestrator(),
+          isBackSide: false, // ← starts front-side
+          onValidCapture: (file, consensus) {
+            deliveredFile = file as String;
+            deliveredConsensus = consensus as OcrConsensusResult?;
+          },
+        );
+
+        // The widget then transitions to back-side (Flutter reuses State,
+        // so the controller instance is the same).
+        controller.onSideChanged(isBackSide: true);
+
+        // Simulate a back-side capture: feed an MRZ frame through the
+        // accumulator so snapshotConsensus() returns NOT-NULL data.
+        // We use lockFromMrzFields twice so the accumulator locks.
+        // We need access to the internal accumulator, so we go through the
+        // public processFrame path is not possible without ML Kit — instead
+        // we rely on the host providing a consensus via onCaptureDelivered.
+        // That path mirrors what _triggerShutter does in DniCameraMask.
+        final consensus = OcrConsensusResult(
+          success: true,
+          source: OcrConsensusSource.mrzChecksum,
+          documentNumber: const OcrFieldResult(
+            value: '71542895',
+            confidence: 1.0,
+            locked: true,
+          ),
+          firstName: const OcrFieldResult(
+            value: 'JOSE',
+            confidence: 1.0,
+            locked: true,
+          ),
+          lastName: const OcrFieldResult(
+            value: 'MORENO',
+            confidence: 1.0,
+            locked: true,
+          ),
+          secondLastName: const OcrFieldResult(
+            value: 'ALEMAN',
+            confidence: 1.0,
+            locked: true,
+          ),
+          dateOfBirth: const OcrFieldResult(
+            value: '01/09/1994',
+            confidence: 1.0,
+            locked: true,
+          ),
+          expirationDate: const OcrFieldResult(
+            value: '19/02/2028',
+            confidence: 1.0,
+            locked: true,
+          ),
+          address: const OcrFieldResult(value: null, confidence: 0, locked: false),
+        );
+
+        controller.onCaptureDelivered(file: 'back.jpg', consensus: consensus);
+
+        expect(deliveredFile, 'back.jpg');
+        expect(
+          deliveredConsensus,
+          isNotNull,
+          reason:
+              'BUG: controller was constructed front-side and then flipped to '
+              'back via onSideChanged — the consensus from onCaptureDelivered '
+              'must reach the host, NOT be dropped by a stale _isBackSide flag.',
+        );
+        expect(deliveredConsensus!.firstName.value, 'JOSE');
+        expect(deliveredConsensus!.lastName.value, 'MORENO');
+        expect(deliveredConsensus!.documentNumber.value, '71542895');
+      },
+    );
+
+    test(
+      'controller created back-side then flipped to front delivers null consensus',
+      () {
+        // Inverse of the above: a controller initially back-side that flips
+        // to front must NOT leak a back-side consensus through a stale flag.
+        OcrConsensusResult? deliveredConsensus;
+
+        final controller = DniCameraController(
+          orchestrator: _orchestrator(),
+          isBackSide: true,
+          onValidCapture: (file, consensus) {
+            deliveredConsensus = consensus as OcrConsensusResult?;
+          },
+        );
+        controller.onSideChanged(isBackSide: false);
+
+        // Even if the host accidentally passed a non-null consensus, the
+        // controller must scrub it because the active side is now front.
+        final consensus = OcrConsensusResult(
+          success: true,
+          source: OcrConsensusSource.mrzChecksum,
+          documentNumber: const OcrFieldResult(
+            value: '71542895',
+            confidence: 1.0,
+            locked: true,
+          ),
+          firstName: const OcrFieldResult(
+            value: 'JOSE',
+            confidence: 1.0,
+            locked: true,
+          ),
+          lastName: const OcrFieldResult(
+            value: 'MORENO',
+            confidence: 1.0,
+            locked: true,
+          ),
+          secondLastName: const OcrFieldResult(value: null, confidence: 0, locked: false),
+          dateOfBirth: const OcrFieldResult(value: null, confidence: 0, locked: false),
+          expirationDate: const OcrFieldResult(value: null, confidence: 0, locked: false),
+          address: const OcrFieldResult(value: null, confidence: 0, locked: false),
+        );
+
+        controller.onCaptureDelivered(file: 'front.jpg', consensus: consensus);
+
+        expect(
+          deliveredConsensus,
+          isNull,
+          reason:
+              'Controller transitioned to front-side: consensus must be '
+              'scrubbed regardless of what the host passed.',
+        );
+      },
+    );
   });
 }
