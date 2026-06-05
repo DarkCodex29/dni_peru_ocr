@@ -148,7 +148,16 @@ class DniCameraController {
   /// Used by [processFrame] and [onCaptureDelivered] to determine whether the
   /// consensus result should be included in the capture callback. On front-side
   /// captures the consensus argument is always `null`.
-  final bool _isBackSide;
+  ///
+  /// Mutable so that hosts can flip the controller from front to back when
+  /// Flutter REUSES the State across step transitions (the `DniCameraMask`
+  /// widget shares one controller instance across the front→back toggle).
+  /// Updated by [onSideChanged]. Without this fix, a controller initialized
+  /// with `isBackSide: false` would never start emitting the back-side
+  /// consensus even after the widget transitioned to back — symptom from
+  /// JC's v0.6.x report: snapshot reaches the widget with valid data but
+  /// arrives null at the host callback.
+  bool _isBackSide;
 
   /// Fired when a capture is delivered to the host.
   ///
@@ -227,6 +236,15 @@ class DniCameraController {
     if (_isDisposed) return;
     _manualFallbackTimer?.cancel();
     _expiredHandled = false;
+
+    // Sync the controller's side flag with the caller. Without this, a
+    // controller initialized as front-side that later transitions to back
+    // (Flutter reuses the State) would still report `_isBackSide = false`
+    // in [onCaptureDelivered] and discard the back-side consensus snapshot.
+    // Fix for v0.6.x "back-side consensus arrives null at host" symptom
+    // (reported by JC against v0.6.3 — package emits snapshot with valid
+    // names but the host callback receives null).
+    _isBackSide = isBackSide;
 
     // Tear down previous accumulator regardless of direction.
     _accumulator?.dispose();

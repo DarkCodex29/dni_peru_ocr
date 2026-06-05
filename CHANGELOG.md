@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.6.4 (bugfix — CRITICAL)
+
+Closes the "two-sided scan loses OCR" symptom for real. v0.6.1 fixed the
+accumulator math, v0.6.3 wired the front-side seed, and this release fixes
+the **final** drop point — a stale flag inside `DniCameraController`.
+
+### Root cause
+
+`DniCameraController._isBackSide` was declared `final` and only set in the
+constructor. When Flutter REUSES the widget state across the front→back
+step transition (which it does — the `KycDocumentScanStep` tree shape is
+identical for both steps, so the `DniCameraMask` State is reused), the
+controller instance is reused too. `initState` does NOT re-run, so
+`_isBackSide` stays `false` even after `onSideChanged(isBackSide: true)`.
+
+`onCaptureDelivered` then passes `_isBackSide ? consensus : null` =
+`false ? ... : null` = **null**, dropping the back-side consensus on the
+floor right before it would have reached the host callback.
+
+### Observed symptom (JC v0.6.3 logs)
+
+```
+🔴 [DniCameraMask] _triggerShutter SHOT:
+   isBackSide=true consensus=NOT-NULL firstName=JOSE CARLOS JOAO ✅
+🟠 [_onValidCapture] ENTRY:
+   isFront=false consensus=NULL ❌
+```
+
+The widget logged a valid snapshot, then the host saw null. The drop
+happened in `DniCameraController.onCaptureDelivered`.
+
+### Fix
+
+`_isBackSide` is now mutable and synced inside `onSideChanged`:
+
+```dart
+void onSideChanged({bool isBackSide = false, ...}) {
+  if (_isDisposed) return;
+  _isBackSide = isBackSide;   // ← new
+  // ...rest of the method unchanged
+}
+```
+
+### Tests
+
+Two new regression tests in `test/presentation/controllers/dni_camera_controller_test.dart`:
+
+1. Controller constructed front-side → `onSideChanged(isBackSide: true)` →
+   `onCaptureDelivered(consensus: nonNull)` MUST deliver the consensus to
+   the host. (RED on `main`, GREEN with fix.)
+2. Inverse: controller constructed back-side → flipped to front →
+   consensus MUST be scrubbed regardless of what the host passes.
+
+500/500 tests pass. `flutter analyze` clean.
+
+### Consumer impact
+
+No public API changes. Patch release. Bump SHA only.
+
 ## 0.6.3 (bugfix)
 
 Hotfix for "two-sided scan loses OCR" symptom reported against v0.6.x.
