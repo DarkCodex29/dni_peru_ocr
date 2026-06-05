@@ -1,5 +1,6 @@
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '../../data/address_noise_filter.dart';
 import '../../data/ocr_field_extractor.dart';
 import 'ocr_field_strategy.dart';
 
@@ -98,7 +99,7 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
         final idx = i - offset;
         if (idx < 0) continue;
         final candidate = lines[idx].trim().toUpperCase();
-        final cleaned = OcrFieldExtractor.cleanAddressLine(candidate);
+        final cleaned = AddressNoiseFilter.cleanAddressLine(candidate);
         if (cleaned == null) continue;
         if (_hasAddressPrefix(cleaned) ||
             _isAddressContinuation(cleaned) ||
@@ -108,22 +109,22 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
       }
       if (segments.isNotEmpty) {
         final joined = segments.join(' ');
-        final stripped = OcrFieldExtractor.stripAddressLabelTail(joined);
+        final stripped = AddressNoiseFilter.stripAddressLabelTail(joined);
         result.address = stripped.isEmpty ? null : stripped;
         return;
       }
     }
   }
 
-  /// Funnels a raw recovered address through [OcrFieldExtractor.cleanAddressLine] and
-  /// [OcrFieldExtractor.stripAddressLabelTail] before assigning.
+  /// Funnels a raw recovered address through [AddressNoiseFilter.cleanAddressLine] and
+  /// [AddressNoiseFilter.stripAddressLabelTail] before assigning.
   void _assignFilteredAddress(
     OcrExtractedFields result,
     String rawAddress,
   ) {
-    final cleaned = OcrFieldExtractor.cleanAddressLine(rawAddress);
+    final cleaned = AddressNoiseFilter.cleanAddressLine(rawAddress);
     if (cleaned == null) return;
-    final stripped = OcrFieldExtractor.stripAddressLabelTail(cleaned);
+    final stripped = AddressNoiseFilter.stripAddressLabelTail(cleaned);
     if (stripped.isEmpty) return;
     result.address = stripped;
   }
