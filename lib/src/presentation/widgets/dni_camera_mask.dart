@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '_camera_overlay_widgets.dart';
+import '_mask_painter.dart';
+
 import '../../data/ocr_consensus.dart';
 import '../../data/ocr_field_extractor.dart';
 import '../../domain/entities/user_verification_data.dart';
@@ -18,12 +21,12 @@ import '../../infrastructure/tilt_calculator.dart';
 import '../camera_overlay_logic.dart';
 import '../document_validator.dart';
 import '../theme/kyc_theme.dart';
+import '../controllers/dni_camera_controller.dart';
+import '../orchestrators/dni_capture_orchestrator.dart';
+import '../orchestrators/dni_capture_state.dart';
 
 
-Widget _animatedSwitcherDedupeLayout(
-  Widget? current,
-  List<Widget> previous,
-) => animatedSwitcherDedupeLayout(current, previous);
+
 
 class DniCameraMask extends StatefulWidget {
   const DniCameraMask({
@@ -72,21 +75,11 @@ class _DniCameraMaskState extends State<DniCameraMask>
 
   bool _isProcessing = false;
   int _frameCount = 0;
-  String _guideText = '';
-  Color _borderColor = Colors.white;
-  bool _isCaptureable = false;
-  DateTime? _perfectSince;
-  DateTime? _lastCaptureableAt;
-  double _validationProgress = 0;
-  bool _capturing = false;
   bool _showFlash = false;
   bool _torchOn = false;
-  bool _manualModeActive = false;
-  Timer? _manualFallbackTimer;
   bool _showSideIntro = false;
   Timer? _sideIntroTimer;
   bool _isDisposed = false;
-  bool? _userDataMatch;
   late final DetectorLifecycle _lifecycle;
   final OcrExtractedFields _accumulatedFields = OcrExtractedFields();
 
@@ -100,19 +93,13 @@ class _DniCameraMaskState extends State<DniCameraMask>
   Size? _screenSize;
 
   // ─── G.1 Telemetry (diagnostic-only; safe in release) ──────────────────────
-  // Captured per processed document frame. Read by the debug overlay
-  // (kDebugMode only) and emitted as Sentry breadcrumbs (throttled to 1 Hz)
-  // to root-cause the "Endereza el documento" hang reported on JC's Infinix
-  // X6837 — see Engram observation #3188.
   final BreadcrumbThrottle _gateBreadcrumbThrottle = BreadcrumbThrottle();
-  double _telemetryTilt = 0; // cornerPoints-derived (production signal)
-  double? _telemetryMlkitAngle; // MLKit-provided (comparison signal; iOS=null)
-  int _telemetryLines = 0; // lines after _filterBlocksInHole
-  int _telemetryRawBlocks = 0; // raw block count before filter
-  int _telemetryRotation = 0; // sensor orientation degrees
-  String _telemetryFormat = '-'; // camera ImageFormatGroup raw name
-  String? _telemetryFailingGate; // null when frame is captureable
-  int _telemetryPerfectSinceMs = -1; // ms since gates went green; -1 if not
+  double _telemetryTilt = 0;
+  double? _telemetryMlkitAngle;
+  int _telemetryLines = 0;
+  int _telemetryRawBlocks = 0;
+  int _telemetryRotation = 0;
+  String _telemetryFormat = '-';
 
   late final AnimationController _pulseController;
   late final Animation<double> _pulseAnimation;
@@ -120,18 +107,21 @@ class _DniCameraMaskState extends State<DniCameraMask>
   late final Animation<double> _scanAnimation;
   late final AnimationController _countdownController;
 
+  // ─── DniCameraController wiring ────────────────────────────────────────────
+  late final DniCameraController _captureController;
+
+  /// Exposes the internal controller for integration tests.
+  @visibleForTesting
+  DniCameraController get captureController => _captureController;
+
   static const int _autoCaptureMs = CameraOverlayTuning.autoCaptureMs;
-  static const int _gracePeriodMs = CameraOverlayTuning.gracePeriodMs;
-  static const int _minStableFrames = CameraOverlayTuning.minStableFrames;
-  static const int _manualFallbackMs = CameraOverlayTuning.manualFallbackMs;
 
   String get _loadingMessage => loadingMessage(
     isLoading: widget.isLoading,
     isBackSide: widget.isBackSide,
   );
 
-  String get _initialGuideText =>
-      initialGuideText(isFaceHole: false);
+  String get _initialGuideText => initialGuideText(isFaceHole: false);
 
   @override
   void initState() {
@@ -161,18 +151,104 @@ class _DniCameraMaskState extends State<DniCameraMask>
       vsync: this,
       duration: const Duration(milliseconds: _autoCaptureMs),
     );
+
     _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
     _lifecycle = DetectorLifecycle(
       stopStream: () => _safeStopStream(widget.controller),
       closeDetectors: _closeDetectors,
     );
-    _guideText = _initialGuideText;
-    WidgetsBinding.instance.addObserver(this);
+
+    // Build internal orchestrator + controller
+    final orchestrator = DniCaptureOrchestrator(
+      autoCaptureMs: CameraOverlayTuning.autoCaptureMs,
+      gracePeriodMs: CameraOverlayTuning.gracePeriodMs,
+      manualFallbackMs: CameraOverlayTuning.manualFallbackMs,
+      minStableFrames: CameraOverlayTuning.minStableFrames,
+    );
+    _captureController = DniCameraController(
+      orchestrator: orchestrator,
+      isBackSide: widget.isBackSide,
+      onValidCapture: (file, consensus) {
+        widget.onValidCapture(file as XFile, consensus as OcrConsensusResult?);
+      },
+      onDocumentExpired: widget.onDocumentExpired,
+    );
+
+    // Listen to captureState for side effects: countdown arc and capture trigger
+    _captureController.captureState.addListener(_onCaptureStateChanged);
+
     if (widget.isBackSide) {
       _consensusBuilder = OcrConsensusBuilder();
     }
     _startStream();
-    _startManualFallbackTimer();
+    unawaited(_captureController.start());
+  }
+
+  // ─── State change listener ─────────────────────────────────────────────────
+
+  void _onCaptureStateChanged() {
+    if (_isDisposed || !mounted) return;
+    final state = _captureController.captureState.value;
+
+    // Drive countdown animation from state
+    if (state is CountingDownWithAnchor) {
+      final progress = state.progress;
+      if (_countdownController.value != progress) {
+        _countdownController.value = progress;
+      }
+    } else if (state is DniCaptureInFlight) {
+      _countdownController.stop();
+      // Fire shutter when state transitions to InFlight
+      if (state.showFlash && !_showFlash) {
+        unawaited(_triggerShutter());
+      }
+    } else {
+      _countdownController.reset();
+    }
+
+    // Rebuild for guide text / border color changes
+    if (mounted) setState(() {});
+  }
+
+  // ─── Capture shutter ────────────────────────────────────────────────────────
+
+  Future<void> _triggerShutter() async {
+    if (_isDisposed) return;
+    setState(() => _showFlash = true);
+    await Future<void>.delayed(
+      const Duration(milliseconds: CameraOverlayTuning.captureFlashMs),
+    );
+    if (mounted) setState(() => _showFlash = false);
+
+    try {
+      final raw = await widget.controller.takePicture();
+      unawaited(HapticFeedback.heavyImpact());
+      final shouldCrop = widget.kycV2Enabled;
+      final outFile = shouldCrop
+          ? XFile(
+              await KycImageUtils.cropToDocumentArea(
+                raw.path,
+                holeWidth: widget.holeWidth,
+                holeHeight: widget.holeHeight,
+                screenSize: _screenSize!,
+              ),
+            )
+          : raw;
+      final captureConsensus = widget.isBackSide
+          ? _consensusBuilder?.snapshot()
+          : null;
+      _captureController.onCaptureDelivered(
+        file: outFile,
+        consensus: captureConsensus,
+      );
+    } on CameraException catch (_) {
+      // Restore scanning state on camera failure
+      if (mounted) {
+        setState(() => _showFlash = false);
+        _startStream();
+        unawaited(_captureController.start());
+      }
+    }
   }
 
   // Closes ML Kit detectors. Called by [DetectorLifecycle] only after all
@@ -220,6 +296,12 @@ class _DniCameraMaskState extends State<DniCameraMask>
 
     // Flutter reuses this State instance when the step toggles isBackSide,
     // so initState's check never re-runs — initialize the builder here.
+    //
+    // TODO(PR4): migrate consensus seeding to DniCameraController.onSideChanged()
+    // once OcrConsensusBuilder is renamed to OcrConsensusAccumulator and the
+    // controller owns the accumulator lifecycle. The widget should not hold
+    // OCR consensus state directly — this is the last piece of business logic
+    // left in the widget after PR3c.
     if (!old.isBackSide && widget.isBackSide) {
       _consensusBuilder ??= OcrConsensusBuilder();
       // Prime the back-side consensus with ALL text-OCR fields captured on
@@ -271,6 +353,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
           if (mounted) setState(() => _showSideIntro = false);
         },
       );
+      _captureController.onSideChanged();
     }
     if (old.isBackSide && !widget.isBackSide) {
       _consensusBuilder?.dispose();
@@ -278,55 +361,42 @@ class _DniCameraMaskState extends State<DniCameraMask>
       _consensusWindowTimer?.cancel();
       _consensusWindowTimer = null;
       _expiredHandled = false;
+      _captureController.onSideChanged();
     }
 
     if (old.isLoading && !widget.isLoading) {
-      _capturing = false;
-      _isCaptureable = false;
-      _perfectSince = null;
-      _lastCaptureableAt = null;
-      _countdownController.reset();
-      _validationProgress = 0;
-      _guideText = _initialGuideText;
-      _borderColor = _theme.white;
-      _manualModeActive = false;
       _startStream();
-      _startManualFallbackTimer();
+      unawaited(_captureController.start());
     }
   }
 
   void _resetState() {
     _frameCount = 0;
     _isProcessing = false;
-    _capturing = false;
-    _isCaptureable = false;
-    _perfectSince = null;
-    _lastCaptureableAt = null;
-    _countdownController.reset();
-    _validationProgress = 0;
     _showFlash = false;
-    _guideText = _initialGuideText;
-    _borderColor = _theme.white;
     _lastBlockCount = 0;
     _stableFrames = 0;
     _tiltBadFrames = 0;
-    _manualModeActive = false;
-    _startManualFallbackTimer();
+    _countdownController.reset();
+    _captureController.onSideChanged();
+    unawaited(_captureController.start());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final captureState = _captureController.captureState.value;
+    final isCapturing = captureState is DniCaptureInFlight;
     if (state == AppLifecycleState.inactive) {
       _stopStream();
     } else if (state == AppLifecycleState.resumed) {
-      if (!_capturing && !widget.isLoading) _startStream();
+      if (!isCapturing && !widget.isLoading) _startStream();
     }
   }
 
   @override
   void dispose() {
     _isDisposed = true;
-    _manualFallbackTimer?.cancel();
+    _captureController.captureState.removeListener(_onCaptureStateChanged);
     _sideIntroTimer?.cancel();
     _consensusWindowTimer?.cancel();
     _consensusBuilder?.dispose();
@@ -334,21 +404,28 @@ class _DniCameraMaskState extends State<DniCameraMask>
     _pulseController.dispose();
     _scanController.dispose();
     _countdownController.dispose();
+    unawaited(_captureController.dispose());
     // Flutter's dispose() is synchronous — we cannot await here.
     // _lifecycle.safeDispose() handles the full async sequence:
     //   1. Stop the camera stream (no new frames arrive)
     //   2. Drain any in-flight _processFrame to completion
     //   3. Close ML Kit detectors (deterministic, no race condition)
-    // _detectorsOpen guard inside DetectorLifecycle ensures idempotency.
     unawaited(_lifecycle.safeDispose());
     super.dispose();
   }
 
   void _onCameraImage(CameraImage image) {
     if (_isDisposed) return;
+    // Skip if capture is already in-flight or expired
+    final captureState = _captureController.captureState.value;
+    if (captureState is DniCaptureInFlight ||
+        captureState is DniCaptureExpired ||
+        captureState is DniCaptureDone) {
+      return;
+    }
     _frameCount++;
     if (_frameCount % 3 != 0) return;
-    if (_isProcessing || _capturing) return;
+    if (_isProcessing) return;
     _isProcessing = true;
     unawaited(_lifecycle.trackInflight(() => _processFrame(image)));
   }
@@ -362,8 +439,6 @@ class _DniCameraMaskState extends State<DniCameraMask>
       if (inputImage == null) return;
 
       // ML Kit returns bounding boxes in the post-rotation (display) space.
-      // The raw CameraImage dimensions are pre-rotation, so swap them when the
-      // sensor is rotated 90° or 270° to match ML Kit's coordinate system.
       final sensorOrientation = widget.controller.description.sensorOrientation;
       final isRotated = sensorOrientation == 90 || sensorOrientation == 270;
       final imageSize = Size(
@@ -371,17 +446,13 @@ class _DniCameraMaskState extends State<DniCameraMask>
         isRotated ? image.width.toDouble() : image.height.toDouble(),
       );
 
-      // Guard: don't call processImage on a disposed (closed) detector.
       if (_isDisposed) return;
 
       await _processDocument(inputImage, imageSize);
-
-      if (!_isDisposed) _checkAutoCapture();
     } finally {
       _isProcessing = false;
     }
   }
-
 
   /// Filtra bloques OCR dejando solo los que intersectan con la zona del hole.
   RecognizedText _filterBlocksInHole(
@@ -413,10 +484,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
       isBackSide: widget.isBackSide,
     );
 
-    // ─── G.1 telemetry capture (diagnostic-only) ───────────────────────────
-    // Both signals are computed unconditionally — the cost is negligible
-    // (already iterating these blocks for validation) and Sentry/release
-    // builds need the breadcrumb data even though kDebugMode is false.
+    // ─── G.1 telemetry capture ─────────────────────────────────────────────
     final tiltDeg = computeMedianTiltDegrees(recognized);
     final mlkitAngle = computeMlkitMedianAngleDegrees(recognized);
     _telemetryTilt = tiltDeg;
@@ -425,7 +493,6 @@ class _DniCameraMaskState extends State<DniCameraMask>
     _telemetryRawBlocks = raw.blocks.length;
     _telemetryRotation = widget.controller.description.sensorOrientation;
     _telemetryFormat = widget.controller.imageFormatGroup?.name ?? '-';
-    _telemetryFailingGate = result.failingGate;
 
     final blockDiff = (recognized.blocks.length - _lastBlockCount).abs();
     _lastBlockCount = recognized.blocks.length;
@@ -435,34 +502,27 @@ class _DniCameraMaskState extends State<DniCameraMask>
       isEmpty: recognized.blocks.isEmpty,
     );
 
-    final isStable = _stableFrames >= _minStableFrames;
-    final canCapture = result.isCaptureable && (dataMatch ?? true) && isStable;
-    final wasCaptureable = _isCaptureable;
+    // Delegate expiration detection and state transitions to controller
+    DateTime? expirationDate;
 
     if (recognized.blocks.isNotEmpty) {
       final frameFields = OcrFieldExtractor.extract(recognized);
       _accumulatedFields.merge(frameFields);
 
-      // KYC v2: expiration gate runs on any side as soon as the
-      // checksum-valid MRZ surfaces (users often show the back during
-      // the "front" step). Disabled in legacy flow.
+      // KYC v2: expiration gate
       if (widget.kycV2Enabled &&
           frameFields.hasMrzData &&
-          !_expiredHandled &&
-          !_capturing) {
+          !_expiredHandled) {
         final expired = _expirationFromFields(frameFields.expirationDate);
         if (expired != null) {
           _expiredHandled = true;
-          _perfectSince = null;
-          _countdownController.reset();
+          expirationDate = expired;
           _stopStream();
-          widget.onDocumentExpired?.call(expired);
-          return;
         }
       }
 
       final builder = _consensusBuilder;
-      if (builder != null) {
+      if (builder != null && expirationDate == null) {
         _consensusWindowTimer ??= Timer(
           const Duration(seconds: CameraOverlayTuning.consensusWindowSeconds),
           () {},
@@ -475,8 +535,6 @@ class _DniCameraMaskState extends State<DniCameraMask>
               firstName: frameFields.firstName,
               lastName: frameFields.lastName,
               secondLastName: frameFields.secondLastName,
-              // Supplement with accumulated data — DNI azul holograms can make
-              // individual MRZ frames miss dates even when they were seen earlier.
               dateOfBirth:
                   frameFields.dateOfBirth ?? _accumulatedFields.dateOfBirth,
               expirationDate:
@@ -492,8 +550,17 @@ class _DniCameraMaskState extends State<DniCameraMask>
               'expirationDate': frameFields.expirationDate,
               'address': frameFields.address,
             });
-          if (builder.isMrzLocked && !_capturing) {
-            unawaited(_triggerCaptureWithConsensus(builder.snapshot()));
+          if (builder.isMrzLocked) {
+            // kycV2 fast path: once MRZ is locked, the consensus is
+            // authoritative — skip the auto-capture countdown and trigger
+            // capture immediately. We guard against re-triggering when the
+            // controller already moved past Scanning/CountingDown.
+            final captureState = _captureController.captureState.value;
+            if (captureState is! DniCaptureInFlight &&
+                captureState is! DniCaptureExpired &&
+                captureState is! DniCaptureDone) {
+              _captureController.captureManually();
+            }
           }
         } else {
           builder
@@ -507,8 +574,13 @@ class _DniCameraMaskState extends State<DniCameraMask>
               'expirationDate': frameFields.expirationDate,
               'address': frameFields.address,
             });
-          if (builder.checkAllThresholds() && !_capturing) {
-            unawaited(_triggerCaptureWithConsensus(builder.snapshot()));
+          if (builder.checkAllThresholds()) {
+            final captureState = _captureController.captureState.value;
+            if (captureState is! DniCaptureInFlight &&
+                captureState is! DniCaptureExpired &&
+                captureState is! DniCaptureDone) {
+              _captureController.captureManually();
+            }
           }
         }
       }
@@ -517,28 +589,14 @@ class _DniCameraMaskState extends State<DniCameraMask>
         final src = _accumulatedFields.hasMrzData ? 'MRZ' : 'TEXT';
         debugPrint(
           '─── OCR [$src] [${recognized.blocks.length}/${raw.blocks.length} bloques] '
-          'cap=$canCapture match=$dataMatch '
+          'match=$dataMatch '
           '(${_accumulatedFields.foundCount}/${_accumulatedFields.totalCount}) ───',
         );
         debugPrint(_accumulatedFields.toString());
       }
     }
 
-    // Gestionar _perfectSince y el controller de countdown ANTES del debounce
-    // de tilt, para que frames con tilt real detengan el arco inmediatamente
-    // aunque el warning visual se suprima durante los primeros 2 frames.
-    if (canCapture && !wasCaptureable) {
-      unawaited(HapticFeedback.lightImpact());
-      _perfectSince = DateTime.now();
-      unawaited(_countdownController.forward(from: 0));
-    } else if (!canCapture) {
-      _perfectSince = null;
-      _countdownController.reset();
-    }
-
-    // Debounce "Endereza el documento": a single noisy frame with bad tilt
-    // must not interrupt an otherwise steady capture. Only surface the warning
-    // after 3 consecutive frames that exceed the tilt threshold.
+    // Debounce "Endereza el documento"
     const enderezaMsg = 'Endereza el documento';
     if (result.message == enderezaMsg) {
       _tiltBadFrames++;
@@ -547,16 +605,17 @@ class _DniCameraMaskState extends State<DniCameraMask>
       _tiltBadFrames = 0;
     }
 
-    setState(() {
-      _guideText = result.message;
-      _borderColor = result.borderColor;
-      _isCaptureable = canCapture;
-      _userDataMatch = dataMatch;
-    });
-
-    _telemetryPerfectSinceMs = _perfectSince == null
-        ? -1
-        : DateTime.now().difference(_perfectSince!).inMilliseconds;
+    // Delegate to controller for state transitions
+    _captureController.processFrame(
+      validation: result,
+      stableFrames: _stableFrames,
+      userDataMatch: dataMatch,
+      expirationDate: expirationDate,
+      failingGate: result.failingGate,
+      tiltDegrees: _telemetryTilt,
+      rawBlockCount: _telemetryRawBlocks,
+      filteredBlockCount: _telemetryLines,
+    );
 
     _emitGateBreadcrumb(
       failingGate: result.failingGate,
@@ -565,10 +624,6 @@ class _DniCameraMaskState extends State<DniCameraMask>
   }
 
   /// Throttled (≤1 Hz) Sentry breadcrumb emission for the G.1 telemetry.
-  ///
-  /// Safe in release: when Sentry is not initialized, `addBreadcrumb` is a
-  /// no-op. Emits only when a validation gate is failing — the captureable
-  /// path is silent to keep the breadcrumb stream signal-dense.
   void _emitGateBreadcrumb({
     required String? failingGate,
     required int stableFrames,
@@ -593,89 +648,9 @@ class _DniCameraMaskState extends State<DniCameraMask>
     );
   }
 
-  /// Back-side capture requires at minimum the document number plus the
-  /// surname or given names. Without either, the confirmation screen would
-  /// render an empty form — better to keep the user on the camera.
-  bool _consensusHasMinimumData(OcrConsensusResult? snap) =>
-      consensusHasMinimumData(snap);
-
   /// Parses DD/MM/YYYY (MRZ extractor format). Returns the DateTime only
   /// when it is in the past; returns null for valid or unparseable dates.
   DateTime? _expirationFromFields(String? raw) => expirationIfPast(raw);
-
-  void _checkAutoCapture() {
-    if (_capturing || _expiredHandled || _perfectSince == null) return;
-    // Blink must be confirmed before the countdown fires — blocks photo spoofing.
-    if (!_isCaptureable) return;
-    final elapsed = DateTime.now().difference(_perfectSince!).inMilliseconds;
-    if (elapsed >= _autoCaptureMs) unawaited(_triggerCapture());
-  }
-
-  Future<void> _triggerCapture() async {
-    await _triggerCaptureWithConsensus(null);
-  }
-
-  Future<void> _triggerCaptureWithConsensus(
-    OcrConsensusResult? consensus,
-  ) async {
-    if (_capturing || _expiredHandled) return;
-
-    // In manual mode the user explicitly overrides the quality gate.
-    if (widget.isBackSide && !_manualModeActive) {
-      final snap = consensus ?? _consensusBuilder?.snapshot();
-      if (!_consensusHasMinimumData(snap)) {
-        if (mounted) {
-          setState(() {
-            _guideText = 'Acerca más el reverso del DNI e intenta de nuevo';
-          });
-        }
-        return;
-      }
-    }
-
-    _capturing = true;
-    _countdownController.stop();
-    _manualFallbackTimer?.cancel();
-    _consensusWindowTimer?.cancel();
-    _manualModeActive = false;
-    _stopStream();
-
-    if (mounted) setState(() => _showFlash = true);
-    await Future<void>.delayed(
-      const Duration(milliseconds: CameraOverlayTuning.captureFlashMs),
-    );
-    if (mounted) setState(() => _showFlash = false);
-
-    try {
-      final raw = await widget.controller.takePicture();
-      unawaited(HapticFeedback.heavyImpact());
-      final shouldCrop =
-          widget.kycV2Enabled;
-      final outFile = shouldCrop
-          ? XFile(
-              await KycImageUtils.cropToDocumentArea(
-                raw.path,
-                holeWidth: widget.holeWidth,
-                holeHeight: widget.holeHeight,
-                screenSize: _screenSize!,
-              ),
-            )
-          : raw;
-      final captureConsensus = widget.isBackSide
-          ? (consensus ?? _consensusBuilder?.snapshot())
-          : null;
-      widget.onValidCapture(outFile, captureConsensus);
-    } on CameraException catch (_) {
-      if (mounted) {
-        setState(() {
-          _capturing = false;
-          _perfectSince = null;
-          _showFlash = false;
-        });
-        _startStream();
-      }
-    }
-  }
 
   Future<void> _toggleTorch() async {
     try {
@@ -685,51 +660,90 @@ class _DniCameraMaskState extends State<DniCameraMask>
     } on CameraException catch (_) {}
   }
 
-  void _startManualFallbackTimer() {
-    _manualFallbackTimer?.cancel();
-    _manualFallbackTimer = Timer(
-      const Duration(milliseconds: _manualFallbackMs),
-      () {
-        if (mounted && !_capturing) {
-          setState(() {
-            _manualModeActive = true;
-            _guideText = 'Toca el botón para capturar';
-          });
-        }
-      },
-    );
+  // ─── Derived state helpers for build() ─────────────────────────────────────
+
+  /// Guide text from the current [DniCaptureState].
+  String get _guideText {
+    final state = _captureController.captureState.value;
+    if (state is DniCaptureScanning) return state.guideText;
+    if (state is DniCaptureCountingDown) return state.guideText;
+    return _initialGuideText;
+  }
+
+  /// Border color derived from the current state and telemetry.
+  Color get _borderColor {
+    final state = _captureController.captureState.value;
+    if (state is DniCaptureScanning) {
+      // Use result's borderColor — carry it via telemetry's failingGate.
+      if (state.failingGate != null) return _theme.accentOrange;
+      return _theme.white;
+    }
+    if (state is DniCaptureCountingDown) return _theme.success;
+    if (state is DniCaptureInFlight) return _theme.success;
+    return _theme.white;
+  }
+
+  bool get _isCaptureable {
+    final state = _captureController.captureState.value;
+    return state is DniCaptureCountingDown || state is DniCaptureInFlight;
+  }
+
+  bool get _manualModeActiveFromState {
+    final state = _captureController.captureState.value;
+    return state is DniCaptureScanning && state.manualModeActive;
+  }
+
+  bool get _isCapturingFromState {
+    final state = _captureController.captureState.value;
+    return state is DniCaptureInFlight || _showFlash;
+  }
+
+  bool? get _userDataMatchFromState {
+    final state = _captureController.captureState.value;
+    if (state is DniCaptureScanning) return state.userDataMatch;
+    if (state is DniCaptureCountingDown) return null;
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
-    final _theme = KycTheme.of(context);
+    final theme = KycTheme.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         _screenSize = Size(constraints.maxWidth, constraints.maxHeight);
+        final manualModeActive = _manualModeActiveFromState;
+        final isCapturingOrLoading = _isCapturingFromState || widget.isLoading;
+        final userDataMatch = _userDataMatchFromState;
+
         return Stack(
           fit: StackFit.expand,
           children: [
             CameraPreview(widget.controller),
-            AnimatedBuilder(
-              animation: Listenable.merge([
-                _pulseAnimation,
-                _scanAnimation,
-                _countdownController,
-              ]),
-              builder: (context, _) {
-                final isPulsing =
-                    !_isCaptureable && !widget.isLoading && !_capturing;
-                return CustomPaint(
-                  painter: _MaskPainter(
-                    holeWidth: widget.holeWidth,
-                    holeHeight: widget.holeHeight,
-                    borderColor: isPulsing
-                        ? _borderColor.withValues(alpha: _pulseAnimation.value)
-                        : _borderColor,
-                    overlayColor: _theme.overlayDark,
-                    countdownProgress: _countdownController.value,
-                    scanProgress: _scanAnimation.value,
-                  ),
+            ValueListenableBuilder<DniCaptureState>(
+              valueListenable: _captureController.captureState,
+              builder: (context, state, _) {
+                return AnimatedBuilder(
+                  animation: Listenable.merge([
+                    _pulseAnimation,
+                    _scanAnimation,
+                    _countdownController,
+                  ]),
+                  builder: (context, _) {
+                    final isPulsing =
+                        !_isCaptureable && !widget.isLoading && !_isCapturingFromState;
+                    return CustomPaint(
+                      painter: MaskPainter(
+                        holeWidth: widget.holeWidth,
+                        holeHeight: widget.holeHeight,
+                        borderColor: isPulsing
+                            ? _borderColor.withValues(alpha: _pulseAnimation.value)
+                            : _borderColor,
+                        overlayColor: theme.overlayDark,
+                        countdownProgress: _countdownController.value,
+                        scanProgress: _scanAnimation.value,
+                      ),
+                    );
+                  },
                 );
               },
             ),
@@ -740,11 +754,9 @@ class _DniCameraMaskState extends State<DniCameraMask>
                 right: 52,
                 child: widget.topContent!,
               ),
-            // Flash toggle: bottom-right, aligned with the manual capture
-            // panel so it sits next to the capture button when manual
-            // fallback appears. Stays accessible during auto-capture too.
+            // Flash toggle
             Positioned(
-              bottom: _manualModeActive
+              bottom: manualModeActive
                   ? MediaQuery.of(context).padding.bottom + 56
                   : MediaQuery.of(context).padding.bottom + 24,
               right: 24,
@@ -752,16 +764,16 @@ class _DniCameraMaskState extends State<DniCameraMask>
                 duration: const Duration(
                   milliseconds: CameraOverlayTuning.torchSwitcherFadeMs,
                 ),
-                child: _FlashToggle(
+                child: FlashToggle(
                   key: ValueKey<bool>(_torchOn),
                   isOn: _torchOn,
                   onToggle: _toggleTorch,
                 ),
               ),
             ),
-            if (widget.isLoading || _capturing)
+            if (isCapturingOrLoading)
               ColoredBox(
-                color: _theme.overlayMedium,
+                color: theme.overlayMedium,
                 child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -773,13 +785,13 @@ class _DniCameraMaskState extends State<DniCameraMask>
                           size: 52,
                         )
                       else
-                        CircularProgressIndicator(color: _theme.white),
+                        CircularProgressIndicator(color: theme.white),
                       SizedBox(height: 16),
                       Text(
                         _loadingMessage,
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: _theme.white,
+                          color: theme.white,
                           fontSize: 16,
                           height: 1.5,
                         ),
@@ -788,30 +800,30 @@ class _DniCameraMaskState extends State<DniCameraMask>
                   ),
                 ),
               )
-            else if (!_manualModeActive)
-              _GuideTextBanner(
+            else if (!manualModeActive)
+              GuideTextBanner(
                 text: _guideText,
                 holeHeight: widget.holeHeight,
                 insideHole: false,
               ),
             if (_showFlash)
               IgnorePointer(
-                child: ColoredBox(color: _theme.white60),
+                child: ColoredBox(color: theme.white60),
               ),
-            if (_manualModeActive && !_capturing && !widget.isLoading)
+            if (manualModeActive && !_isCapturingFromState && !widget.isLoading)
               Positioned(
                 bottom: 0,
                 left: 0,
                 right: 0,
-                child: _ManualCapturePanel(
+                child: ManualCapturePanel(
                   isBackSide: widget.isBackSide,
-                  onPressed: () => unawaited(_triggerCapture()),
+                  onPressed: () => _captureController.captureManually(),
                 ),
               ),
-            if (_userDataMatch != null && !_capturing && !widget.isLoading)
-              _DataMatchIndicator(
-                matches: _userDataMatch!,
-                bottom: _manualModeActive ? 208 : 80,
+            if (userDataMatch != null && !_isCapturingFromState && !widget.isLoading)
+              DataMatchIndicator(
+                matches: userDataMatch,
+                bottom: manualModeActive ? 208 : 80,
               ),
             if (widget.isBackSide)
               Positioned(
@@ -827,551 +839,36 @@ class _DniCameraMaskState extends State<DniCameraMask>
                     duration: const Duration(
                       milliseconds: CameraOverlayTuning.sideIntroFadeMs,
                     ),
-                    child: const _SideIntroRibbon(),
+                    child: const SideIntroRibbon(),
                   ),
                 ),
               ),
             if (kDebugMode && true)
-              Positioned(
-                top: MediaQuery.of(context).padding.top + 8,
-                left: 8,
-                child: IgnorePointer(
-                  child: _G1TelemetryOverlay(
-                    tilt: _telemetryTilt,
-                    mlkitAngle: _telemetryMlkitAngle,
-                    lines: _telemetryLines,
-                    rawBlocks: _telemetryRawBlocks,
-                    rotation: _telemetryRotation,
-                    format: _telemetryFormat,
-                    stableFrames: _stableFrames,
-                    failingGate: _telemetryFailingGate,
-                    perfectSinceMs: _telemetryPerfectSinceMs,
-                  ),
-                ),
+              ValueListenableBuilder<DniTelemetry>(
+                valueListenable: _captureController.telemetry,
+                builder: (context, telemetry, _) {
+                  return Positioned(
+                    top: MediaQuery.of(context).padding.top + 8,
+                    left: 8,
+                    child: IgnorePointer(
+                      child: G1TelemetryOverlay(
+                        tilt: _telemetryTilt,
+                        mlkitAngle: _telemetryMlkitAngle,
+                        lines: _telemetryLines,
+                        rawBlocks: _telemetryRawBlocks,
+                        rotation: _telemetryRotation,
+                        format: _telemetryFormat,
+                        stableFrames: telemetry.stableFrames,
+                        failingGate: telemetry.failingGate,
+                        perfectSinceMs: -1,
+                      ),
+                    ),
+                  );
+                },
               ),
           ],
         );
       },
-    );
-  }
-}
-
-class _ManualCapturePanel extends StatelessWidget {
-  const _ManualCapturePanel({
-    required this.isBackSide,
-    required this.onPressed,
-  });
-
-  final bool isBackSide;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final _theme = KycTheme.of(context);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
-      decoration: BoxDecoration(
-        color: Color(0xCC0D0D1A),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            isBackSide
-                ? 'Encuadra el reverso del DNI y toca para capturar'
-                : 'Encuadra el anverso del DNI y toca para capturar',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: _theme.white70,
-              fontSize: 13,
-            ),
-          ),
-          SizedBox(height: 20),
-          GestureDetector(
-            onTap: onPressed,
-            child: Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _theme.white.withValues(alpha: 0.15),
-                border: Border.all(color: _theme.white, width: 3),
-              ),
-              child: Center(
-                child: Icon(
-                  Icons.camera_alt_outlined,
-                  color: _theme.white,
-                  size: 32,
-                ),
-              ),
-            ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            'Capturar',
-            style: TextStyle(
-              color: _theme.white,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              shadows: [Shadow(blurRadius: 4)],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SideIntroRibbon extends StatelessWidget {
-  const _SideIntroRibbon();
-
-  @override
-  Widget build(BuildContext context) {
-    final _theme = KycTheme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: _theme.overlayMedium,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: _theme.white.withValues(alpha: 0.2),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.check_circle_rounded,
-            color: Color(0xFF69F0AE),
-            size: 18,
-          ),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              'Anverso listo — ahora voltea el DNI',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: _theme.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Debug-only HUD that surfaces the G.1 telemetry signals on top of the
-/// camera preview. Renders nothing in release builds (the entry point in
-/// `DniCameraMask.build` is wrapped in `if (kDebugMode)`).
-///
-/// All values mirror the per-frame Sentry breadcrumb payload — so QA can
-/// reproduce the bug on a debug build and read the same data on screen
-/// that Sentry would receive in release.
-class _G1TelemetryOverlay extends StatelessWidget {
-  const _G1TelemetryOverlay({
-    required this.tilt,
-    required this.mlkitAngle,
-    required this.lines,
-    required this.rawBlocks,
-    required this.rotation,
-    required this.format,
-    required this.stableFrames,
-    required this.failingGate,
-    required this.perfectSinceMs,
-  });
-
-  final double tilt;
-  final double? mlkitAngle;
-  final int lines;
-  final int rawBlocks;
-  final int rotation;
-  final String format;
-  final int stableFrames;
-  final String? failingGate;
-  final int perfectSinceMs;
-
-  String _fmtAngle(double v) => v.toStringAsFixed(1);
-  String _fmtMaybeAngle(double? v) => v == null ? '-' : v.toStringAsFixed(1);
-
-  @override
-  Widget build(BuildContext context) {
-    final _theme = KycTheme.of(context);
-    final lineStyle = TextStyle(
-      color: _theme.white,
-      fontSize: 11,
-      fontFamily: 'monospace',
-      height: 1.25,
-    );
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: _theme.overlayMedium.withValues(alpha: 0.8),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('tilt: ${_fmtAngle(tilt)}°', style: lineStyle),
-          Text('mlkit_angle: ${_fmtMaybeAngle(mlkitAngle)}°', style: lineStyle),
-          Text('lines: $lines', style: lineStyle),
-          Text('blocks: $rawBlocks', style: lineStyle),
-          Text('rot: $rotation', style: lineStyle),
-          Text('fmt: $format', style: lineStyle),
-          Text('stableFrames: $stableFrames', style: lineStyle),
-          Text('failing_gate: ${failingGate ?? "-"}', style: lineStyle),
-          Text('perfectSince_ms: $perfectSinceMs', style: lineStyle),
-        ],
-      ),
-    );
-  }
-}
-
-class _GuideTextBanner extends StatelessWidget {
-  const _GuideTextBanner({
-    required this.text,
-    required this.holeHeight,
-    this.insideHole = false,
-  });
-  final String text;
-  final double holeHeight;
-  final bool insideHole;
-
-  @override
-  Widget build(BuildContext context) {
-    final _theme = KycTheme.of(context);
-    final screenH = MediaQuery.sizeOf(context).height;
-    final holeBottom = screenH / 2 + holeHeight / 2;
-    final top = insideHole ? holeBottom - 52 : holeBottom + 16;
-    return Positioned(
-      top: top,
-      left: 32,
-      right: 32,
-      child: AnimatedSwitcher(
-        duration: const Duration(
-          milliseconds: CameraOverlayTuning.switcherFadeMs,
-        ),
-        layoutBuilder: _animatedSwitcherDedupeLayout,
-        child: Container(
-          key: ValueKey(text),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(
-            color: _theme.overlayMedium,
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Text(
-            text,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: _theme.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ─── Mask painter ─────────────────────────────────────────────────────────────
-
-class _MaskPainter extends CustomPainter {
-  const _MaskPainter({
-    required this.holeWidth,
-    required this.holeHeight,
-    required this.borderColor,
-    required this.overlayColor,
-    required this.countdownProgress,
-    this.scanProgress = 0,
-  });
-
-  final double holeWidth;
-  final double holeHeight;
-  final Color borderColor;
-  final Color overlayColor;
-  final double countdownProgress;
-  final double scanProgress;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-
-    final fullPath = Path()
-      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-
-    final holePath = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: Offset(cx, cy),
-            width: holeWidth,
-            height: holeHeight,
-          ),
-          const Radius.circular(8),
-        ),
-      );
-
-    canvas.drawPath(
-      Path.combine(PathOperation.difference, fullPath, holePath),
-      Paint()..color = overlayColor,
-    );
-
-    _drawCornerMarkers(canvas, cx, cy);
-    _drawScanLine(canvas, cx, cy);
-    if (countdownProgress > 0) _drawRectCountdown(canvas, cx, cy);
-  }
-  /// Horizontal scan line sweeping vertically through the document hole.
-  /// Gives real-time feedback that the system is actively reading the document.
-  void _drawScanLine(Canvas canvas, double cx, double cy) {
-    final l = cx - holeWidth / 2;
-    final t = cy - holeHeight / 2;
-    final r = cx + holeWidth / 2;
-    final b = cy + holeHeight / 2;
-    final scanY = t + (b - t) * scanProgress;
-    final gradientRect = Rect.fromLTRB(l, scanY - 6, r, scanY + 6);
-
-    canvas
-      ..save()
-      ..clipRect(Rect.fromLTRB(l, t, r, b))
-      // Glow layer
-      ..drawLine(
-        Offset(l, scanY),
-        Offset(r, scanY),
-        Paint()
-          ..shader = const LinearGradient(
-            colors: [Color(0x00FFFFFF), Color(0x1EFFFFFF), Color(0x00FFFFFF)],
-          ).createShader(gradientRect)
-          ..strokeWidth = 12
-          ..style = PaintingStyle.stroke,
-      )
-      // Core line
-      ..drawLine(
-        Offset(l, scanY),
-        Offset(r, scanY),
-        Paint()
-          ..shader = const LinearGradient(
-            colors: [Color(0x00FFFFFF), Color(0x8CFFFFFF), Color(0x00FFFFFF)],
-          ).createShader(gradientRect)
-          ..strokeWidth = 1.5
-          ..style = PaintingStyle.stroke,
-      )
-      ..restore();
-  }
-
-  /// Draws a clockwise-filling border around the document rect as the
-  /// auto-capture countdown progresses (0 → 1). Starts from the top-left
-  /// corner so the animation feels natural and directional.
-  void _drawRectCountdown(Canvas canvas, double cx, double cy) {
-    final l = cx - holeWidth / 2;
-    final t = cy - holeHeight / 2;
-    final r = cx + holeWidth / 2;
-    final b = cy + holeHeight / 2;
-
-    final perimeter = 2 * (holeWidth + holeHeight);
-    var remaining = perimeter * countdownProgress;
-
-    final path = Path()..moveTo(l, t);
-
-    final seg1 = math.min(remaining, holeWidth);
-    path.lineTo(l + seg1, t);
-    remaining -= seg1;
-
-    if (remaining > 0) {
-      final seg2 = math.min(remaining, holeHeight);
-      path.lineTo(r, t + seg2);
-      remaining -= seg2;
-    }
-    if (remaining > 0) {
-      final seg3 = math.min(remaining, holeWidth);
-      path.lineTo(r - seg3, b);
-      remaining -= seg3;
-    }
-    if (remaining > 0) {
-      final seg4 = math.min(remaining, holeHeight);
-      path.lineTo(l, b - seg4);
-    }
-
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = borderColor
-        ..strokeWidth = 3.5
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
-  }
-  void _drawCornerMarkers(Canvas canvas, double cx, double cy) {
-    const markerLen = 24.0;
-    const strokeW = 4.0;
-    const radius = 8.0;
-
-    final paint = Paint()
-      ..color = borderColor
-      ..strokeWidth = strokeW
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    final l = cx - holeWidth / 2;
-    final t = cy - holeHeight / 2;
-    final r = cx + holeWidth / 2;
-    final b = cy + holeHeight / 2;
-
-    canvas
-      ..drawLine(
-        Offset(l + radius, t),
-        Offset(l + radius + markerLen, t),
-        paint,
-      )
-      ..drawLine(
-        Offset(l, t + radius),
-        Offset(l, t + radius + markerLen),
-        paint,
-      )
-      ..drawArc(
-        Rect.fromCircle(center: Offset(l + radius, t + radius), radius: radius),
-        3.14159,
-        0.5 * 3.14159,
-        false,
-        paint,
-      )
-      ..drawLine(
-        Offset(r - radius, t),
-        Offset(r - radius - markerLen, t),
-        paint,
-      )
-      ..drawLine(
-        Offset(r, t + radius),
-        Offset(r, t + radius + markerLen),
-        paint,
-      )
-      ..drawArc(
-        Rect.fromCircle(center: Offset(r - radius, t + radius), radius: radius),
-        1.5 * 3.14159,
-        0.5 * 3.14159,
-        false,
-        paint,
-      )
-      ..drawLine(
-        Offset(l + radius, b),
-        Offset(l + radius + markerLen, b),
-        paint,
-      )
-      ..drawLine(
-        Offset(l, b - radius),
-        Offset(l, b - radius - markerLen),
-        paint,
-      )
-      ..drawArc(
-        Rect.fromCircle(center: Offset(l + radius, b - radius), radius: radius),
-        0.5 * 3.14159,
-        0.5 * 3.14159,
-        false,
-        paint,
-      )
-      ..drawLine(
-        Offset(r - radius, b),
-        Offset(r - radius - markerLen, b),
-        paint,
-      )
-      ..drawLine(
-        Offset(r, b - radius),
-        Offset(r, b - radius - markerLen),
-        paint,
-      )
-      ..drawArc(
-        Rect.fromCircle(center: Offset(r - radius, b - radius), radius: radius),
-        0,
-        0.5 * 3.14159,
-        false,
-        paint,
-      );
-  }
-  void _drawDashedPath(Canvas canvas, Path path, Paint paint) {
-    const dash = 10.0;
-    const gap = 6.0;
-    for (final metric in path.computeMetrics()) {
-      double d = 0;
-      bool draw = true;
-      while (d < metric.length) {
-        final len = draw ? dash : gap;
-        if (draw) canvas.drawPath(metric.extractPath(d, d + len), paint);
-        d += len;
-        draw = !draw;
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(_MaskPainter old) =>
-      old.holeWidth != holeWidth ||
-      old.holeHeight != holeHeight ||
-      old.borderColor != borderColor ||
-      old.overlayColor != overlayColor ||
-      old.countdownProgress != countdownProgress ||
-      old.scanProgress != scanProgress;
-}
-
-class _DataMatchIndicator extends StatelessWidget {
-  const _DataMatchIndicator({required this.matches, this.bottom = 80});
-  final bool matches;
-  final double bottom;
-
-  @override
-  Widget build(BuildContext context) {
-    final _theme = KycTheme.of(context);
-    return Positioned(
-      bottom: bottom,
-      left: 24,
-      right: 24,
-      child: AnimatedSwitcher(
-        duration: const Duration(
-          milliseconds: CameraOverlayTuning.torchSwitcherFadeMs,
-        ),
-        layoutBuilder: _animatedSwitcherDedupeLayout,
-        child: Container(
-          key: ValueKey(matches),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: matches
-                ? _theme.success.withValues(alpha: 0.85)
-                : _theme.warningIcon.withValues(alpha: 0.85),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                matches ? Icons.verified_rounded : Icons.info_outline_rounded,
-                color: _theme.white,
-                size: 16,
-              ),
-              SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  matches
-                      ? 'DNI coincide con tu perfil'
-                      : 'DNI no coincide — verifica el documento',
-                  style: TextStyle(
-                    color: _theme.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
@@ -1392,14 +889,7 @@ class StabilityState {
   ///
   /// A frame is "stable" when [blockDiff] ≤ 2 AND [isEmpty] is false.
   /// Stable → increment by 1.
-  /// Unstable → decrement by 1 (minimum 0) — single-frame forgiveness.
-  /// Returns the next value of the stability counter.
-  ///
-  /// A frame is "stable" when [blockDiff] ≤ 2 AND [isEmpty] is false.
-  /// Stable → increment by 1.
   /// Unstable → decrement by 1, floored at 0 (REQ-STAB-1 forgiveness).
-  /// A single noisy frame loses only 1 stable point instead of resetting
-  /// to zero — two consecutive unstable frames still reach 0.
   static int update({
     required int current,
     required int blockDiff,
@@ -1412,34 +902,4 @@ class StabilityState {
   }
 }
 
-class _FlashToggle extends StatelessWidget {
-  const _FlashToggle({
-    required this.isOn,
-    required this.onToggle,
-    super.key,
-  });
-  final bool isOn;
-  final VoidCallback onToggle;
 
-  @override
-  Widget build(BuildContext context) {
-    final _theme = KycTheme.of(context);
-    return GestureDetector(
-      onTap: onToggle,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: isOn
-              ? _theme.white.withValues(alpha: 0.3)
-              : _theme.overlayMedium,
-          shape: BoxShape.circle,
-        ),
-        child: Icon(
-          isOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
-          color: isOn ? _theme.warningIcon : _theme.white70,
-          size: 22,
-        ),
-      ),
-    );
-  }
-}
