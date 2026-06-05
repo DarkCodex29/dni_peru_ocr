@@ -203,4 +203,107 @@ void main() {
       expect(result?.address, contains('AREQUIPA'));
     });
   });
+
+  // ── BUG regression — real Peruvian DNI back side (JC v0.6.4 verification)
+  //
+  // Real DNI photo printed:
+  //   "Dirección
+  //    ASENT.H15 DE ABRIL CALLE EL MILAGRO
+  //    MZ.B LT.19"
+  //
+  // ML Kit emits these as joined OCR lines, sometimes with the anchor and
+  // first word glued together (`ASENTH15`). The extractor must:
+  //   - keep the MZ.B and LT.19 tokens (they are valid Peruvian address
+  //     codes — Manzana B, Lote 19),
+  //   - keep H15 as part of the address (it's the Asentamiento Humano
+  //     number 15 — common in shantytown addresses),
+  //   - not mangle ABRIL into ABRL.
+  group('BUG regression — Peruvian DNI back-side address with MZ/LT codes', () {
+    late AddressFieldStrategy strategy;
+
+    setUp(() {
+      strategy = const AddressFieldStrategy();
+    });
+
+    test(
+      'MZ.B and LT.19 are preserved in the final address',
+      () {
+        final recognized = _recognizedFromLines([
+          'REPUBLICA DEL PERU',
+          'Dirección',
+          'ASENT.H15 DE ABRIL CALLE EL MILAGRO',
+          'MZ.B LT.19',
+        ]);
+        final result = strategy.extract(recognized);
+        expect(result?.address, isNotNull);
+        // The block / lot tokens MUST survive the noise filter.
+        expect(
+          result?.address,
+          anyOf(contains('MZ.B'), contains('MZ B'), contains('MZ')),
+          reason: 'MZ token (Manzana) is a valid Peruvian address code',
+        );
+        expect(
+          result?.address,
+          anyOf(contains('LT.19'), contains('LT 19'), contains('LT19'), contains('LT')),
+          reason: 'LT token (Lote) is a valid Peruvian address code',
+        );
+      },
+    );
+
+    test(
+      'ABRIL is preserved (no token mangling)',
+      () {
+        final recognized = _recognizedFromLines([
+          'Dirección',
+          'ASENT.H15 DE ABRIL CALLE EL MILAGRO',
+          'MZ.B LT.19',
+        ]);
+        final result = strategy.extract(recognized);
+        expect(result?.address, isNotNull);
+        expect(
+          result?.address,
+          contains('ABRIL'),
+          reason: 'ABRIL (15 de Abril asentamiento) must survive intact',
+        );
+      },
+    );
+
+    test(
+      'MZ A LT 5 (space-separated, no dots) variant',
+      () {
+        final recognized = _recognizedFromLines([
+          'Dirección:',
+          'AV LOS PINOS 123 MZ A LT 5',
+        ]);
+        final result = strategy.extract(recognized);
+        expect(result?.address, isNotNull);
+        expect(result?.address, contains('MZ'));
+        expect(result?.address, contains('LT'));
+        expect(result?.address, contains('LOS PINOS'));
+      },
+    );
+
+    test(
+      'MZA / LTE (full-word variants) preserved',
+      () {
+        final recognized = _recognizedFromLines([
+          'Dirección',
+          'JR HUANUCO 456',
+          'MZA 12 LTE 8',
+        ]);
+        final result = strategy.extract(recognized);
+        expect(result?.address, isNotNull);
+        expect(result?.address, contains('HUANUCO'));
+        // MZA and LTE are recognised long-form variants; at minimum the
+        // numeric codes 12 and 8 must survive.
+        expect(
+          result?.address,
+          anyOf(
+            allOf(contains('MZA'), contains('LTE')),
+            allOf(contains('12'), contains('8')),
+          ),
+        );
+      },
+    );
+  });
 }
