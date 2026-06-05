@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.6.7 (bugfix)
+
+Address continuation across ML Kit line splits — reported by JC against v0.6.6.
+
+### Symptom
+
+Real DNI back side prints `MZ.B LT.19` on its own visual line, but ML Kit
+emits it differently per frame. Sometimes the address line ends at `MZ`
+and the lot fragment lands on the next line as `B LT.19` (or just `19`
+when LT also lands on the previous line). The previous `_buildAddress`
+required the next line to start with a known prefix (`AV.`, `MZ.`, …),
+so a "tail-only" continuation like `B LT.19` was dropped:
+
+```
+Log: ✅ Dirección: ASENT HI5 DE ABRIL CALLE EL MILAGRO MZ
+                                                       ^^ truncated here
+```
+
+### Fix
+
+`_buildAddress` now also attaches the next line when the PREVIOUS line
+ended with a dangling continuation anchor (`MZ`, `MZA`, `LT`, `LTE`,
+`NRO`, `INT`, `DPTO` — with or without trailing dot) and the next line
+looks like a short address fragment (≤ 30 chars, alphanumerics + dots,
+not a known label).
+
+Defensive guards:
+- `≤ 30 char` cap on the next-line fragment prevents stitching unrelated
+  long lines.
+- Regex denylist for obvious labels (`DIRECCI*`, `DOMICILI*`,
+  `DEPARTAMENT*`, `PROVIN*`, `DISTRIT*`, `UBIGEO`, `GRUPO`, `VOTACI*`,
+  `DONACI*`, `ORGANO*`, `SANGUINE*`, `FECHA`, `CADUC*`, `NACIM*`,
+  `SEXO`, `NACIONAL*`) so we don't pull the next form label into the
+  address.
+- Only fires when the previous line's LAST token is a dangling anchor —
+  a complete `MZ.B` on the previous line is NOT treated as dangling.
+
+### Tests
+
+3 new regression tests in `test/data/strategies/address_field_strategy_test.dart`:
+
+1. `MZ` at end of line1 + `B LT.19` on line2 → joined.
+2. `LT` at end of line1 + `19` on line2 → joined.
+3. Continuation chain `MZ` → `B` → `LT 19` across three lines.
+
+**515/515 tests pass.** `flutter analyze` clean.
+
+### Consumer impact
+
+No public API changes. Patch release. Bump SHA only.
+
 ## 0.6.6 (bugfix)
 
 Two text-OCR fidelity fixes for real Peruvian DNI cards reported by JC

@@ -352,5 +352,61 @@ void main() {
         );
       },
     );
+
+    // BUG F — ML Kit splits address mid-token: anchor line ends at "MZ"
+    // and continuation line starts with "B LT.19" (no MZ./MZA. prefix).
+    // The _buildAddress loop must tolerate this kind of fragmented OCR
+    // when the previous line ENDED with an address-continuation prefix
+    // and the next line CONTINUES it without a recognised prefix of its
+    // own. Real JC case where the back-side OCR truncates the address.
+    test(
+      'ML Kit emits MZ at end of line1 + "B LT.19" on line2 — must concatenate',
+      () {
+        final recognized = _recognizedFromLines([
+          'REPUBLICA DEL PERU',
+          'ASENT.H15 DE ABRIL CALLE EL MILAGRO MZ',
+          'B LT.19',
+        ]);
+        final result = strategy.extract(recognized);
+        expect(result?.address, isNotNull);
+        expect(
+          result?.address,
+          allOf(contains('MZ'), contains('LT'), contains('19')),
+          reason: 'continuation line "B LT.19" must attach when previous '
+              'line ended with an MZ/LT continuation prefix',
+        );
+      },
+    );
+
+    test(
+      'ML Kit emits LT at end of line1 + "19" on line2 — must concatenate',
+      () {
+        final recognized = _recognizedFromLines([
+          'ASENT.H15 DE ABRIL CALLE EL MILAGRO MZ.B LT',
+          '19',
+        ]);
+        final result = strategy.extract(recognized);
+        expect(result?.address, isNotNull);
+        expect(
+          result?.address,
+          allOf(contains('LT'), contains('19')),
+        );
+      },
+    );
+
+    test(
+      'continuation chain MZ → B → LT → 19 across three lines',
+      () {
+        final recognized = _recognizedFromLines([
+          'ASENT.H15 DE ABRIL CALLE EL MILAGRO MZ',
+          'B',
+          'LT 19',
+        ]);
+        final result = strategy.extract(recognized);
+        expect(result?.address, isNotNull);
+        expect(result?.address, contains('MZ'));
+        expect(result?.address, contains('LT'));
+      },
+    );
   });
 }
