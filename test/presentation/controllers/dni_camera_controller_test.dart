@@ -572,4 +572,39 @@ void main() {
       expect(called, isFalse);
     });
   });
+
+  group('DniTelemetry — value equality', () {
+    test('two telemetries with identical fields are equal', () {
+      const a = DniTelemetry(stableFrames: 3, failingGate: 'tilt');
+      const b = DniTelemetry(stableFrames: 3, failingGate: 'tilt');
+
+      expect(a, equals(b));
+      expect(a.hashCode, equals(b.hashCode));
+    });
+
+    test('differing stableFrames breaks equality', () {
+      const a = DniTelemetry(stableFrames: 3, failingGate: null);
+      const b = DniTelemetry(stableFrames: 4, failingGate: null);
+
+      expect(a, isNot(equals(b)));
+    });
+
+    test('differing failingGate breaks equality', () {
+      const a = DniTelemetry(stableFrames: 3, failingGate: null);
+      const b = DniTelemetry(stableFrames: 3, failingGate: 'tilt');
+
+      expect(a, isNot(equals(b)));
+    });
+
+    test('differing tiltDegrees breaks equality', () {
+      const a = DniTelemetry(stableFrames: 3, failingGate: null);
+      const b = DniTelemetry(
+        stableFrames: 3,
+        failingGate: null,
+        tiltDegrees: 0.5,
+      );
+
+      expect(a, isNot(equals(b)));
+    });
+  });
 }

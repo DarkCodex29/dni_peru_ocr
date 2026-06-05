@@ -10,6 +10,11 @@ import '../orchestrators/dni_capture_state.dart';
 ///
 /// Exposed via [DniCameraController.telemetry] for the debug overlay and
 /// Sentry breadcrumbs. All fields are diagnostic-only and safe in release.
+///
+/// Value equality is implemented so that [ValueNotifier] consumers (e.g. the
+/// debug overlay widget in PR3c) do not rebuild when two consecutive frames
+/// emit identical telemetry.
+@immutable
 class DniTelemetry {
   const DniTelemetry({
     required this.stableFrames,
@@ -33,6 +38,26 @@ class DniTelemetry {
 
   /// OCR block count after hole filter.
   final int filteredBlockCount;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is DniTelemetry &&
+        other.stableFrames == stableFrames &&
+        other.failingGate == failingGate &&
+        other.tiltDegrees == tiltDegrees &&
+        other.rawBlockCount == rawBlockCount &&
+        other.filteredBlockCount == filteredBlockCount;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        stableFrames,
+        failingGate,
+        tiltDegrees,
+        rawBlockCount,
+        filteredBlockCount,
+      );
 }
 
 /// Pure Dart lifecycle controller for the DNI camera capture flow.
