@@ -632,7 +632,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (!_gateBreadcrumbThrottle.tryAcquire(nowMs)) return;
 
-    OcrExtractedFields.logger.breadcrumb(
+    _captureController.emitBreadcrumb(
       'kyc.gate',
       'gate_failed',
       data: <String, Object?>{

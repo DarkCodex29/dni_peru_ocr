@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../document_validator.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
+import '../../domain/interfaces/ocr_logger.dart';
 
 /// Diagnostic telemetry emitted each time a camera frame is processed.
 ///
@@ -100,10 +101,12 @@ class DniCameraController {
     required bool isBackSide,
     required void Function(dynamic file, dynamic consensus) onValidCapture,
     void Function(DateTime expirationDate)? onDocumentExpired,
+    OcrLogger logger = const NoOpOcrLogger(),
   })  : _orchestrator = orchestrator,
         _isBackSide = isBackSide,
         _onValidCapture = onValidCapture,
         _onDocumentExpired = onDocumentExpired,
+        _logger = logger,
         _captureStateNotifier = ValueNotifier(
           const DniCaptureScanning(
             guideText: '',
@@ -121,6 +124,22 @@ class DniCameraController {
   // ── Dependencies ────────────────────────────────────────────────────────
 
   final DniCaptureOrchestrator _orchestrator;
+
+  /// Logger for observability breadcrumbs. Defaults to no-op.
+  final OcrLogger _logger;
+
+  /// Emits a breadcrumb through the injected logger.
+  ///
+  /// Widget-level callers (e.g. [DniCameraMask]) use this to route
+  /// telemetry breadcrumbs through the same logger as the controller,
+  /// avoiding any need for a direct logger reference in the widget tree.
+  void emitBreadcrumb(
+    String category,
+    String message, {
+    Map<String, Object?>? data,
+  }) {
+    _logger.breadcrumb(category, message, data: data);
+  }
 
   /// Whether this controller instance manages the back side of the document.
   ///

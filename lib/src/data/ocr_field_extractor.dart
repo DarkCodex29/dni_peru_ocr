@@ -25,16 +25,17 @@ class OcrExtractedFields {
   String? nationality;
   String? address;
 
-  /// Logger used by [_reportMismatch] to record OCR/MRZ mismatches.
-  /// Defaults to a no-op; assign once at app startup to wire your
-  /// observability platform.
-  static OcrLogger logger = const NoOpOcrLogger();
-
-  void merge(OcrExtractedFields other) {
+  /// Merges [other] into this instance.
+  ///
+  /// MRZ-sourced incoming always wins over text-OCR current.
+  /// Pass an optional [logger] to record OCR/MRZ mismatch breadcrumbs.
+  /// Defaults to a [NoOpOcrLogger] (silent) when not provided.
+  void merge(OcrExtractedFields other, {OcrLogger? logger}) {
     // MRZ-sourced incoming always wins over text-OCR current.
     // When merging text into an MRZ accumulator, MRZ is preserved.
     final incomingIsMrz = other._fromMrz;
     final currentIsMrz = _fromMrz;
+    final effectiveLogger = logger ?? const NoOpOcrLogger();
 
     documentNumber = _bestWithMrz(
       current: documentNumber,
@@ -42,6 +43,7 @@ class OcrExtractedFields {
       fieldName: 'documentNumber',
       incomingIsMrz: incomingIsMrz,
       currentIsMrz: currentIsMrz,
+      logger: effectiveLogger,
     );
     firstName = _best(
       firstName,
@@ -105,6 +107,7 @@ class OcrExtractedFields {
     required String fieldName,
     required bool incomingIsMrz,
     required bool currentIsMrz,
+    required OcrLogger logger,
   }) {
     if (incoming == null || incoming.isEmpty) return current;
     if (current == null || current.isEmpty) return incoming;
@@ -112,7 +115,7 @@ class OcrExtractedFields {
     // MRZ incoming wins unconditionally over text-OCR current.
     if (incomingIsMrz && !currentIsMrz) {
       if (incoming != current) {
-        _reportMismatch(fieldName, ocrValue: current, mrzValue: incoming);
+        _reportMismatch(fieldName, ocrValue: current, mrzValue: incoming, logger: logger);
       }
       return incoming;
     }
@@ -144,6 +147,7 @@ class OcrExtractedFields {
     String field, {
     required String ocrValue,
     required String mrzValue,
+    required OcrLogger logger,
   }) {
     logger.breadcrumb(
       'kyc-ocr-mrz-mismatch',
@@ -211,19 +215,28 @@ class OcrExtractedFields {
 /// All strategies are stateless. The default instance uses the standard
 /// three strategies; pass a custom [List<OcrFieldStrategy>] to the
 /// constructor for testing or alternative pipelines.
+///
+/// Pass an [OcrLogger] to receive breadcrumb events (e.g. OCR/MRZ mismatch).
+/// Defaults to [NoOpOcrLogger] when not provided.
 class OcrFieldExtractor {
-  /// Creates a coordinator with the default three strategies.
-  const OcrFieldExtractor([List<OcrFieldStrategy>? strategies])
-      : _strategies = strategies;
+  /// Creates a coordinator with optional strategies and logger.
+  ///
+  /// [logger] defaults to [NoOpOcrLogger] (no-op) when not supplied.
+  const OcrFieldExtractor({
+    List<OcrFieldStrategy>? strategies,
+    OcrLogger logger = const NoOpOcrLogger(),
+  })  : _strategies = strategies,
+        _logger = logger;
 
   final List<OcrFieldStrategy>? _strategies;
+  final OcrLogger _logger;
 
   /// Runs the extraction pipeline using this instance's strategy list.
   OcrExtractedFields extractWith(RecognizedText recognized) {
     final mrz = _mrzStrategy;
     final text = _textStrategy;
     final address = _addressStrategy;
-    return _runPipeline(recognized, mrz, text, address);
+    return _runPipeline(recognized, mrz, text, address, _logger);
   }
 
   OcrFieldStrategy get _mrzStrategy =>
@@ -249,6 +262,7 @@ class OcrFieldExtractor {
       const MrzFieldStrategy(),
       const TextOcrFieldStrategy(),
       const AddressFieldStrategy(),
+      const NoOpOcrLogger(),
     );
   }
 
@@ -271,6 +285,7 @@ class OcrFieldExtractor {
     OcrFieldStrategy mrzStrategy,
     OcrFieldStrategy textStrategy,
     OcrFieldStrategy addressStrategy,
+    OcrLogger logger,
   ) {
     final empty = OcrExtractedFields();
     if (recognized.blocks.isEmpty) return empty;
