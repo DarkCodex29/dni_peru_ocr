@@ -18,6 +18,20 @@ class DocumentValidationResult {
     this.failingGate,
   });
 
+  /// Test seam constructor — bypasses all gate logic for unit-test isolation.
+  ///
+  /// Use only in tests to build a minimal result when the full [evaluate]
+  /// pipeline (ML Kit + Flutter `Size`) is not available. Only [isCaptureable]
+  /// is meaningful on instances created this way; [message] and [borderColor]
+  /// are stub values.
+  @visibleForTesting
+  DocumentValidationResult.forTest({required bool isCaptureable})
+      : this._(
+          message: '',
+          borderColor: const Color(0xFFFFFFFF),
+          isCaptureable: isCaptureable,
+        );
+
   final String message;
   final Color borderColor;
   final bool isCaptureable;

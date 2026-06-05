@@ -232,7 +232,7 @@ void main() {
           minStableFrames: 2,
         ));
 
-    DniCaptureCountingDown _startCounting(DniCaptureOrchestrator o) {
+    DniCaptureCountingDown startCounting(DniCaptureOrchestrator o) {
       const initial = DniCaptureScanning(
         guideText: '',
         failingGate: null,
@@ -251,7 +251,7 @@ void main() {
     }
 
     test('regression within grace period keeps countingDown', () {
-      final counting = _startCounting(orc);
+      final counting = startCounting(orc);
 
       final tGrace = t0.add(const Duration(milliseconds: 300)); // < 600ms
       final next = orc.onFrame(
@@ -266,7 +266,7 @@ void main() {
     });
 
     test('regression beyond grace period resets to scanning', () {
-      final counting = _startCounting(orc);
+      final counting = startCounting(orc);
 
       final tBeyond = t0.add(const Duration(milliseconds: 700)); // > 600ms
       final next = orc.onFrame(
@@ -281,7 +281,7 @@ void main() {
     });
 
     test('reset countdown does NOT trigger capture on late frame', () {
-      final counting = _startCounting(orc);
+      final counting = startCounting(orc);
 
       final tBeyond = t0.add(const Duration(milliseconds: 700));
       final scanning = orc.onFrame(
