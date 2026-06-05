@@ -1,6 +1,6 @@
 /// Pure functions for normalizing OCR-extracted field values.
 ///
-/// Used by [OcrConsensusBuilder] before inserting votes into the vote map,
+/// Used by [OcrConsensusAccumulator] before inserting votes into the vote map,
 /// so that normalized variants (e.g. `JOSE` vs `JOSÉ`) are treated as equal.
 class OcrFieldNormalizer {
   OcrFieldNormalizer._();

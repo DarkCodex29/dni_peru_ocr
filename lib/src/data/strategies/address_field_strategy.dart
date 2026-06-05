@@ -23,7 +23,13 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     final result = OcrExtractedFields();
     _extractAddressFromBlocks(recognized, result);
 
-    return result.address != null ? result : null;
+    // Return the result if any address-related field landed: the street
+    // address itself OR any of the three ubigeo administrative fields.
+    final hasAnyField = result.address != null ||
+        result.department != null ||
+        result.province != null ||
+        result.district != null;
+    return hasAnyField ? result : null;
   }
 
   void _extractAddressFromBlocks(
@@ -39,9 +45,62 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
         }
       }
     }
+    // Single pass: try every line as both an address anchor AND a ubigeo
+    // line. Address extraction short-circuits once a valid value lands;
+    // ubigeo extraction always runs because the three administrative
+    // fields are independent of [result.address].
     for (int i = 0; i < lines.length; i++) {
-      _tryExtractAddress(lines, i, result);
-      if (result.address != null) return;
+      if (result.address == null) {
+        _tryExtractAddress(lines, i, result);
+      }
+      _tryExtractUbigeo(lines[i], result);
+    }
+  }
+
+  /// Parses the `DEPARTAMENTO/PROVINCIA/DISTRITO` line on the back of the
+  /// DNI and populates [OcrExtractedFields.department], [.province], and
+  /// [.district].
+  ///
+  /// Format on real Peruvian electronic DNI cards is one of:
+  ///
+  ///   `/CALLAO/VENTANILLA`               (department / district, no province)
+  ///   `ANCASH/SANTA/CHIMBOTE`            (3 parts)
+  ///   `LIMA/LIMA/VILLA MARIA DEL TRIUNFO` (3 parts, district has spaces)
+  ///
+  /// We always emit the **last** part as the district. When 3 parts are
+  /// present we map them positionally `[department, province, district]`.
+  /// When 2 parts are present we treat the first as the department and
+  /// the second as the district, leaving the province null — this matches
+  /// RENIEC's convention for districts that belong directly to a regional
+  /// government (e.g. Callao constitutional province).
+  void _tryExtractUbigeo(String line, OcrExtractedFields result) {
+    if (result.department != null &&
+        result.province != null &&
+        result.district != null) {
+      return;
+    }
+    final trimmed = line.trim().toUpperCase();
+    if (!_isUbigeoLine(trimmed)) return;
+    // The form label itself is shaped like a ubigeo line (three slash-
+    // separated tokens). Skip lines that contain the literal label words.
+    if (RegExp(r'\b(DEPARTAMENTO|PROVINCIA|DISTRITO)\b').hasMatch(trimmed)) {
+      return;
+    }
+
+    final parts = trimmed
+        .split('/')
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+
+    if (parts.length == 3) {
+      result.department ??= parts[0];
+      result.province ??= parts[1];
+      result.district ??= parts[2];
+    } else if (parts.length == 2) {
+      result.department ??= parts[0];
+      // province stays null — RENIEC convention for constitutional districts.
+      result.district ??= parts[1];
     }
   }
 

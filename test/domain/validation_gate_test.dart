@@ -47,14 +47,6 @@ RecognizedText _makeRecognizedText({
 const _kImageSize = Size(1920, 1080);
 
 void main() {
-  // Defensive reset of the test-only DocumentValidationResult.tiltCalculator
-  // seam. Same rationale as document_validator_test.dart — addTearDown
-  // already handles per-test cleanup, this setUp belt-and-suspenders the
-  // case where a prior test crashes before its addTearDown runs.
-  setUp(() {
-    DocumentValidationResult.tiltCalculator = null;
-  });
-
   group('ValidationGate enum — enum values', () {
     // ── All 6 cases must exist ──────────────────────────────────────────────
 
@@ -167,13 +159,10 @@ void main() {
     });
 
     test('tilt → failingGate == ValidationGate.tilt', () {
-      // Inject a 45-degree tilt via the test seam to trigger the tilt gate.
-      DocumentValidationResult.tiltCalculator = (_) => 45.0;
-      addTearDown(() => DocumentValidationResult.tiltCalculator = null);
-
       final result = DocumentValidationResult.evaluate(
         recognizedText: _makeRecognizedText(count: 5),
         imageSize: _kImageSize,
+        tiltCalculator: (_) => 45.0,
       );
       expect(result.failingGate, ValidationGate.tilt);
     });

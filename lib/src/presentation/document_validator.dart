@@ -60,37 +60,19 @@ class DocumentValidationResult {
   /// rejecting documents tilted enough to degrade backend OCR.
   static const double _maxTiltDegrees = 15.0;
 
-  /// Test seam — override to inject a fixed tilt value without constructing
-  /// real MLKit cornerPoints. In production this is `null`, which causes
-  /// [evaluate] to call [computeMedianTiltDegrees] directly.
-  ///
-  /// Usage in tests:
-  /// ```dart
-  /// DocumentValidationResult.tiltCalculator = (_) => 15.0;
-  /// ```
-  @visibleForTesting
-  static double Function(RecognizedText)? tiltCalculator;
-
   /// Evaluates document framing from [recognizedText] against [imageSize].
   ///
-  /// The [theme] parameter is deprecated and will be removed in v0.7.0.
-  /// It was previously used to compute `borderColor` (now removed).
-  /// Existing callers that pass `theme:` will continue to compile — the value
-  /// is silently ignored. Remove the named argument at your convenience.
-  ///
-  /// TODO(0.7.0): Remove the `theme` parameter.
+  /// [tiltCalculator] is an injectable function used to compute the median
+  /// document tilt in degrees. Defaults to [computeMedianTiltDegrees], the
+  /// production implementation backed by ML Kit corner points. Tests inject
+  /// a fixed value to bypass the full geometry pipeline without setting up
+  /// real corner-point geometry.
   static DocumentValidationResult evaluate({
     required RecognizedText recognizedText,
     required Size imageSize,
-    @Deprecated(
-      'theme is no longer used by evaluate(). '
-      'Use ValidationGateColors.colorFor(result.failingGate, theme) '
-      'in your presentation layer instead. '
-      'Will be removed in v0.7.0.',
-    )
-    dynamic theme,
     bool ocrMatchesUser = false,
     bool isBackSide = false,
+    double Function(RecognizedText) tiltCalculator = computeMedianTiltDegrees,
   }) {
     final blocks = recognizedText.blocks;
     final requiredBlocks = isBackSide ? _minBlocksBack : _minBlocks;
@@ -190,7 +172,7 @@ class DocumentValidationResult {
 
     // Tilt check — applies to both front and back.
     // A skewed capture makes backend OCR fail, same as tilted MRZ.
-    final tilt = (tiltCalculator ?? computeMedianTiltDegrees)(recognizedText);
+    final tilt = tiltCalculator(recognizedText);
     if (tilt.abs() > _maxTiltDegrees) {
       return const DocumentValidationResult._(
         message: 'Endereza el documento',

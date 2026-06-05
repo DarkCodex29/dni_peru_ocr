@@ -1,3 +1,5 @@
+import 'dart:math' show Random;
+
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mrz_parser/mrz_parser.dart';
@@ -1068,5 +1070,120 @@ void main() {
         builder.dispose();
       },
     );
+  });
+
+  // ── Name field consolidation (v0.7.0): strict prefix containment ──────
+  //
+  // Names are short and Levenshtein-based merging risks collapsing
+  // legitimately different names (`JUAN` ≈ `JOSE`). Consolidation here
+  // is restricted to **whole-word prefix containment**: `MORENO` merges
+  // into `MORENO ALEMAN` because the first is the literal beginning of
+  // the second, but `JUAN` and `JOSE` stay independent.
+  group('Name field consolidation — strict prefix only', () {
+    test(
+      'paternal-only vote merges into paternal+maternal vote',
+      () {
+        final builder = OcrConsensusAccumulator()
+          ..recordVote({'lastName': 'MORENO'})
+          ..recordVote({'lastName': 'MORENO ALEMAN'});
+
+        final snap = builder.snapshot();
+        // The longer variant wins and the two votes consolidate into 2/2.
+        expect(snap.lastName.value, 'MORENO ALEMAN');
+        expect(snap.lastName.confidence, equals(1.0));
+        builder.dispose();
+      },
+    );
+
+    test(
+      'unrelated first names stay independent (no false merge)',
+      () {
+        final builder = OcrConsensusAccumulator()
+          ..recordVote({'firstName': 'JUAN'})
+          ..recordVote({'firstName': 'JUAN'})
+          ..recordVote({'firstName': 'JOSE'});
+
+        final snap = builder.snapshot();
+        // 2 votes for JUAN, 1 for JOSE → JUAN wins on majority, no merge.
+        expect(snap.firstName.value, 'JUAN');
+        builder.dispose();
+      },
+    );
+
+    test(
+      'document number prefix consolidation does NOT fire on equal length',
+      () {
+        // Same-length variants must not merge — strict prefix containment
+        // requires anchor.length > shorter.length.
+        final builder = OcrConsensusAccumulator()
+          ..recordVote({'documentNumber': '12345678'})
+          ..recordVote({'documentNumber': '12345679'});
+
+        final snap = builder.snapshot();
+        // Both have 1 vote; reduce(max) returns one of them. The point of
+        // this test is that they DID NOT merge into a single bucket.
+        expect(snap.documentNumber.value, anyOf('12345678', '12345679'));
+        expect(snap.documentNumber.confidence, equals(0.5));
+        builder.dispose();
+      },
+    );
+  });
+
+  // ── Property: vote order does not affect winner ──────────────────────
+  //
+  // The snapshot must be deterministic with respect to the order in which
+  // votes were recorded. ML Kit emits frames in unpredictable order, so a
+  // consumer must receive the same final value regardless of which frame
+  // happened to be processed first. This guards against any future
+  // regression that would re-introduce HashMap iteration-order dependency.
+  group('Property — snapshot order independence', () {
+    test('address: shuffle 5 micro-variants 30 times, same winner each run', () {
+      final votes = [
+        'ASENT H15 DE ABRIL CALLE EL MILAGRO',
+        'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ',
+        'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B',
+        'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ.B LT.19',
+        'ASENT H15 DE ABRIL CALLE EL MLAGRO MZ.B LT.19',
+      ];
+
+      String? firstWinner;
+      for (var seed = 0; seed < 30; seed++) {
+        final shuffled = List.of(votes)..shuffle(Random(seed));
+        final acc = OcrConsensusAccumulator();
+        for (final v in shuffled) {
+          acc.recordVote({'address': v});
+        }
+        final winner = acc.snapshot().address.value;
+        acc.dispose();
+        firstWinner ??= winner;
+        expect(
+          winner,
+          equals(firstWinner),
+          reason: 'seed $seed produced a different winner — non-determinism',
+        );
+      }
+    });
+
+    test('lastName: shuffle prefix variants, same winner each run', () {
+      final votes = [
+        'MORENO',
+        'MORENO ALEMAN',
+        'MORENO ALEMAN',
+        'MORENO',
+      ];
+
+      String? firstWinner;
+      for (var seed = 0; seed < 30; seed++) {
+        final shuffled = List.of(votes)..shuffle(Random(seed));
+        final acc = OcrConsensusAccumulator();
+        for (final v in shuffled) {
+          acc.recordVote({'lastName': v});
+        }
+        final winner = acc.snapshot().lastName.value;
+        acc.dispose();
+        firstWinner ??= winner;
+        expect(winner, equals(firstWinner));
+      }
+    });
   });
 }

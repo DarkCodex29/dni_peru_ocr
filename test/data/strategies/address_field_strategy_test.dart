@@ -409,4 +409,61 @@ void main() {
       },
     );
   });
+
+  // ── Ubigeo extraction (v0.7.0 — new API surface) ───────────────────────
+  //
+  // The DNI back side prints administrative geography below the address:
+  //
+  //   "Departamento/Provincia/Distrito
+  //    ANCASH/SANTA/CHIMBOTE"
+  //
+  // We populate three new optional fields on [OcrExtractedFields] —
+  // department, province, district — so consumers that need RENIEC-grade
+  // location data do not have to parse the slash-separated line themselves.
+  group('Ubigeo extraction — department / province / district', () {
+    test('3-part ubigeo line maps positionally to dept/prov/dist', () {
+      final recognized = _recognizedFromLines([
+        'Departamento/Provincia/Distrito',
+        'ANCASH/SANTA/CHIMBOTE',
+      ]);
+      final result = const AddressFieldStrategy().extract(recognized);
+      expect(result?.department, 'ANCASH');
+      expect(result?.province, 'SANTA');
+      expect(result?.district, 'CHIMBOTE');
+    });
+
+    test('2-part ubigeo (constitutional province) leaves province null', () {
+      // Callao is a constitutional province — its districts belong to the
+      // regional government directly, so the OCR line skips the province.
+      final recognized = _recognizedFromLines([
+        'Departamento/Provincia/Distrito',
+        '/CALLAO/VENTANILLA',
+      ]);
+      final result = const AddressFieldStrategy().extract(recognized);
+      expect(result?.department, 'CALLAO');
+      expect(result?.province, isNull);
+      expect(result?.district, 'VENTANILLA');
+    });
+
+    test('district with multi-word name is preserved', () {
+      final recognized = _recognizedFromLines([
+        'LIMA/LIMA/VILLA MARIA DEL TRIUNFO',
+      ]);
+      final result = const AddressFieldStrategy().extract(recognized);
+      expect(result?.department, 'LIMA');
+      expect(result?.province, 'LIMA');
+      expect(result?.district, 'VILLA MARIA DEL TRIUNFO');
+    });
+
+    test('no ubigeo line → all three fields stay null', () {
+      final recognized = _recognizedFromLines([
+        'Domicilio',
+        'AV LOS PINOS 123',
+      ]);
+      final result = const AddressFieldStrategy().extract(recognized);
+      expect(result?.department, isNull);
+      expect(result?.province, isNull);
+      expect(result?.district, isNull);
+    });
+  });
 }

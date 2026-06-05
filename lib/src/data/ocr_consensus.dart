@@ -443,6 +443,16 @@ class OcrConsensusAccumulator {
       return _consolidatedAddressVote(map, total, threshold);
     }
 
+    // For name and document-number fields, consolidate only by **strict
+    // tilde-insensitive prefix containment**: a vote for `MORENO` merges
+    // into a vote for `MORENO ALEMAN` because the first is a structural
+    // prefix of the second, but `JUAN` does NOT merge into `JOSE` even
+    // though their Levenshtein similarity is high. Names are short and
+    // fuzzy matching produces too many false positives — prefix is the
+    // only safe consolidation primitive here.
+    final consolidated = _consolidatedNameVote(map, total, threshold);
+    if (consolidated != null) return consolidated;
+
     final leading = map.entries.reduce((a, b) => a.value > b.value ? a : b);
     final confidence = total == 0 ? 0.0 : leading.value / total;
     // Prefer the tilde-preserving display value; fall back to the ASCII
@@ -454,6 +464,93 @@ class OcrConsensusAccumulator {
       confidence: confidence,
       locked: confidence >= threshold,
     );
+  }
+
+  /// Consolidates name / document-number votes by **strict prefix containment**
+  /// after diacritic stripping. Returns `null` when consolidation would not
+  /// change the winner (in that case the caller falls back to the original
+  /// `reduce(max)` path).
+  ///
+  /// ### Why prefix-only (no Levenshtein)
+  ///
+  /// Address tolerates fuzzy 80% similarity because it is long free-text
+  /// where 1–2 character glitches are likely the same string. Names are
+  /// short and 80% similarity between `JUAN` and `JOSE` would wrongly
+  /// merge two different first names. Prefix containment requires the
+  /// shorter string to be an exact tilde-insensitive prefix of the
+  /// longer — `MORENO` ⊂ `MORENO ALEMAN`, but `JUAN` ⊄ `JOSE`.
+  OcrFieldResult<String>? _consolidatedNameVote(
+    Map<String, int> map,
+    int total,
+    double threshold,
+  ) {
+    if (map.length < 2) return null;
+
+    final entries = map.entries.toList()
+      ..sort((a, b) {
+        final byLen = b.key.length.compareTo(a.key.length);
+        if (byLen != 0) return byLen;
+        return b.value.compareTo(a.value);
+      });
+
+    final consumed = <String>{};
+    final groups = <_NameGroup>[];
+
+    for (final candidate in entries) {
+      if (consumed.contains(candidate.key)) continue;
+      final group = _NameGroup(
+        anchor: candidate.key,
+        totalVotes: candidate.value,
+      );
+      consumed.add(candidate.key);
+
+      for (final other in entries) {
+        if (consumed.contains(other.key)) continue;
+        if (_nameIsPrefixOf(group.anchor, other.key)) {
+          group.totalVotes += other.value;
+          consumed.add(other.key);
+        }
+      }
+      groups.add(group);
+    }
+
+    if (groups.length == map.length) {
+      // No consolidation happened — defer to the original reduce(max) path.
+      return null;
+    }
+
+    groups.sort((a, b) {
+      final byVotes = b.totalVotes.compareTo(a.totalVotes);
+      if (byVotes != 0) return byVotes;
+      return b.anchor.length.compareTo(a.anchor.length);
+    });
+    final winner = groups.first;
+    final field = _votes.entries
+        .firstWhere((e) => identical(e.value, map))
+        .key;
+    final displayValue =
+        _displayValues[field]?[winner.anchor] ?? winner.anchor;
+    final confidence = total == 0 ? 0.0 : winner.totalVotes / total;
+    return OcrFieldResult(
+      value: displayValue,
+      confidence: confidence,
+      locked: confidence >= threshold,
+    );
+  }
+
+  /// Strict tilde-insensitive prefix containment for name consolidation.
+  ///
+  /// Returns true when [shorter] is a whitespace-collapsed prefix of
+  /// [anchor] after diacritic stripping. Both inputs are expected to come
+  /// from [_normalize] for the same field, which uppercases and removes
+  /// diacritics already.
+  bool _nameIsPrefixOf(String anchor, String shorter) {
+    if (anchor.length <= shorter.length) return false;
+    if (anchor.isEmpty || shorter.isEmpty) return false;
+    // Require the prefix to end on a word boundary so `MORE` does NOT
+    // merge into `MORENO` (only the full-word prefix `MORENO` merges
+    // into `MORENO ALEMAN`).
+    return anchor.startsWith('$shorter ');
   }
 
   /// Consolidates address votes by grouping near-duplicate variants.
@@ -518,10 +615,16 @@ class OcrConsensusAccumulator {
     final displayValue =
         _displayValues['address']?[winner.anchor] ?? winner.anchor;
     final confidence = total == 0 ? 0.0 : winner.totalVotes / total;
+    // A single-frame consolidation reaches confidence = 1.0 (1/1) which
+    // would otherwise flip [locked] to true on the very first vote. That
+    // is too eager: address is a noisy free-text field and we want at
+    // least two corroborating frames before declaring a stable consensus.
+    // The display value is still emitted; only the `locked` flag is gated.
+    final locked = total >= 2 && confidence >= threshold;
     return OcrFieldResult(
       value: displayValue,
       confidence: confidence,
-      locked: confidence >= threshold,
+      locked: locked,
     );
   }
 
@@ -751,23 +854,32 @@ class _MrzFieldsBuffer {
   final String? expirationDate;
 }
 
-/// Internal: a group of address vote-keys that all represent the same
-/// underlying address, with their summed vote count.
+/// A consolidated group of address vote-keys representing the same
+/// underlying address, plus their summed vote count. Used internally by
+/// [OcrConsensusAccumulator._consolidatedAddressVote] to recover a stable
+/// winner across OCR micro-variants.
 class _AddressGroup {
   _AddressGroup({required this.anchor, required this.totalVotes});
+
+  /// The longest variant in the group — chosen as the canonical display
+  /// value because it preserves the most OCR data.
   final String anchor;
+
+  /// Sum of votes from every variant that consolidated into [anchor].
   int totalVotes;
 }
 
-/// Deprecated alias for [OcrConsensusAccumulator].
-///
-/// The class was renamed from `OcrConsensusBuilder` to `OcrConsensusAccumulator`
-/// in v0.6.0 to reflect its actual role (accumulating votes, not building a
-/// new object via a builder pattern). Replace usages with [OcrConsensusAccumulator].
-///
-/// TODO(0.7.0): Remove this alias.
-@Deprecated(
-  'Use OcrConsensusAccumulator instead. '
-  'OcrConsensusBuilder will be removed in v0.7.0.',
-)
-typedef OcrConsensusBuilder = OcrConsensusAccumulator;
+/// A consolidated group of name vote-keys where one vote is a strict
+/// tilde-insensitive prefix of another. Names are short and high-signal,
+/// so consolidation here is intentionally conservative — see
+/// [OcrConsensusAccumulator._consolidatedNameVote].
+class _NameGroup {
+  _NameGroup({required this.anchor, required this.totalVotes});
+
+  /// The longest variant in the group (paternal + maternal beats paternal
+  /// alone when both were voted).
+  final String anchor;
+
+  /// Sum of votes from every prefix variant that consolidated into [anchor].
+  int totalVotes;
+}
