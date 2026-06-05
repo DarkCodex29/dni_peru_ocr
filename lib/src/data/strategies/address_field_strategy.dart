@@ -139,17 +139,62 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
 
   /// Builds the address string starting at [startIdx], collecting up to 3
   /// additional lines while they look like address continuations.
+  ///
+  /// A continuation line attaches when:
+  ///   - it starts with a known address prefix (`AV.`, `JR.`, …), OR
+  ///   - it starts with a known continuation prefix (`MZ.`, `LT.`, …), OR
+  ///   - the PREVIOUS line ended with a token that suggests an unfinished
+  ///     address fragment (a bare `MZ`/`LT`/`NRO` token without value, or a
+  ///     trailing letter/number that ML Kit may have split mid-token).
+  ///
+  /// The third rule is for real ML Kit output where the back-side OCR splits
+  /// `MZ.B LT.19` across two visual lines so the second line begins with
+  /// `B LT.19` (or just `19`) and doesn't match any prefix on its own.
+  /// Reported by JC against v0.6.6 on his electronic DNI.
   String _buildAddress(List<String> lines, int startIdx) {
     final parts = <String>[lines[startIdx].trim().toUpperCase()];
     for (int j = startIdx + 1; j < lines.length && j <= startIdx + 3; j++) {
       final next = lines[j].trim().toUpperCase();
-      if (_isAddressContinuation(next) || _hasAddressPrefix(next)) {
+      if (next.isEmpty) break;
+      final prev = parts.last;
+      if (_isAddressContinuation(next) ||
+          _hasAddressPrefix(next) ||
+          _looksLikeContinuationFragment(prev, next)) {
         parts.add(next);
       } else {
         break;
       }
     }
     return parts.join(' ');
+  }
+
+  /// Detects an OCR-split continuation: previous line ends with a bare
+  /// continuation anchor (`MZ`, `LT`, `NRO`, `INT`, `DPTO`, `MZA`, `LTE`)
+  /// or a trailing dot/period, and the next line carries the missing value
+  /// (a single alphanumeric token, a `B LT.19`-shaped tail, etc.).
+  bool _looksLikeContinuationFragment(String prev, String next) {
+    if (prev.isEmpty || next.isEmpty) return false;
+    // Strip trailing dot for the tail check (`MZ.` ↔ `MZ`).
+    final prevTail = prev
+        .split(RegExp(r'\s+'))
+        .last
+        .replaceAll(RegExp(r'\.+$'), '');
+    const danglingAnchors = {
+      'MZ', 'MZA',
+      'LT', 'LTE',
+      'NRO',
+      'INT',
+      'DPTO',
+    };
+    if (!danglingAnchors.contains(prevTail)) return false;
+    // The next line must look like an address fragment: short tokens,
+    // letters/numbers/dots only, ≤ 30 chars. Reject obvious labels.
+    if (next.length > 30) return false;
+    if (!RegExp(r'^[A-Z0-9. ]+$').hasMatch(next)) return false;
+    if (RegExp(r'^(DIRECCI|DOMICILI|DEPARTAMENT|PROVIN|DISTRIT|UBIGEO|GRUPO|VOTACI|DONACI|ORGANO|SANGUINE|FECHA|CADUC|NACIM|SEXO|NACIONAL)').hasMatch(next)) {
+      return false;
+    }
+    return true;
   }
 
   bool _hasAddressPrefix(String upper) {
