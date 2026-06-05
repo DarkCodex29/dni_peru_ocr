@@ -83,7 +83,6 @@ class _DniCameraMaskState extends State<DniCameraMask>
   late final DetectorLifecycle _lifecycle;
   final OcrExtractedFields _accumulatedFields = OcrExtractedFields();
 
-  OcrConsensusBuilder? _consensusBuilder;
   bool _expiredHandled = false;
   Timer? _consensusWindowTimer;
 
@@ -178,7 +177,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
     _captureController.captureState.addListener(_onCaptureStateChanged);
 
     if (widget.isBackSide) {
-      _consensusBuilder = OcrConsensusBuilder();
+      _captureController.onSideChanged(isBackSide: true);
     }
     _startStream();
     unawaited(_captureController.start());
@@ -235,7 +234,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
             )
           : raw;
       final captureConsensus = widget.isBackSide
-          ? _consensusBuilder?.snapshot()
+          ? _captureController.snapshotConsensus()
           : null;
       _captureController.onCaptureDelivered(
         file: outFile,
@@ -295,55 +294,10 @@ class _DniCameraMaskState extends State<DniCameraMask>
     }
 
     // Flutter reuses this State instance when the step toggles isBackSide,
-    // so initState's check never re-runs — initialize the builder here.
-    //
-    // TODO(PR4): migrate consensus seeding to DniCameraController.onSideChanged()
-    // once OcrConsensusBuilder is renamed to OcrConsensusAccumulator and the
-    // controller owns the accumulator lifecycle. The widget should not hold
-    // OCR consensus state directly — this is the last piece of business logic
-    // left in the widget after PR3c.
+    // so initState's check never re-runs — handle the transition here.
+    // The controller now owns the OcrConsensusAccumulator lifecycle:
+    // onSideChanged(isBackSide: true, frontSideFields: ...) creates and seeds it.
     if (!old.isBackSide && widget.isBackSide) {
-      _consensusBuilder ??= OcrConsensusBuilder();
-      // Prime the back-side consensus with ALL text-OCR fields captured on
-      // the front. Back-side MRZ overrides any of these when it locks
-      // (confidence=1.0 via lockFromMrzFields). When MRZ fails or the manual
-      // fallback fires, the front-side accumulation acts as a safety net so
-      // documentNumber, firstName, lastName and dateOfBirth are not null.
-      final seedVotes = <String, String?>{};
-      if (_accumulatedFields.firstName != null) {
-        seedVotes['firstName'] = _accumulatedFields.firstName;
-      }
-      if (_accumulatedFields.lastName != null) {
-        seedVotes['lastName'] = _accumulatedFields.lastName;
-      }
-      if (_accumulatedFields.secondLastName != null) {
-        seedVotes['secondLastName'] = _accumulatedFields.secondLastName;
-      }
-      if (_accumulatedFields.documentNumber != null) {
-        seedVotes['documentNumber'] = _accumulatedFields.documentNumber;
-      }
-      if (_accumulatedFields.dateOfBirth != null) {
-        seedVotes['dateOfBirth'] = _accumulatedFields.dateOfBirth;
-      }
-      if (_accumulatedFields.expirationDate != null) {
-        seedVotes['expirationDate'] = _accumulatedFields.expirationDate;
-      }
-      if (_accumulatedFields.address != null) {
-        seedVotes['address'] = _accumulatedFields.address;
-      }
-      if (seedVotes.isNotEmpty) _consensusBuilder!.recordVote(seedVotes);
-      // DNI azul has MRZ on the front — seed the back-side builder with
-      // any MRZ data already accumulated so snapshot() has data immediately.
-      if (_accumulatedFields.hasMrzData) {
-        _consensusBuilder!.lockFromMrzFields(
-          documentNumber: _accumulatedFields.documentNumber,
-          firstName: _accumulatedFields.firstName,
-          lastName: _accumulatedFields.lastName,
-          secondLastName: _accumulatedFields.secondLastName,
-          dateOfBirth: _accumulatedFields.dateOfBirth,
-          expirationDate: _accumulatedFields.expirationDate,
-        );
-      }
       _expiredHandled = false;
       _showSideIntro = true;
       _sideIntroTimer?.cancel();
@@ -353,15 +307,17 @@ class _DniCameraMaskState extends State<DniCameraMask>
           if (mounted) setState(() => _showSideIntro = false);
         },
       );
-      _captureController.onSideChanged();
+      // Delegate accumulator creation + seeding to the controller.
+      _captureController.onSideChanged(
+        isBackSide: true,
+        frontSideFields: _accumulatedFields,
+      );
     }
     if (old.isBackSide && !widget.isBackSide) {
-      _consensusBuilder?.dispose();
-      _consensusBuilder = null;
       _consensusWindowTimer?.cancel();
       _consensusWindowTimer = null;
       _expiredHandled = false;
-      _captureController.onSideChanged();
+      _captureController.onSideChanged(isBackSide: false);
     }
 
     if (old.isLoading && !widget.isLoading) {
@@ -399,7 +355,6 @@ class _DniCameraMaskState extends State<DniCameraMask>
     _captureController.captureState.removeListener(_onCaptureStateChanged);
     _sideIntroTimer?.cancel();
     _consensusWindowTimer?.cancel();
-    _consensusBuilder?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     _scanController.dispose();
@@ -521,66 +476,21 @@ class _DniCameraMaskState extends State<DniCameraMask>
         }
       }
 
-      final builder = _consensusBuilder;
-      if (builder != null && expirationDate == null) {
+      // Delegate consensus accumulation to the controller (PR4).
+      // The controller owns the OcrConsensusAccumulator lifecycle.
+      if (expirationDate == null && widget.isBackSide) {
         _consensusWindowTimer ??= Timer(
           const Duration(seconds: CameraOverlayTuning.consensusWindowSeconds),
           () {},
         );
 
-        if (frameFields.hasMrzData) {
-          builder
-            ..lockFromMrzFields(
-              documentNumber: frameFields.documentNumber,
-              firstName: frameFields.firstName,
-              lastName: frameFields.lastName,
-              secondLastName: frameFields.secondLastName,
-              dateOfBirth:
-                  frameFields.dateOfBirth ?? _accumulatedFields.dateOfBirth,
-              expirationDate:
-                  frameFields.expirationDate ??
-                  _accumulatedFields.expirationDate,
-            )
-            ..recordVote({
-              'documentNumber': frameFields.documentNumber,
-              'firstName': frameFields.firstName,
-              'lastName': frameFields.lastName,
-              'secondLastName': frameFields.secondLastName,
-              'dateOfBirth': frameFields.dateOfBirth,
-              'expirationDate': frameFields.expirationDate,
-              'address': frameFields.address,
-            });
-          if (builder.isMrzLocked) {
-            // kycV2 fast path: once MRZ is locked, the consensus is
-            // authoritative — skip the auto-capture countdown and trigger
-            // capture immediately. We guard against re-triggering when the
-            // controller already moved past Scanning/CountingDown.
-            final captureState = _captureController.captureState.value;
-            if (captureState is! DniCaptureInFlight &&
-                captureState is! DniCaptureExpired &&
-                captureState is! DniCaptureDone) {
-              _captureController.captureManually();
-            }
-          }
-        } else {
-          builder
-            ..resetMrzConsecutiveCount()
-            ..recordVote({
-              'documentNumber': frameFields.documentNumber,
-              'firstName': frameFields.firstName,
-              'lastName': frameFields.lastName,
-              'secondLastName': frameFields.secondLastName,
-              'dateOfBirth': frameFields.dateOfBirth,
-              'expirationDate': frameFields.expirationDate,
-              'address': frameFields.address,
-            });
-          if (builder.checkAllThresholds()) {
-            final captureState = _captureController.captureState.value;
-            if (captureState is! DniCaptureInFlight &&
-                captureState is! DniCaptureExpired &&
-                captureState is! DniCaptureDone) {
-              _captureController.captureManually();
-            }
+        final consensusReached = _captureController.recordOcrFrame(frameFields);
+        if (consensusReached) {
+          final captureState = _captureController.captureState.value;
+          if (captureState is! DniCaptureInFlight &&
+              captureState is! DniCaptureExpired &&
+              captureState is! DniCaptureDone) {
+            _captureController.captureManually();
           }
         }
       }
