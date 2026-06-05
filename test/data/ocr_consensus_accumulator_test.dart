@@ -42,13 +42,13 @@ void main() {
     // ── OcrConsensusBuilder must remain accessible (deprecated alias) ──────
 
     test('OcrConsensusBuilder still compiles (deprecated typedef alias)', () {
-      // ignore: deprecated_member_use
+      // ignore: deprecated_member_use_from_same_package
       final builder = OcrConsensusBuilder();
       expect(builder, isNotNull);
     });
 
     test('OcrConsensusBuilder is a subtype of OcrConsensusAccumulator', () {
-      // ignore: deprecated_member_use
+      // ignore: deprecated_member_use_from_same_package
       final builder = OcrConsensusBuilder();
       expect(builder, isA<OcrConsensusAccumulator>());
     });
