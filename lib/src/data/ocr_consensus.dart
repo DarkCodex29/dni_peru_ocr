@@ -1,6 +1,7 @@
 import 'package:mrz_parser/mrz_parser.dart';
 
 import 'ocr_field_normalizer.dart';
+import 'string_similarity.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Value types
@@ -374,6 +375,22 @@ class OcrConsensusAccumulator {
       return const OcrFieldResult(value: null, confidence: 0.0, locked: false);
     }
     final total = map.values.fold<int>(0, (a, b) => a + b);
+
+    // Address-specific consolidation: ML Kit emits the same address in many
+    // micro-variants across frames (`MILAGRO MZ`, `MILAGRO MZ.B`, `MILAGRO
+    // MZ.B LT.19`, `MLAGRO MZ.B LT.19`...). The previous logic gave each
+    // variant its own bucket, so a `reduce(max)` over single-vote buckets
+    // returned a non-deterministic winner — often the corrupted variant.
+    //
+    // We consolidate by grouping buckets that share a normalized prefix:
+    // shorter variants merge into their longer SUPERSTRING when the
+    // shorter is a tilde-insensitive prefix of the longer's first N tokens.
+    // Among the consolidated group, we prefer the LONGEST string (most
+    // preserved OCR data) and sum the vote counts.
+    if (field == 'address') {
+      return _consolidatedAddressVote(map, total, threshold);
+    }
+
     final leading = map.entries.reduce((a, b) => a.value > b.value ? a : b);
     final confidence = total == 0 ? 0.0 : leading.value / total;
     // Prefer the tilde-preserving display value; fall back to the ASCII
@@ -385,6 +402,106 @@ class OcrConsensusAccumulator {
       confidence: confidence,
       locked: confidence >= threshold,
     );
+  }
+
+  /// Consolidates address votes by grouping near-duplicate variants.
+  ///
+  /// Strategy:
+  ///   1. Sort buckets by string length descending.
+  ///   2. For each bucket starting from the longest, absorb every shorter
+  ///      bucket whose first tokens are a tilde-insensitive prefix of the
+  ///      longer string, OR whose Levenshtein similarity to the longer
+  ///      string is ≥ 0.80 over the common length.
+  ///   3. The longest string in each group wins; its absorbed votes sum.
+  ///   4. Return the group with the highest combined vote count.
+  ///
+  /// This prevents OCR micro-variants (`MILAGRO MZ` vs `MLAGRO MZ.B LT.19`
+  /// vs `MILAGRO MZ.B LT.19`) from each landing in a separate single-vote
+  /// bucket and producing a non-deterministic `reduce(max)` winner.
+  OcrFieldResult<String> _consolidatedAddressVote(
+    Map<String, int> map,
+    int total,
+    double threshold,
+  ) {
+    // Snapshot entries sorted by length descending so the longest seeds
+    // each group.
+    final entries = map.entries.toList()
+      ..sort((a, b) {
+        final byLen = b.key.length.compareTo(a.key.length);
+        if (byLen != 0) return byLen;
+        return b.value.compareTo(a.value);
+      });
+
+    final consumed = <String>{};
+    final groups = <_AddressGroup>[];
+
+    for (final candidate in entries) {
+      if (consumed.contains(candidate.key)) continue;
+      final group = _AddressGroup(
+        anchor: candidate.key,
+        totalVotes: candidate.value,
+      );
+      consumed.add(candidate.key);
+
+      for (final other in entries) {
+        if (consumed.contains(other.key)) continue;
+        if (_addressVariantsAreEquivalent(group.anchor, other.key)) {
+          group.totalVotes += other.value;
+          consumed.add(other.key);
+        }
+      }
+      groups.add(group);
+    }
+
+    if (groups.isEmpty) {
+      return const OcrFieldResult(value: null, confidence: 0.0, locked: false);
+    }
+
+    groups.sort((a, b) {
+      final byVotes = b.totalVotes.compareTo(a.totalVotes);
+      if (byVotes != 0) return byVotes;
+      return b.anchor.length.compareTo(a.anchor.length);
+    });
+    final winner = groups.first;
+    final displayValue =
+        _displayValues['address']?[winner.anchor] ?? winner.anchor;
+    final confidence = total == 0 ? 0.0 : winner.totalVotes / total;
+    return OcrFieldResult(
+      value: displayValue,
+      confidence: confidence,
+      locked: confidence >= threshold,
+    );
+  }
+
+  /// Returns true when [shorter] is plausibly the same address as [longer]:
+  ///   - same upper-cased length-normalized prefix (`MILAGRO MZ` is a prefix
+  ///     of `MILAGRO MZ.B LT.19` after collapsing whitespace + dots), OR
+  ///   - Levenshtein similarity ≥ 0.80 over the SHORTER string's length
+  ///     (catches single-character OCR glitches like `MILAGRO` vs `MLAGRO`).
+  ///
+  /// `shorter` here means the second argument; the caller groups around the
+  /// longest anchor first, so [other] should never be longer than [anchor].
+  bool _addressVariantsAreEquivalent(String anchor, String other) {
+    if (anchor.length < other.length) {
+      // Caller should pass anchor as the longer; defensive swap is a no-op
+      // for correctness because the prefix check below is symmetric.
+      return _addressVariantsAreEquivalent(other, anchor);
+    }
+    if (anchor.isEmpty || other.isEmpty) return false;
+
+    // Collapse runs of whitespace and remove dots for prefix comparison.
+    String collapse(String s) =>
+        s.toUpperCase().replaceAll('.', '').replaceAll(RegExp(r'\s+'), ' ');
+    final a = collapse(anchor);
+    final o = collapse(other);
+    if (a.startsWith(o)) return true;
+
+    // Fuzzy: distance over the shorter length. ≤ 20% character edits.
+    final dist = StringSimilarity.distance(a, o);
+    final shorterLen = o.length;
+    if (shorterLen == 0) return false;
+    final similarity = 1.0 - (dist / shorterLen);
+    return similarity >= 0.80;
   }
 
   /// Looks up a tilde-bearing display value to upgrade an MRZ-provided name.
@@ -579,6 +696,14 @@ class _MrzFieldsBuffer {
   final String? secondLastName;
   final String? dateOfBirth;
   final String? expirationDate;
+}
+
+/// Internal: a group of address vote-keys that all represent the same
+/// underlying address, with their summed vote count.
+class _AddressGroup {
+  _AddressGroup({required this.anchor, required this.totalVotes});
+  final String anchor;
+  int totalVotes;
 }
 
 /// Deprecated alias for [OcrConsensusAccumulator].
