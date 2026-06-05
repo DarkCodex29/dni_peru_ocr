@@ -91,7 +91,7 @@ class DocumentValidationResult {
     final requiredBlocks = isBackSide ? _minBlocksBack : _minBlocks;
 
     if (blocks.length < requiredBlocks) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Posiciona tu documento en el recuadro',
         isCaptureable: false,
         failingGate: ValidationGate.minBlocks,
@@ -137,7 +137,7 @@ class DocumentValidationResult {
         gbb.bottom <= paddedHole.bottom;
 
     if (!isContained && !ocrMatchesUser && !isBackSide) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Centra tu documento en el recuadro',
         isCaptureable: false,
         failingGate: ValidationGate.centering,
@@ -148,7 +148,7 @@ class DocumentValidationResult {
 
     // Upper bound applies to BOTH sides — crop kills OCR + MRZ alike.
     if (fillRatio > _maxFillRatio) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Aléjate un poco — documento muy cerca',
         isCaptureable: false,
         failingGate: ValidationGate.fillHigh,
@@ -176,7 +176,7 @@ class DocumentValidationResult {
     // means the frame doesn't have enough text signal to compute a reliable
     // tilt — skip tilt entirely and ask user to realign the document.
     if (blocks.length < 5) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Alinea el documento dentro del recuadro',
         isCaptureable: false,
         failingGate: ValidationGate.lineCount,
@@ -187,7 +187,7 @@ class DocumentValidationResult {
     // A skewed capture makes backend OCR fail, same as tilted MRZ.
     final tilt = (tiltCalculator ?? computeMedianTiltDegrees)(recognizedText);
     if (tilt.abs() > _maxTiltDegrees) {
-      return DocumentValidationResult._(
+      return const DocumentValidationResult._(
         message: 'Endereza el documento',
         isCaptureable: false,
         failingGate: ValidationGate.tilt,
