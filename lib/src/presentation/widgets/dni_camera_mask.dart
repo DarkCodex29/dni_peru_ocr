@@ -296,6 +296,12 @@ class _DniCameraMaskState extends State<DniCameraMask>
 
     // Flutter reuses this State instance when the step toggles isBackSide,
     // so initState's check never re-runs — initialize the builder here.
+    //
+    // TODO(PR4): migrate consensus seeding to DniCameraController.onSideChanged()
+    // once OcrConsensusBuilder is renamed to OcrConsensusAccumulator and the
+    // controller owns the accumulator lifecycle. The widget should not hold
+    // OCR consensus state directly — this is the last piece of business logic
+    // left in the widget after PR3c.
     if (!old.isBackSide && widget.isBackSide) {
       _consensusBuilder ??= OcrConsensusBuilder();
       // Prime the back-side consensus with ALL text-OCR fields captured on
@@ -545,6 +551,10 @@ class _DniCameraMaskState extends State<DniCameraMask>
               'address': frameFields.address,
             });
           if (builder.isMrzLocked) {
+            // kycV2 fast path: once MRZ is locked, the consensus is
+            // authoritative — skip the auto-capture countdown and trigger
+            // capture immediately. We guard against re-triggering when the
+            // controller already moved past Scanning/CountingDown.
             final captureState = _captureController.captureState.value;
             if (captureState is! DniCaptureInFlight &&
                 captureState is! DniCaptureExpired &&
