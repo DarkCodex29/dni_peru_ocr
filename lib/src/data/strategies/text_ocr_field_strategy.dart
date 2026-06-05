@@ -134,6 +134,36 @@ final class TextOcrFieldStrategy implements OcrFieldStrategy {
       if (value != null) result.secondLastName ??= value;
     }
 
+    // Modern DNI cards use a single "Apellidos" label (NOT "Primer/Segundo
+    // Apellido") with both surnames joined on one line: "QUIROZ REMIGIO".
+    // The back-side MRZ carries only the paternal half, so we need text-OCR
+    // here to split the joined value and seed both lastName and
+    // secondLastName for the consensus accumulator. Without this split, the
+    // back-side snapshot would show only "QUIROZ" and drop "REMIGIO".
+    // Guard the match so it does NOT collide with "PRIMER APELLIDO" /
+    // "SEGUNDO APELLIDO" (those already matched above).
+    if (!upper.contains('PRIMER APEL') &&
+        !upper.contains('SEGUNDO APEL') &&
+        !upper.contains('PRMER APEL') &&
+        !upper.contains('SGUNDO APEL') &&
+        (upper == 'APELLIDOS' ||
+            upper.startsWith('APELLIDOS ') ||
+            upper.startsWith('APELLIDOS:'))) {
+      final value = _findNameNear(lines, i);
+      if (value != null) {
+        // Split "QUIROZ REMIGIO" → lastName=QUIROZ, secondLastName=REMIGIO.
+        // For 3+ tokens (compound maternal like "PEREZ DE LA CRUZ"), keep
+        // the first as paternal and join the rest as maternal.
+        final tokens = value.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+        if (tokens.isNotEmpty) {
+          result.lastName ??= tokens.first;
+          if (tokens.length >= 2) {
+            result.secondLastName ??= tokens.sublist(1).join(' ');
+          }
+        }
+      }
+    }
+
     if (upper.contains('PRENOMBRES') ||
         upper.contains('PRE NOMBRE') ||
         upper.contains('PRE NOM')) {

@@ -848,4 +848,111 @@ void main() {
       );
     });
   });
+
+  // ── BUG regression — RENIEC Ñ→NXX MRZ encoding recovery (JC JAMES case)
+  //
+  // The Peruvian MRZ (ICAO 9303 TD1) cannot encode `Ñ`. RENIEC's chosen
+  // workaround is to substitute `Ñ` with `NXX`, so the surname "ERMITAÑO"
+  // becomes "ERMITANXX0" on the MRZ line (the trailing `O` is often read
+  // as `0` by ML Kit, compounding the corruption).
+  //
+  // When the front-side text-OCR voted the correct `ERMITAÑO` (with real Ñ)
+  // and the back-side MRZ provides `ERMITANXX0`, the snapshot must prefer
+  // the text-OCR variant — otherwise the UI shows garbage.
+  group('BUG regression — Ñ recovery from text-OCR when MRZ uses NXX', () {
+    test(
+      'firstName: MRZ ERMITANXX0 + text vote ERMITAÑO → snapshot shows ERMITAÑO',
+      () {
+        final builder = OcrConsensusAccumulator()
+          // Front-side text-OCR voted the real Ñ variant several times.
+          ..recordVote({'firstName': 'JAMES ERMITAÑO'})
+          ..recordVote({'firstName': 'JAMES ERMITAÑO'})
+          // Back-side MRZ frame produces the NXX-encoded form.
+          ..lockFromMrzFields(
+            documentNumber: '43005787',
+            firstName: 'JAMES ERMITANXX0',
+            lastName: 'QUIROZ',
+            secondLastName: null,
+            dateOfBirth: '24/06/1985',
+            expirationDate: '25/03/2036',
+          )
+          ..lockFromMrzFields(
+            documentNumber: '43005787',
+            firstName: 'JAMES ERMITANXX0',
+            lastName: 'QUIROZ',
+            secondLastName: null,
+            dateOfBirth: '24/06/1985',
+            expirationDate: '25/03/2036',
+          );
+
+        final snap = builder.snapshot();
+        expect(snap.success, isTrue);
+        expect(snap.firstName.value, 'JAMES ERMITAÑO',
+            reason: 'Ñ recovery from text-OCR vote when MRZ uses NXX encoding');
+        builder.dispose();
+      },
+    );
+
+    test(
+      'lastName: MRZ NUNXXEZ + text vote NÚÑEZ → snapshot shows NÚÑEZ',
+      () {
+        // Hypothetical: paternal surname with both Ú and Ñ → MRZ has NXX
+        // for the Ñ and strips the Ú accent.
+        final builder = OcrConsensusAccumulator()
+          ..recordVote({'lastName': 'NÚÑEZ'})
+          ..recordVote({'lastName': 'NÚÑEZ'})
+          ..lockFromMrzFields(
+            documentNumber: '12345678',
+            firstName: 'JUAN',
+            lastName: 'NUNXXEZ',
+            secondLastName: null,
+            dateOfBirth: '01/01/1990',
+            expirationDate: '31/12/2030',
+          )
+          ..lockFromMrzFields(
+            documentNumber: '12345678',
+            firstName: 'JUAN',
+            lastName: 'NUNXXEZ',
+            secondLastName: null,
+            dateOfBirth: '01/01/1990',
+            expirationDate: '31/12/2030',
+          );
+
+        final snap = builder.snapshot();
+        expect(snap.lastName.value, 'NÚÑEZ');
+        builder.dispose();
+      },
+    );
+
+    test(
+      'no text-OCR vote → MRZ value passes through unchanged (no fabrication)',
+      () {
+        // Defensive: if text-OCR did not vote a variant of the surname,
+        // we must NOT invent an Ñ — return the MRZ value verbatim. The user
+        // can fix it in the confirmation step.
+        final builder = OcrConsensusAccumulator()
+          ..lockFromMrzFields(
+            documentNumber: '43005787',
+            firstName: 'JAMES ERMITANXX0',
+            lastName: 'QUIROZ',
+            secondLastName: null,
+            dateOfBirth: '24/06/1985',
+            expirationDate: '25/03/2036',
+          )
+          ..lockFromMrzFields(
+            documentNumber: '43005787',
+            firstName: 'JAMES ERMITANXX0',
+            lastName: 'QUIROZ',
+            secondLastName: null,
+            dateOfBirth: '24/06/1985',
+            expirationDate: '25/03/2036',
+          );
+
+        final snap = builder.snapshot();
+        expect(snap.firstName.value, 'JAMES ERMITANXX0',
+            reason: 'no text-OCR vote means no recovery — return MRZ as-is');
+        builder.dispose();
+      },
+    );
+  });
 }

@@ -389,10 +389,25 @@ class OcrConsensusAccumulator {
 
   /// Looks up a tilde-bearing display value to upgrade an MRZ-provided name.
   /// Returns [mrzValue] unchanged unless text-OCR voted a `Ñ`/`ñ` variant of
-  /// the same ASCII root.
+  /// the same ASCII root, OR a text-OCR variant that matches after collapsing
+  /// the RENIEC `NXX` placeholder back to `N` (Peruvian MRZ encodes `Ñ` as
+  /// `NXX` because ICAO 9303 has no `Ñ` codepoint — `ERMITAÑO` → `ERMITANXXO`).
   String _recoverTildeFromText(String field, String mrzValue) {
+    // Try direct normalised match first (handles plain accents Á É Í Ó Ú).
     final mrzVoteKey = OcrFieldNormalizer.normalizeName(mrzValue);
-    final textDisplay = _displayValues[field]?[mrzVoteKey];
+    var textDisplay = _displayValues[field]?[mrzVoteKey];
+
+    // Peruvian MRZ Ñ recovery: collapse `NXX` → `N` and trailing `0` → `O`
+    // BEFORE normalising, so `ERMITANXX0` becomes `ERMITANO` which matches
+    // the text-OCR vote key for `ERMITAÑO` (both normalise to `ERMITANO`).
+    if (textDisplay == null && mrzValue.contains('XX')) {
+      final mrzCollapsed = mrzValue
+          .replaceAll(RegExp(r'NXX'), 'N')
+          .replaceAll(RegExp(r'0$'), 'O');
+      final collapsedKey = OcrFieldNormalizer.normalizeName(mrzCollapsed);
+      textDisplay = _displayValues[field]?[collapsedKey];
+    }
+
     if (textDisplay == null) return mrzValue;
     final textHasTilde = textDisplay.contains('Ñ') || textDisplay.contains('ñ');
     final mrzHasTilde = mrzValue.contains('Ñ') || mrzValue.contains('ñ');

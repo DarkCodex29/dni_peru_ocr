@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.6.6 (bugfix)
+
+Two text-OCR fidelity fixes for real Peruvian DNI cards reported by JC
+after v0.6.5 verification. Both address the same root cause: the back-side
+MRZ (ICAO 9303 TD1) does NOT carry certain data, so we must rely on the
+front-side text-OCR to fill the gaps — and the text-OCR pipeline had two
+blind spots.
+
+### Bug C — Modern DNI "Apellidos" unified label was ignored
+
+Modern Peruvian DNI cards print a SINGLE `Apellidos` label with both
+paternal and maternal surnames joined on one line (e.g. `QUIROZ REMIGIO`).
+The text-OCR strategy only recognized the older two-line format
+`PRIMER APELLIDO / SEGUNDO APELLIDO`, so it never extracted the maternal
+surname from modern cards. The back-side MRZ only carries the paternal
+half, so the snapshot ended up with `lastName = QUIROZ` and
+`secondLastName = null` — the maternal surname `REMIGIO` was silently
+dropped.
+
+**Fix**: `TextOcrFieldStrategy._tryExtractNameByLabel` now also matches
+the `Apellidos` label (singular) and splits the joined value:
+- 1 token → `lastName` only
+- 2 tokens → `lastName` + `secondLastName`
+- 3+ tokens → first is paternal, rest joined as maternal (handles
+  compound maternal surnames like `DE LA CRUZ`)
+
+Guarded so it does NOT collide with the older `Primer/Segundo Apellido`
+labels (those keep matching first).
+
+### Bug D — RENIEC `Ñ→NXX` MRZ encoding was not reversed
+
+The Peruvian MRZ encodes `Ñ` as `NXX` (ICAO 9303 has no `Ñ` codepoint).
+Real example: `ERMITAÑO` → `ERMITANXX0`. When the front-side text-OCR
+voted the correct `ERMITAÑO` (with real `Ñ`), the snapshot still showed
+the corrupted MRZ value because `_recoverTildeFromText` only handled
+plain accents (`Á É Í Ó Ú`), not the `NXX` substitution.
+
+**Fix**: `_recoverTildeFromText` now also tries a fallback lookup with
+`NXX → N` (and trailing `0 → O`) substitution. When the text-OCR vote
+key matches the collapsed MRZ form, the text-OCR display value wins —
+recovering both the `Ñ` and any tildes that the MRZ stripped.
+
+No fabrication: when text-OCR did NOT vote a variant, the MRZ value
+passes through verbatim (the user fixes it in the confirmation step).
+
+### Tests
+
+8 new regression tests:
+
+`test/data/strategies/text_ocr_field_strategy_test.dart` (Bug C):
+1. Splits `Apellidos QUIROZ REMIGIO` into `lastName + secondLastName`.
+2. Single-token `Apellidos` leaves `secondLastName` null (no fabrication).
+3. 3+ token `Apellidos` uses first as paternal, rest joined as maternal.
+
+`test/data/ocr_consensus_test.dart` (Bug D):
+1. `firstName`: MRZ `ERMITANXX0` + text vote `ERMITAÑO` → snapshot `ERMITAÑO`.
+2. `lastName`: MRZ `NUNXXEZ` + text vote `NÚÑEZ` → snapshot `NÚÑEZ`.
+3. No text-OCR vote → MRZ value passes through unchanged.
+
+`test/data/strategies/address_field_strategy_test.dart` (regression guards):
+1. Real JC case: `MZ.C LT.20 3ER SECTOR URB.ANTONIA MORENO DE CACERES`.
+2. `3ER` / `SECTOR` / `ZONA` tokens preserved in address.
+
+**512/512 tests pass.** `flutter analyze` clean.
+
+### Consumer impact
+
+No public API changes. Patch release. Bump SHA only.
+
 ## 0.6.5 (bugfix)
 
 Address parsing quality fix for real Peruvian DNI back-side scans. Reported

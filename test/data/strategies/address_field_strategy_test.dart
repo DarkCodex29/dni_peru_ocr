@@ -305,5 +305,52 @@ void main() {
         );
       },
     );
+
+    // ── Real JC case: JAMES DNI moderno ───────────────────────────────────
+    // The back-side prints the address inline next to the anchor:
+    //   "Dirección"
+    //   "MZ.C LT.20 3ER SECTOR URB.ANTONIA MORENO DE CACERES"
+    // The strategy must preserve all four key segments: MZ.C, LT.20,
+    // 3ER (or SECTOR), and URB.ANTONIA MORENO DE CACERES.
+    test(
+      'real JC case: MZ.C LT.20 3ER SECTOR URB.ANTONIA MORENO DE CACERES',
+      () {
+        final recognized = _recognizedFromLines([
+          'REPUBLICA DEL PERU',
+          'Dirección',
+          'MZ.C LT.20 3ER SECTOR URB.ANTONIA MORENO DE CACERES',
+        ]);
+        final result = strategy.extract(recognized);
+        expect(result?.address, isNotNull);
+        expect(result?.address, contains('MZ'),
+            reason: 'MZ block code must survive');
+        expect(result?.address, contains('LT'),
+            reason: 'LT lot code must survive');
+        expect(
+          result?.address,
+          anyOf(contains('ANTONIA'), contains('MORENO'), contains('CACERES')),
+          reason: 'URB name must survive the noise filter',
+        );
+      },
+    );
+
+    // 3ER / SECTOR / URB prefixes — must not be filtered as noise.
+    test(
+      '3ER and SECTOR tokens are preserved in address',
+      () {
+        final recognized = _recognizedFromLines([
+          'Dirección',
+          'AV. LOS PINOS 123 3ER SECTOR ZONA B',
+        ]);
+        final result = strategy.extract(recognized);
+        expect(result?.address, isNotNull);
+        expect(result?.address, contains('LOS PINOS'));
+        expect(
+          result?.address,
+          anyOf(contains('3ER'), contains('SECTOR'), contains('ZONA')),
+          reason: 'ordinal + sector + zona tokens must not be dropped',
+        );
+      },
+    );
   });
 }
