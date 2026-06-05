@@ -5,19 +5,19 @@
 /// addresses, and merge surnames across OCR + stored profile sources.
 library dni_peru_ocr;
 
-export 'src/breadcrumb_throttle.dart';
-export 'src/camera_overlay_logic.dart';
-export 'src/detector_lifecycle.dart';
-export 'src/dni_camera_mask.dart';
-export 'src/document_validator.dart';
-export 'src/image_quality_gate.dart';
-export 'src/input_image_converter.dart';
-export 'src/kyc_image_utils.dart';
-export 'src/kyc_theme.dart';
-export 'src/ocr_consensus.dart';
-export 'src/ocr_field_extractor.dart';
-export 'src/ocr_field_normalizer.dart';
-export 'src/ocr_logger.dart';
-export 'src/string_similarity.dart';
-export 'src/tilt_calculator.dart';
-export 'src/user_verification_data.dart';
+export 'src/data/ocr_consensus.dart';
+export 'src/data/ocr_field_extractor.dart';
+export 'src/data/ocr_field_normalizer.dart';
+export 'src/data/string_similarity.dart';
+export 'src/domain/entities/user_verification_data.dart';
+export 'src/domain/interfaces/ocr_logger.dart';
+export 'src/infrastructure/breadcrumb_throttle.dart';
+export 'src/infrastructure/detector_lifecycle.dart';
+export 'src/infrastructure/input_image_converter.dart';
+export 'src/infrastructure/kyc_image_utils.dart';
+export 'src/infrastructure/tilt_calculator.dart';
+export 'src/presentation/camera_overlay_logic.dart';
+export 'src/presentation/document_validator.dart';
+export 'src/presentation/image_quality_gate.dart';
+export 'src/presentation/theme/kyc_theme.dart';
+export 'src/presentation/widgets/dni_camera_mask.dart';

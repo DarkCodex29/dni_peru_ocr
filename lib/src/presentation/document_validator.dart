@@ -3,8 +3,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
-import 'kyc_theme.dart';
-import 'tilt_calculator.dart';
+import 'theme/kyc_theme.dart';
+import '../infrastructure/tilt_calculator.dart';
 
 /// Validates document framing via geometry + optional OCR matching.
 ///

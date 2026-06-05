@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-import 'package:dni_peru_ocr/src/tilt_calculator.dart';
+import 'package:dni_peru_ocr/src/infrastructure/tilt_calculator.dart';
 
 /// Builds a [TextLine] with given corner points.
 /// cornerPoints order: [TL, TR, BR, BL] (MLKit clockwise from top-left).

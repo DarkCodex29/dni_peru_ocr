@@ -3,7 +3,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:mrz_parser/mrz_parser.dart';
 
 import 'ocr_field_normalizer.dart';
-import 'ocr_logger.dart';
+import '../domain/interfaces/ocr_logger.dart';
 
 /// Container for fields extracted from a single OCR frame.
 ///

@@ -7,17 +7,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
-import 'breadcrumb_throttle.dart';
-import 'camera_overlay_logic.dart';
-import 'detector_lifecycle.dart';
-import 'document_validator.dart';
-import 'input_image_converter.dart';
-import 'kyc_image_utils.dart';
-import 'kyc_theme.dart';
-import 'ocr_consensus.dart';
-import 'ocr_field_extractor.dart';
-import 'tilt_calculator.dart';
-import 'user_verification_data.dart';
+import '../../data/ocr_consensus.dart';
+import '../../data/ocr_field_extractor.dart';
+import '../../domain/entities/user_verification_data.dart';
+import '../../infrastructure/breadcrumb_throttle.dart';
+import '../../infrastructure/detector_lifecycle.dart';
+import '../../infrastructure/input_image_converter.dart';
+import '../../infrastructure/kyc_image_utils.dart';
+import '../../infrastructure/tilt_calculator.dart';
+import '../camera_overlay_logic.dart';
+import '../document_validator.dart';
+import '../theme/kyc_theme.dart';
 
 
 Widget _animatedSwitcherDedupeLayout(
