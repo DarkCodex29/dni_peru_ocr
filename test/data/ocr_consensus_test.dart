@@ -29,7 +29,7 @@ void main() {
   // ── Scenario 1: vote accumulation ─────────────────────────────────────────
   group('Scenario 1 — vote accumulation', () {
     test('records a vote for each non-null extracted field', () {
-      final builder = OcrConsensusBuilder()
+      final builder = OcrConsensusAccumulator()
         ..recordVote({'documentNumber': '12345678', 'firstName': 'JUAN'})
         ..recordVote({'documentNumber': '12345678'});
 
@@ -44,7 +44,7 @@ void main() {
   // ── Scenario 2: blank frame skipped ───────────────────────────────────────
   group('Scenario 2 — blank frame skipped', () {
     test('null / empty values do not change the vote map', () {
-      final builder = OcrConsensusBuilder()
+      final builder = OcrConsensusAccumulator()
         ..recordVote({'documentNumber': '12345678'})
         ..recordVote({'documentNumber': null})
         ..recordVote({'documentNumber': ''});
@@ -59,7 +59,7 @@ void main() {
   // ── Scenario 3: documentNumber reaches 95% threshold ──────────────────────
   group('Scenario 3 — documentNumber 95% threshold', () {
     test('documentNumber locks when 95% of votes agree', () {
-      final builder = OcrConsensusBuilder();
+      final builder = OcrConsensusAccumulator();
       // 19 votes for correct, 1 for noise → 95%
       for (var i = 0; i < 19; i++) {
         builder.recordVote({'documentNumber': '12345678'});
@@ -78,7 +78,7 @@ void main() {
   // ── Scenario 4: name normalization deems variants equal ───────────────────
   group('Scenario 4 — name normalization', () {
     test('JOSE CARLOS and JOSÉ CARLOS count as the same vote', () {
-      final builder = OcrConsensusBuilder();
+      final builder = OcrConsensusAccumulator();
       for (var i = 0; i < 16; i++) {
         builder.recordVote({'firstName': 'JOSE CARLOS'});
       }
@@ -99,7 +99,7 @@ void main() {
   // same vote-key and surface `MUÑOZ` as the result.
   group('Scenario 4b — display value preserves Ñ', () {
     test('clean Ñ wins over ASCII when both share the vote-key', () {
-      final builder = OcrConsensusBuilder()
+      final builder = OcrConsensusAccumulator()
         ..recordVote({'lastName': 'MUÑOZ'})
         ..recordVote({'lastName': 'MUNXXOZ'})
         ..recordVote({'lastName': 'MUNOZ'});
@@ -112,7 +112,7 @@ void main() {
     });
 
     test('noisy-only frames still surface the repaired Ñ', () {
-      final builder = OcrConsensusBuilder();
+      final builder = OcrConsensusAccumulator();
       for (var i = 0; i < 3; i++) {
         builder.recordVote({'lastName': 'MUNXXOZ'});
       }
@@ -126,7 +126,7 @@ void main() {
   // ── Scenario 7b: MRZ-Ñ recovery from text-OCR display map ──────────────
   group('Scenario 7b — MRZ-Ñ recovery', () {
     test('text-OCR voted Ñ, MRZ says plain N → result keeps Ñ', () {
-      final builder = OcrConsensusBuilder();
+      final builder = OcrConsensusAccumulator();
       // 3 noisy text-OCR frames build a Ñ in the display map
       for (var i = 0; i < 3; i++) {
         builder.recordVote({'lastName': 'MUNXXOZ'});
@@ -161,7 +161,7 @@ void main() {
   // ── Scenario 5: date exact-match in 4 of last 5 frames ────────────────────
   group('Scenario 5 — date 4-of-5 lock', () {
     test('expirationDate locks when 4 of last 5 frames agree', () {
-      final builder = OcrConsensusBuilder()
+      final builder = OcrConsensusAccumulator()
         ..recordVote({'expirationDate': '2030-12-31'})
         ..recordVote({'expirationDate': '2030-12-31'})
         ..recordVote({'expirationDate': '2030-12-31'})
@@ -179,7 +179,7 @@ void main() {
   // ── Scenario 6: MRZ consecutive-2 fast-lock ───────────────────────────────
   group('Scenario 6 — MRZ consecutive-2 fast-lock', () {
     test('locks all MRZ fields after 2 consecutive valid MRZ parses', () {
-      final builder = OcrConsensusBuilder();
+      final builder = OcrConsensusAccumulator();
       final mrz = fakeMrz();
       builder
         ..recordMrz(mrz)
@@ -200,7 +200,7 @@ void main() {
   // ── Scenario 7: MRZ wins over text-OCR disagreement ──────────────────────
   group('Scenario 7 — MRZ wins over text-OCR', () {
     test('MRZ documentNumber overrides text-OCR vote majority', () {
-      final builder = OcrConsensusBuilder();
+      final builder = OcrConsensusAccumulator();
       // build up text-OCR votes for wrong number
       for (var i = 0; i < 15; i++) {
         builder.recordVote({'documentNumber': '12345879'});
@@ -221,7 +221,7 @@ void main() {
   // ── Scenario 8: noise discarded by vote ──────────────────────────────────
   group('Scenario 8 — noise discarded by vote', () {
     test('garbled noise frames are statistically outvoted', () {
-      final builder = OcrConsensusBuilder();
+      final builder = OcrConsensusAccumulator();
       // 18 correct, 2 noise — 18/20 = 90% < 95%, not yet locked
       for (var i = 0; i < 18; i++) {
         builder.recordVote({'documentNumber': '12345678'});
@@ -253,7 +253,7 @@ void main() {
     test(
       'success = false and source = manualFallback when not fully locked',
       () {
-        final builder = OcrConsensusBuilder()
+        final builder = OcrConsensusAccumulator()
           ..recordVote({'documentNumber': '12345678'});
         final snap = builder.snapshot();
         // only 1 vote — not locked
@@ -268,7 +268,7 @@ void main() {
   group('lockFromMrzFields', () {
     test('locks all fields after 2 consecutive MRZ-field observations', () {
       // First MRZ frame — not locked yet
-      final builder = OcrConsensusBuilder()
+      final builder = OcrConsensusAccumulator()
         ..lockFromMrzFields(
           documentNumber: '71542895',
           firstName: 'JOSE CARLOS',
@@ -306,7 +306,7 @@ void main() {
     test(
       'MRZ-only frame with no text-OCR vote → stores MRZ value as-is',
       () {
-        final builder = OcrConsensusBuilder()
+        final builder = OcrConsensusAccumulator()
           ..lockFromMrzFields(
             documentNumber: '12345678',
             firstName: 'JUAN',
@@ -333,7 +333,7 @@ void main() {
     test(
       'document number MRZ override is unaffected by display map',
       () {
-        final builder = OcrConsensusBuilder();
+        final builder = OcrConsensusAccumulator();
         // text-OCR votes a wrong but tilde-free number
         for (var i = 0; i < 5; i++) {
           builder.recordVote({'documentNumber': '11111111'});
@@ -373,7 +373,7 @@ void main() {
       test(
         'noisy IBANXXEZ in a 3-frame vote → displayValue surfaces IBAÑEZ',
         () {
-          final builder = OcrConsensusBuilder()
+          final builder = OcrConsensusAccumulator()
             ..recordVote({'lastName': 'IBANEZ'})
             ..recordVote({'lastName': 'IBANXXEZ'})
             ..recordVote({'lastName': 'IBANEZ'});
@@ -389,7 +389,7 @@ void main() {
       test(
         'single noisy MUNXXOZ IBANXXEZ frame → MUÑOZ IBAÑEZ surfaces',
         () {
-          final builder = OcrConsensusBuilder()
+          final builder = OcrConsensusAccumulator()
             ..recordVote({'lastName': 'MUNXXOZ IBANXXEZ'});
 
           final snap = builder.snapshot();
@@ -405,7 +405,7 @@ void main() {
           // (Á, É, …) the consensus simply runs majority vote — whichever
           // spelling has more frames wins. Documented here as a test of
           // intentional scope.
-          final builder = OcrConsensusBuilder()
+          final builder = OcrConsensusAccumulator()
             ..recordVote({'firstName': 'MARIA'})
             ..recordVote({'firstName': 'MARÍA'})
             ..recordVote({'firstName': 'MARIA'});
@@ -421,7 +421,7 @@ void main() {
       test(
         'MRZ-Ñ recovery: text-OCR builds MUÑOZ, MRZ says MUNOZ → Ñ kept',
         () {
-          final builder = OcrConsensusBuilder();
+          final builder = OcrConsensusAccumulator();
           // 3 noisy text-OCR frames build a Ñ in the display map
           for (var i = 0; i < 3; i++) {
             builder.recordVote({'lastName': 'MUÑOZ'});
@@ -463,7 +463,7 @@ void main() {
           //
           // The full surname recovery for this case must be performed at
           // the application layer (e.g. against a stored profile).
-          final builder = OcrConsensusBuilder();
+          final builder = OcrConsensusAccumulator();
           for (var i = 0; i < 3; i++) {
             builder.recordVote({'lastName': 'IBAÑEZ MARIÑO'});
           }
@@ -495,7 +495,7 @@ void main() {
       test(
         'compound first name JOSÉ ANDRÉS with mixed votes → majority wins',
         () {
-          final builder = OcrConsensusBuilder()
+          final builder = OcrConsensusAccumulator()
             ..recordVote({'firstName': 'JOSE ANDRES'})
             ..recordVote({'firstName': 'JOSÉ ANDRÉS'})
             ..recordVote({'firstName': 'JOSE ANDRES'});
@@ -510,7 +510,7 @@ void main() {
       test(
         'double-Ñ surname AÑAÑOS RIAÑO with one noisy frame still surfaces Ñ',
         () {
-          final builder = OcrConsensusBuilder()
+          final builder = OcrConsensusAccumulator()
             ..recordVote({'lastName': 'ANXXANXXOS RIANXXO'})
             ..recordVote({'lastName': 'AÑAÑOS RIAÑO'});
 
@@ -524,7 +524,7 @@ void main() {
     });
 
     test('resetMrzConsecutiveCount resets the counter on non-MRZ frames', () {
-      final builder = OcrConsensusBuilder()
+      final builder = OcrConsensusAccumulator()
         ..lockFromMrzFields(
           documentNumber: '71542895',
           firstName: 'JOSE',

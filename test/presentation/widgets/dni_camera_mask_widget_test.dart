@@ -17,9 +17,9 @@ class _FakeXFile extends Fake implements XFile {}
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Returns a [CameraValue] with [isInitialized]=true and no active stream.
-CameraValue _initializedCameraValue() => CameraValue(
+CameraValue _initializedCameraValue() => const CameraValue(
   isInitialized: true,
-  previewSize: const Size(640, 480),
+  previewSize: Size(640, 480),
   isStreamingImages: false,
   isRecordingVideo: false,
   isTakingPicture: false,
@@ -30,7 +30,7 @@ CameraValue _initializedCameraValue() => CameraValue(
   exposurePointSupported: false,
   focusPointSupported: false,
   deviceOrientation: DeviceOrientation.portraitUp,
-  description: const CameraDescription(
+  description: CameraDescription(
     name: 'test-cam',
     lensDirection: CameraLensDirection.back,
     sensorOrientation: 0,
