@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.6.10 (docs)
+
+Documentation pass over the public surface and the most-touched internals.
+
+### What changed
+
+Production code is unmodified. The pass replaces ad-hoc bitácora comments
+(`obs #...`, `BUG ...`, `v0.6.x hotfix`, reporter names) with DartDoc that
+documents:
+
+- Intent and role of each public class.
+- SOLID principles applied (SRP, OCP, DIP) where relevant.
+- Design patterns (Strategy, Accumulator, State holder injection).
+- Invariants and lifecycle expectations.
+- Empirical calibration values (e.g. `blurThreshold`, `_maxTiltDegrees`)
+  with the reasoning that drove them, separated from the bug-tracking
+  history that lives in git / Engram.
+
+Files touched:
+
+- `lib/src/data/ocr_consensus.dart`
+- `lib/src/data/address_noise_filter.dart`
+- `lib/src/data/strategies/address_field_strategy.dart`
+- `lib/src/presentation/document_validator.dart`
+- `lib/src/presentation/image_quality_gate.dart`
+- `lib/src/presentation/controllers/dni_camera_controller.dart`
+- `lib/src/presentation/widgets/dni_camera_mask.dart`
+
+Bug-tracking metadata that was in the source moved to git log and to the
+Engram observations linked from the `CHANGELOG.md` entries — the source
+now talks about the *what* and the *why*, not the *when*.
+
+### Consumer impact
+
+No public API changes. No behaviour changes. Patch release. Bump SHA only.
+
+**521/521 tests pass.** `flutter analyze` clean.
+
 ## 0.6.9 (polish + test hygiene)
 
 Two non-breaking polish items from the judgment-day audit (Engram obs #4688):

@@ -63,11 +63,12 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     if (result.address != null) return;
     final upper = lines[i].toUpperCase().trim();
 
-    // Strategy 1: `DOMICILIO` or `DIRECCIÓN/DIRECCION` label.
+    // Strategy 1 — explicit label anchor (`DOMICILIO` / `DIRECCIÓN` family).
     //
-    // Real Peruvian electronic DNIs print "Dirección:" on the reverse;
-    // older booklet-style cards print "DOMICILIO". Both anchors are accepted.
-    // Fix for BUG 1A (obs #4669).
+    // The booklet-style DNI prints `DOMICILIO`; the electronic DNI prints
+    // `Dirección` (Spanish accent, possibly with colon). We accept both
+    // spellings plus the abbreviated `DOM` / `DOM.` forms used by some
+    // older issuers.
     final isDomicilioAnchor = upper.contains('DOMICILIO') ||
         upper.startsWith('DOM ') ||
         upper == 'DOM.';
@@ -140,17 +141,23 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
   /// Builds the address string starting at [startIdx], collecting up to 3
   /// additional lines while they look like address continuations.
   ///
-  /// A continuation line attaches when:
-  ///   - it starts with a known address prefix (`AV.`, `JR.`, …), OR
-  ///   - it starts with a known continuation prefix (`MZ.`, `LT.`, …), OR
-  ///   - the PREVIOUS line ended with a token that suggests an unfinished
-  ///     address fragment (a bare `MZ`/`LT`/`NRO` token without value, or a
-  ///     trailing letter/number that ML Kit may have split mid-token).
+  /// Three independent rules attach a candidate line:
   ///
-  /// The third rule is for real ML Kit output where the back-side OCR splits
-  /// `MZ.B LT.19` across two visual lines so the second line begins with
-  /// `B LT.19` (or just `19`) and doesn't match any prefix on its own.
-  /// Reported by JC against v0.6.6 on his electronic DNI.
+  ///   1. **Prefixed continuation** — line starts with a known continuation
+  ///      prefix (`MZ.`, `LT.`, `MZA.`, `LTE.`, `NRO.`, `INT.`, `DPTO.`,
+  ///      and their bare-space variants).
+  ///   2. **Prefixed address** — line starts with a known street prefix
+  ///      (`AV.`, `JR.`, `CALLE`, `PSJ.`, `URB.`, …).
+  ///   3. **Dangling anchor recovery** — the previous line ended with an
+  ///      orphan anchor token (a bare `MZ`/`LT`/`NRO` without its value),
+  ///      and the next line carries the missing tail (e.g. `B LT.19` or
+  ///      `19`). ML Kit occasionally splits `MZ.B LT.19` across two visual
+  ///      lines depending on document tilt and lighting, so the tail line
+  ///      cannot rely on a prefix match.
+  ///
+  /// Rule 3 is gated by [_looksLikeContinuationFragment] which enforces a
+  /// 30-character cap and a label denylist so unrelated content does not
+  /// get stitched into the address.
   String _buildAddress(List<String> lines, int startIdx) {
     final parts = <String>[lines[startIdx].trim().toUpperCase()];
     for (int j = startIdx + 1; j < lines.length && j <= startIdx + 3; j++) {

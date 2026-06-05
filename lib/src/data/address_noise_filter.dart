@@ -101,12 +101,12 @@ final class AddressNoiseFilter {
     'ELECCIONES',
     'ELECTORAL',
     'DOMICILIO',
-    // DIRECCION stays in the denylist as a TOKEN filter (so it doesn't pollute
-    // address joins like "MZ.C LT.20 DIRECCION"). The AddressFieldStrategy
-    // detects "DIRECCIÓN:" as a line ANCHOR before the noise filter runs,
-    // so this denylist entry does not block Bug 1A recognition.
-    // (See BUG 1A fix in address_field_strategy.dart, obs #4669.)
-    'DIRECCION', // also catches DIRECCIÓN
+    // `DIRECCION` is denylisted as a TOKEN to prevent stray copies of the
+    // label from polluting joined address lines (e.g. ML Kit emitting
+    // `MZ.C LT.20 DIRECCION`). The label as a LINE anchor is recognised
+    // separately by [AddressFieldStrategy] before the noise filter runs,
+    // so this entry does not block label-based extraction.
+    'DIRECCION', // matches DIRECCIÓN after diacritic strip
     'DEPARTAMENTO',
     'PROVINCIA',
     'DISTRITO',

@@ -67,20 +67,18 @@ class DniCameraMask extends StatefulWidget {
 
   /// Optional seed for the back-side consensus accumulator.
   ///
-  /// When the host navigates from a front-side scan to a back-side scan as
-  /// separate widget instances (Flutter's `switch` over enum steps does NOT
-  /// reuse state), the back-side widget would otherwise start with an empty
-  /// accumulator and discard the front-side OCR. Pass the OCR fields
-  /// accumulated on the front side here so the back-side snapshot can fall
-  /// back to them when the back MRZ frames come partial.
+  /// Flutter destroys a widget's [State] when the host swaps its enclosing
+  /// widget by type (e.g. a `switch` over an enum step), so two
+  /// [DniCameraMask] instances mounted for the front and back side do NOT
+  /// share `_accumulatedFields`. Without a seed, the back-side accumulator
+  /// starts empty and discards every OCR vote the front side collected.
   ///
-  /// Ignored on front-side captures (`isBackSide == false`).
+  /// Pattern: **State holder injection.** The host (Bloc / Cubit / parent
+  /// State) is the source of truth for cross-side OCR memory. It persists
+  /// the fields emitted by [onFrontSideOcrUpdated] during the front-side
+  /// scan and feeds them back here when constructing the back-side widget.
   ///
-  /// Fix for the "two-sided scan loses OCR" symptom reported against v0.6.x:
-  /// the package widget is re-created when the step changes, so the previous
-  /// `_accumulatedFields` is destroyed and `onSideChanged` runs without a
-  /// seed. Hosts persist OCR in a Bloc/Cubit/state holder across the step
-  /// transition and feed it back here.
+  /// Ignored when `isBackSide == false`.
   final OcrExtractedFields? frontSideFields;
 
   /// Optional callback emitted while scanning the FRONT side, every time the
@@ -205,11 +203,12 @@ class _DniCameraMaskState extends State<DniCameraMask>
     _captureController.captureState.addListener(_onCaptureStateChanged);
 
     if (widget.isBackSide) {
-      // Seed the back-side accumulator with the front-side fields the host
-      // captured (and stored across the step transition). Without this seed
-      // the back-side starts blank and the snapshot can return null names
-      // when the back MRZ frames come partial — even though v0.6.1's
-      // _buildMrzResultFromFields fallback would have rescued them.
+      // Seed the back-side consensus accumulator with the front-side OCR
+      // fields the host persisted across the step transition. Required
+      // because Flutter destroys the front widget's `_accumulatedFields`
+      // when the host swaps to the back-side instance; without the seed,
+      // the back-side snapshot would emit nulls whenever the back MRZ
+      // arrives partial.
       _captureController.onSideChanged(
         isBackSide: true,
         frontSideFields: widget.frontSideFields,
