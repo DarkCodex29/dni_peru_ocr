@@ -5,6 +5,17 @@ homepage: https://github.com/DarkCodex29/dni_peru_ocr
 repository: https://github.com/DarkCodex29/dni_peru_ocr
 issue_tracker: https://github.com/DarkCodex29/dni_peru_ocr/issues
 
+topics:
+  - ocr
+  - flutter
+  - identity
+  - peru
+  - mrz
+
+platforms:
+  android:
+  ios:
+
 environment:
   sdk: '>=3.0.0 <4.0.0'
   flutter: '>=3.3.0'
