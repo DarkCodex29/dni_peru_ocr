@@ -7,9 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
-import '_camera_overlay_widgets.dart';
-import '_mask_painter.dart';
-
 import '../../data/ocr_consensus.dart';
 import '../../data/ocr_field_extractor.dart';
 import '../../domain/entities/user_verification_data.dart';
@@ -24,6 +21,9 @@ import '../theme/kyc_theme.dart';
 import '../controllers/dni_camera_controller.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
+import '_mask_painter.dart';
+
+part '_camera_overlay_widgets.dart';
 
 class DniCameraMask extends StatefulWidget {
   const DniCameraMask({
@@ -712,7 +712,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
                 duration: const Duration(
                   milliseconds: CameraOverlayTuning.torchSwitcherFadeMs,
                 ),
-                child: FlashToggle(
+                child: _FlashToggle(
                   key: ValueKey<bool>(_torchOn),
                   isOn: _torchOn,
                   onToggle: _toggleTorch,
@@ -749,7 +749,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
                 ),
               )
             else if (!manualModeActive)
-              GuideTextBanner(
+              _GuideTextBanner(
                 text: _guideText,
                 holeHeight: widget.holeHeight,
                 insideHole: false,
@@ -763,7 +763,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
                 bottom: 0,
                 left: 0,
                 right: 0,
-                child: ManualCapturePanel(
+                child: _ManualCapturePanel(
                   isBackSide: widget.isBackSide,
                   onPressed: () => _captureController.captureManually(),
                 ),
@@ -771,7 +771,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
             if (userDataMatch != null &&
                 !_isCapturingFromState &&
                 !widget.isLoading)
-              DataMatchIndicator(
+              _DataMatchIndicator(
                 matches: userDataMatch,
                 bottom: manualModeActive ? 208 : 80,
               ),
@@ -788,7 +788,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
                     duration: const Duration(
                       milliseconds: CameraOverlayTuning.sideIntroFadeMs,
                     ),
-                    child: const SideIntroRibbon(),
+                    child: const _SideIntroRibbon(),
                   ),
                 ),
               ),
@@ -800,7 +800,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
                     top: MediaQuery.of(context).padding.top + 8,
                     left: 8,
                     child: IgnorePointer(
-                      child: G1TelemetryOverlay(
+                      child: _G1TelemetryOverlay(
                         tilt: _telemetryTilt,
                         mlkitAngle: _telemetryMlkitAngle,
                         lines: _telemetryLines,

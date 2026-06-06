@@ -1,7 +1,4 @@
-import 'package:flutter/material.dart';
-
-import '../camera_overlay_logic.dart';
-import '../theme/kyc_theme.dart';
+part of 'dni_camera_mask.dart';
 
 Widget animatedSwitcherDedupeLayoutHelper(
   Widget? current,
@@ -11,11 +8,10 @@ Widget animatedSwitcherDedupeLayoutHelper(
 
 // ─── Manual capture panel ─────────────────────────────────────────────────
 
-class ManualCapturePanel extends StatelessWidget {
-  const ManualCapturePanel({
+class _ManualCapturePanel extends StatelessWidget {
+  const _ManualCapturePanel({
     required this.isBackSide,
     required this.onPressed,
-    super.key,
   });
 
   final bool isBackSide;
@@ -75,8 +71,8 @@ class ManualCapturePanel extends StatelessWidget {
 
 // ─── Side intro ribbon ────────────────────────────────────────────────────
 
-class SideIntroRibbon extends StatelessWidget {
-  const SideIntroRibbon({super.key});
+class _SideIntroRibbon extends StatelessWidget {
+  const _SideIntroRibbon();
 
   @override
   Widget build(BuildContext context) {
@@ -117,8 +113,8 @@ class SideIntroRibbon extends StatelessWidget {
 /// Debug-only HUD that surfaces the G.1 telemetry signals on top of the
 /// camera preview. Entry point in [DniCameraMask] is wrapped in `kDebugMode`
 /// so this renders nothing in release builds.
-class G1TelemetryOverlay extends StatelessWidget {
-  const G1TelemetryOverlay({
+class _G1TelemetryOverlay extends StatelessWidget {
+  const _G1TelemetryOverlay({
     required this.tilt,
     required this.mlkitAngle,
     required this.lines,
@@ -128,7 +124,6 @@ class G1TelemetryOverlay extends StatelessWidget {
     required this.stableFrames,
     required this.failingGate,
     required this.perfectSinceMs,
-    super.key,
   });
 
   final double tilt;
@@ -180,12 +175,11 @@ class G1TelemetryOverlay extends StatelessWidget {
 
 // ─── Guide text banner ────────────────────────────────────────────────────
 
-class GuideTextBanner extends StatelessWidget {
-  const GuideTextBanner({
+class _GuideTextBanner extends StatelessWidget {
+  const _GuideTextBanner({
     required this.text,
     required this.holeHeight,
     this.insideHole = false,
-    super.key,
   });
   final String text;
   final double holeHeight;
@@ -230,9 +224,8 @@ class GuideTextBanner extends StatelessWidget {
 
 // ─── Data match indicator ────────────────────────────────────────────────
 
-class DataMatchIndicator extends StatelessWidget {
-  const DataMatchIndicator(
-      {required this.matches, this.bottom = 80, super.key});
+class _DataMatchIndicator extends StatelessWidget {
+  const _DataMatchIndicator({required this.matches, this.bottom = 80});
   final bool matches;
   final double bottom;
 
@@ -289,8 +282,8 @@ class DataMatchIndicator extends StatelessWidget {
 
 // ─── Flash toggle ─────────────────────────────────────────────────────────
 
-class FlashToggle extends StatelessWidget {
-  const FlashToggle({
+class _FlashToggle extends StatelessWidget {
+  const _FlashToggle({
     required this.isOn,
     required this.onToggle,
     super.key,
