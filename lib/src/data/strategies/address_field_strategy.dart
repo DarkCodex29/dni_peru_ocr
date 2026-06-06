@@ -131,8 +131,8 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     final isDomicilioAnchor = upper.contains('DOMICILIO') ||
         upper.startsWith('DOM ') ||
         upper == 'DOM.';
-    final isDireccionAnchor = upper.contains('DIRECCIÓN') ||
-        upper.contains('DIRECCION');
+    final isDireccionAnchor =
+        upper.contains('DIRECCIÓN') || upper.contains('DIRECCION');
     if (isDomicilioAnchor || isDireccionAnchor) {
       final inlineValue = upper
           .replaceAll(RegExp(r'DOMICILIO\.?:?\s*'), '')
@@ -241,13 +241,13 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
   bool _looksLikeContinuationFragment(String prev, String next) {
     if (prev.isEmpty || next.isEmpty) return false;
     // Strip trailing dot for the tail check (`MZ.` ↔ `MZ`).
-    final prevTail = prev
-        .split(RegExp(r'\s+'))
-        .last
-        .replaceAll(RegExp(r'\.+$'), '');
+    final prevTail =
+        prev.split(RegExp(r'\s+')).last.replaceAll(RegExp(r'\.+$'), '');
     const danglingAnchors = {
-      'MZ', 'MZA',
-      'LT', 'LTE',
+      'MZ',
+      'MZA',
+      'LT',
+      'LTE',
       'NRO',
       'INT',
       'DPTO',
@@ -257,7 +257,9 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     // letters/numbers/dots only, ≤ 30 chars. Reject obvious labels.
     if (next.length > 30) return false;
     if (!RegExp(r'^[A-Z0-9. ]+$').hasMatch(next)) return false;
-    if (RegExp(r'^(DIRECCI|DOMICILI|DEPARTAMENT|PROVIN|DISTRIT|UBIGEO|GRUPO|VOTACI|DONACI|ORGANO|SANGUINE|FECHA|CADUC|NACIM|SEXO|NACIONAL)').hasMatch(next)) {
+    if (RegExp(
+            r'^(DIRECCI|DOMICILI|DEPARTAMENT|PROVIN|DISTRIT|UBIGEO|GRUPO|VOTACI|DONACI|ORGANO|SANGUINE|FECHA|CADUC|NACIM|SEXO|NACIONAL)')
+        .hasMatch(next)) {
       return false;
     }
     return true;
@@ -303,8 +305,8 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
   }
 
   bool _isUbigeoLine(String upper) => RegExp(
-    r'^/?[A-ZÁÉÍÓÚÑ\s]+(?:/[A-ZÁÉÍÓÚÑ\s]+){1,3}$',
-  ).hasMatch(upper);
+        r'^/?[A-ZÁÉÍÓÚÑ\s]+(?:/[A-ZÁÉÍÓÚÑ\s]+){1,3}$',
+      ).hasMatch(upper);
 
   bool _isValidAddress(String text) {
     final t = text.trim().toUpperCase();

@@ -91,7 +91,7 @@ final class DniCaptureCountingDown extends DniCaptureState {
   /// Total milliseconds required to trigger auto-capture.
   final int totalMs;
 
-  /// 0..1 countdown progress, clamped to [0, 1].
+  /// 0..1 countdown progress, clamped to the range `[0, 1]`.
   double get progress => math.min(1.0, elapsedMs / totalMs);
 }
 

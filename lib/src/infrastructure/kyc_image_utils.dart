@@ -48,7 +48,7 @@ class FlutterImageCompressor implements ImageCompressor {
 /// Utility class for KYC image processing operations.
 class KycImageUtils {
   KycImageUtils({ImageCompressor? compressor})
-    : _compressor = compressor ?? FlutterImageCompressor();
+      : _compressor = compressor ?? FlutterImageCompressor();
 
   final ImageCompressor _compressor;
 

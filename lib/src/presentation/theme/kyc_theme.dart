@@ -33,50 +33,50 @@ class KycTheme {
   /// Default theme using neutral, brand-agnostic values. Consumers should
   /// override colors that need to match their app's palette.
   factory KycTheme.defaults() => const KycTheme(
-    primary: Color(0xFF19809E),
-    primarySolid: Color(0xFF0B3A47),
-    accentOrange: Color(0xFFFE7C04),
-    success: Color(0xFF16A34A),
-    warningIcon: Color(0xFFFF9800),
-    error: Color(0xFFE01E37),
-    errorLight: Color(0xFFFEE2E2),
-    errorBorder: Color(0xFFE01E37),
-    textPrimary: Color(0xFF212121),
-    textTertiary: Color(0xFF5F7081),
-    border: Color(0xFFE0E0E0),
-    backgroundFieldAlt: Color(0xFFF8F9FA),
-    backgroundGrey: Color(0xFFEDEDED),
-    shadowCard: Color(0x0A000000),
-    overlayDark: Color(0xA6000000),
-    overlayMedium: Color(0x8A000000),
-    white: Colors.white,
-    white60: Color(0x99FFFFFF),
-    white70: Color(0xB3FFFFFF),
-  );
+        primary: Color(0xFF19809E),
+        primarySolid: Color(0xFF0B3A47),
+        accentOrange: Color(0xFFFE7C04),
+        success: Color(0xFF16A34A),
+        warningIcon: Color(0xFFFF9800),
+        error: Color(0xFFE01E37),
+        errorLight: Color(0xFFFEE2E2),
+        errorBorder: Color(0xFFE01E37),
+        textPrimary: Color(0xFF212121),
+        textTertiary: Color(0xFF5F7081),
+        border: Color(0xFFE0E0E0),
+        backgroundFieldAlt: Color(0xFFF8F9FA),
+        backgroundGrey: Color(0xFFEDEDED),
+        shadowCard: Color(0x0A000000),
+        overlayDark: Color(0xA6000000),
+        overlayMedium: Color(0x8A000000),
+        white: Colors.white,
+        white60: Color(0x99FFFFFF),
+        white70: Color(0xB3FFFFFF),
+      );
 
   /// Dark variant of the default theme. Tuned for OLED displays — uses
   /// near-black surfaces and brighter accents to preserve contrast.
   factory KycTheme.darkDefaults() => const KycTheme(
-    primary: Color(0xFF2EAFD4),
-    primarySolid: Color(0xFF052631),
-    accentOrange: Color(0xFFFF8A1F),
-    success: Color(0xFF22C55E),
-    warningIcon: Color(0xFFFFB020),
-    error: Color(0xFFFF4D6D),
-    errorLight: Color(0xFF2A0E14),
-    errorBorder: Color(0xFFFF4D6D),
-    textPrimary: Color(0xFFEDEDED),
-    textTertiary: Color(0xFFA0AEC0),
-    border: Color(0xFF2A2A2A),
-    backgroundFieldAlt: Color(0xFF101012),
-    backgroundGrey: Color(0xFF1A1A1C),
-    shadowCard: Color(0x33000000),
-    overlayDark: Color(0xCC000000),
-    overlayMedium: Color(0xA6000000),
-    white: Colors.white,
-    white60: Color(0x99FFFFFF),
-    white70: Color(0xB3FFFFFF),
-  );
+        primary: Color(0xFF2EAFD4),
+        primarySolid: Color(0xFF052631),
+        accentOrange: Color(0xFFFF8A1F),
+        success: Color(0xFF22C55E),
+        warningIcon: Color(0xFFFFB020),
+        error: Color(0xFFFF4D6D),
+        errorLight: Color(0xFF2A0E14),
+        errorBorder: Color(0xFFFF4D6D),
+        textPrimary: Color(0xFFEDEDED),
+        textTertiary: Color(0xFFA0AEC0),
+        border: Color(0xFF2A2A2A),
+        backgroundFieldAlt: Color(0xFF101012),
+        backgroundGrey: Color(0xFF1A1A1C),
+        shadowCard: Color(0x33000000),
+        overlayDark: Color(0xCC000000),
+        overlayMedium: Color(0xA6000000),
+        white: Colors.white,
+        white60: Color(0x99FFFFFF),
+        white70: Color(0xB3FFFFFF),
+      );
 
   /// Derives a [KycTheme] from a Material 3 [ThemeData], mapping Material
   /// semantic roles onto the KYC color slots. Useful when the host app
@@ -185,8 +185,8 @@ class KycTheme {
   ///
   /// Throws when no [KycThemeProvider] is present.
   static KycTheme of(BuildContext context) {
-    final provider = context
-        .dependOnInheritedWidgetOfExactType<KycThemeProvider>();
+    final provider =
+        context.dependOnInheritedWidgetOfExactType<KycThemeProvider>();
     if (provider == null) {
       throw FlutterError(
         'KycTheme.of() called with a context that does not contain a '
@@ -225,26 +225,26 @@ class KycTheme {
   int get hashCode => Object.hashAll(_hashFields);
 
   List<Object?> get _hashFields => [
-    primary,
-    primarySolid,
-    accentOrange,
-    success,
-    warningIcon,
-    error,
-    errorLight,
-    errorBorder,
-    textPrimary,
-    textTertiary,
-    border,
-    backgroundFieldAlt,
-    backgroundGrey,
-    shadowCard,
-    overlayDark,
-    overlayMedium,
-    white,
-    white60,
-    white70,
-  ];
+        primary,
+        primarySolid,
+        accentOrange,
+        success,
+        warningIcon,
+        error,
+        errorLight,
+        errorBorder,
+        textPrimary,
+        textTertiary,
+        border,
+        backgroundFieldAlt,
+        backgroundGrey,
+        shadowCard,
+        overlayDark,
+        overlayMedium,
+        white,
+        white60,
+        white70,
+      ];
 }
 
 /// Injects a [KycTheme] into the widget tree for descendants to read via

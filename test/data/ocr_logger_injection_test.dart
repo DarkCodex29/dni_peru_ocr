@@ -167,7 +167,8 @@ void main() {
         //
         // The real compile-time evidence is that this file (which does NOT
         // reference OcrExtractedFields.logger) compiles cleanly.
-        expect(true, isTrue, reason: 'Static logger removal is a compile-time guarantee');
+        expect(true, isTrue,
+            reason: 'Static logger removal is a compile-time guarantee');
       },
     );
   });

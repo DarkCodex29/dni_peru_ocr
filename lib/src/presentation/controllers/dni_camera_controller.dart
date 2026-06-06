@@ -255,10 +255,18 @@ class DniCameraController {
         final seedVotes = <String, String?>{};
         if (seed.firstName != null) seedVotes['firstName'] = seed.firstName;
         if (seed.lastName != null) seedVotes['lastName'] = seed.lastName;
-        if (seed.secondLastName != null) seedVotes['secondLastName'] = seed.secondLastName;
-        if (seed.documentNumber != null) seedVotes['documentNumber'] = seed.documentNumber;
-        if (seed.dateOfBirth != null) seedVotes['dateOfBirth'] = seed.dateOfBirth;
-        if (seed.expirationDate != null) seedVotes['expirationDate'] = seed.expirationDate;
+        if (seed.secondLastName != null) {
+          seedVotes['secondLastName'] = seed.secondLastName;
+        }
+        if (seed.documentNumber != null) {
+          seedVotes['documentNumber'] = seed.documentNumber;
+        }
+        if (seed.dateOfBirth != null) {
+          seedVotes['dateOfBirth'] = seed.dateOfBirth;
+        }
+        if (seed.expirationDate != null) {
+          seedVotes['expirationDate'] = seed.expirationDate;
+        }
         if (seed.address != null) seedVotes['address'] = seed.address;
         if (seedVotes.isNotEmpty) _accumulator!.recordVote(seedVotes);
         // DNI azul: seed MRZ fast-lock from front-side MRZ data.

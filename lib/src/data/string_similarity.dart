@@ -51,9 +51,8 @@ class StringSimilarity {
 
       for (var j = 1; j <= m; j++) {
         final saved = prev[j];
-        final cost = longer.codeUnitAt(i - 1) == shorter.codeUnitAt(j - 1)
-            ? 0
-            : 1;
+        final cost =
+            longer.codeUnitAt(i - 1) == shorter.codeUnitAt(j - 1) ? 0 : 1;
         prev[j] = _min3(
           prev[j] + 1, // deletion
           prev[j - 1] + 1, // insertion
@@ -66,7 +65,7 @@ class StringSimilarity {
     return prev[m];
   }
 
-  /// Returns a similarity ratio in [0.0, 1.0] derived from Levenshtein
+  /// Returns a similarity ratio in the range `[0.0, 1.0]` derived from Levenshtein
   /// distance:
   ///
   ///   similarity = 1 - (distance / max(|a|, |b|))

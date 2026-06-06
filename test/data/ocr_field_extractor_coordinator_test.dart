@@ -32,8 +32,7 @@ TextBlock _makeTextBlock(List<String> lines) {
   );
 }
 
-RecognizedText _recognizedFromLines(List<String> lines) =>
-    RecognizedText(
+RecognizedText _recognizedFromLines(List<String> lines) => RecognizedText(
       text: lines.join('\n'),
       blocks: [_makeTextBlock(lines)],
     );

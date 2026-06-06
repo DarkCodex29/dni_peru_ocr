@@ -525,11 +525,8 @@ class OcrConsensusAccumulator {
       return b.anchor.length.compareTo(a.anchor.length);
     });
     final winner = groups.first;
-    final field = _votes.entries
-        .firstWhere((e) => identical(e.value, map))
-        .key;
-    final displayValue =
-        _displayValues[field]?[winner.anchor] ?? winner.anchor;
+    final field = _votes.entries.firstWhere((e) => identical(e.value, map)).key;
+    final displayValue = _displayValues[field]?[winner.anchor] ?? winner.anchor;
     final confidence = total == 0 ? 0.0 : winner.totalVotes / total;
     return OcrFieldResult(
       value: displayValue,
@@ -700,8 +697,7 @@ class OcrConsensusAccumulator {
       return const OcrFieldResult(value: null, confidence: 0.0, locked: false);
     }
     final leading = freq.entries.reduce((a, b) => a.value > b.value ? a : b);
-    final locked =
-        leading.value >= _kDateMatchRequired &&
+    final locked = leading.value >= _kDateMatchRequired &&
         window.length >= _kDateMatchRequired;
     return OcrFieldResult(
       value: leading.key,
@@ -716,9 +712,8 @@ class OcrConsensusAccumulator {
 
     final surnames = mrz.surnames.split(' ');
     final lastName = surnames.isNotEmpty ? surnames.first : mrz.surnames;
-    final secondLastName = surnames.length > 1
-        ? surnames.sublist(1).join(' ')
-        : null;
+    final secondLastName =
+        surnames.length > 1 ? surnames.sublist(1).join(' ') : null;
 
     // Recover tildes that the MRZ stripped, when text-OCR has them
     // in its display map for the same ASCII root.

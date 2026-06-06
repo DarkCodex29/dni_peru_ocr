@@ -41,14 +41,21 @@ temporal accumulator** — no manual cleanup required at the consumer.
 
 ```yaml
 dependencies:
-  dni_peru_ocr:
-    git:
-      url: https://github.com/DarkCodex29/dni_peru_ocr.git
-      ref: v0.7.0
+  dni_peru_ocr: ^0.7.1
 ```
 
 ```bash
 flutter pub get
+```
+
+### Install from source
+
+```yaml
+dependencies:
+  dni_peru_ocr:
+    git:
+      url: https://github.com/DarkCodex29/dni_peru_ocr.git
+      ref: v0.7.1
 ```
 
 ## Quick start — headless extraction

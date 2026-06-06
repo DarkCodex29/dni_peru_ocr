@@ -11,7 +11,7 @@ import 'ocr_field_strategy.dart';
 /// formats used on Peruvian DNIs.
 ///
 /// Returns `null` when no valid MRZ block is found in the [RecognizedText].
-/// When successful, [OcrExtractedFields.hasMrzData] is `true` and [address]
+/// When successful, [OcrExtractedFields.hasMrzData] is `true` and `address`
 /// is always `null` (address data is never present in MRZ).
 final class MrzFieldStrategy implements OcrFieldStrategy {
   const MrzFieldStrategy();
@@ -113,15 +113,13 @@ final class MrzFieldStrategy implements OcrFieldStrategy {
       }
 
       final dob = result.birthDate;
-      fields.dateOfBirth =
-          '${dob.day.toString().padLeft(2, '0')}/'
+      fields.dateOfBirth = '${dob.day.toString().padLeft(2, '0')}/'
           '${dob.month.toString().padLeft(2, '0')}/'
           '${dob.year}';
 
       final exp = result.expiryDate;
       fields
-        ..expirationDate =
-            '${exp.day.toString().padLeft(2, '0')}/'
+        ..expirationDate = '${exp.day.toString().padLeft(2, '0')}/'
             '${exp.month.toString().padLeft(2, '0')}/'
             '${exp.year}'
         ..sex = result.sex == Sex.male ? 'M' : 'F';

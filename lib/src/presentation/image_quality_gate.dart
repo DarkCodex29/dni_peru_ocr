@@ -41,7 +41,7 @@ abstract class LivenessAnalyzer {
 /// Validates image quality: sharpness (Laplacian) + liveness (anti-spoofing).
 class ImageQualityGate {
   ImageQualityGate({LivenessAnalyzer? analyzer})
-    : _analyzer = analyzer ?? _DartLivenessAnalyzer();
+      : _analyzer = analyzer ?? _DartLivenessAnalyzer();
 
   /// Minimum Laplacian variance for an image to be considered sharp.
   ///
@@ -140,9 +140,8 @@ double _computeLaplacianVariance(Uint8List bytes) {
   if (decoded == null) return -1.0;
 
   // Downscale to 480px on longest side for CPU budget.
-  final maxSide = decoded.width > decoded.height
-      ? decoded.width
-      : decoded.height;
+  final maxSide =
+      decoded.width > decoded.height ? decoded.width : decoded.height;
   final scale = maxSide > 480 ? 480 / maxSide : 1.0;
   final resized = scale < 1.0
       ? imglib.copyResize(

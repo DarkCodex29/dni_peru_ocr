@@ -98,7 +98,8 @@ void main() {
       expect(r, Rect.zero);
     });
 
-    test('produces a centred rect when screen and image align (cover scale)', () {
+    test('produces a centred rect when screen and image align (cover scale)',
+        () {
       const screen = Size(390, 844);
       const image = Size(1080, 1920);
       final r = computeOvalInImagePx(
@@ -337,8 +338,7 @@ void main() {
 
     test('future date → null (still valid)', () {
       final future = DateTime.now().add(const Duration(days: 365));
-      final raw =
-          '${future.day.toString().padLeft(2, '0')}/'
+      final raw = '${future.day.toString().padLeft(2, '0')}/'
           '${future.month.toString().padLeft(2, '0')}/'
           '${future.year}';
       expect(expirationIfPast(raw), isNull);

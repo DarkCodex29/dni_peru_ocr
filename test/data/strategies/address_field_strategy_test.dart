@@ -24,8 +24,7 @@ TextBlock _makeTextBlock(List<String> lines) {
   );
 }
 
-RecognizedText _recognizedFromLines(List<String> lines) =>
-    RecognizedText(
+RecognizedText _recognizedFromLines(List<String> lines) => RecognizedText(
       text: lines.join('\n'),
       blocks: [_makeTextBlock(lines)],
     );
@@ -86,7 +85,8 @@ void main() {
     });
 
     // ── Scenario: Denylist filtering — noise tokens rejected ─────────────
-    test('returns null for address when only noise/denylist tokens present', () {
+    test('returns null for address when only noise/denylist tokens present',
+        () {
       final recognized = _recognizedFromLines([
         'CONSTANCIA DE SUFRAGIO',
         '/LIMA/LIMA/LIMA',
@@ -244,7 +244,8 @@ void main() {
         );
         expect(
           result?.address,
-          anyOf(contains('LT.19'), contains('LT 19'), contains('LT19'), contains('LT')),
+          anyOf(contains('LT.19'), contains('LT 19'), contains('LT19'),
+              contains('LT')),
           reason: 'LT token (Lote) is a valid Peruvian address code',
         );
       },

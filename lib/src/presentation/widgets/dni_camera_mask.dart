@@ -25,9 +25,6 @@ import '../controllers/dni_camera_controller.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
 
-
-
-
 class DniCameraMask extends StatefulWidget {
   const DniCameraMask({
     super.key,
@@ -142,9 +139,9 @@ class _DniCameraMaskState extends State<DniCameraMask>
   static const int _autoCaptureMs = CameraOverlayTuning.autoCaptureMs;
 
   String get _loadingMessage => loadingMessage(
-    isLoading: widget.isLoading,
-    isBackSide: widget.isBackSide,
-  );
+        isLoading: widget.isLoading,
+        isBackSide: widget.isBackSide,
+      );
 
   String get _initialGuideText => initialGuideText(isFaceHole: false);
 
@@ -268,9 +265,8 @@ class _DniCameraMaskState extends State<DniCameraMask>
               ),
             )
           : raw;
-      final captureConsensus = widget.isBackSide
-          ? _captureController.snapshotConsensus()
-          : null;
+      final captureConsensus =
+          widget.isBackSide ? _captureController.snapshotConsensus() : null;
       _captureController.onCaptureDelivered(
         file: outFile,
         consensus: captureConsensus,
@@ -448,7 +444,8 @@ class _DniCameraMaskState extends State<DniCameraMask>
   RecognizedText _filterBlocksInHole(
     RecognizedText recognized,
     Size imageSize,
-  ) => filterBlocksInHole(recognized, imageSize);
+  ) =>
+      filterBlocksInHole(recognized, imageSize);
 
   Future<void> _processDocument(
     dynamic inputImage,
@@ -506,9 +503,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
       }
 
       // KYC v2: expiration gate
-      if (widget.kycV2Enabled &&
-          frameFields.hasMrzData &&
-          !_expiredHandled) {
+      if (widget.kycV2Enabled && frameFields.hasMrzData && !_expiredHandled) {
         final expired = _expirationFromFields(frameFields.expirationDate);
         if (expired != null) {
           _expiredHandled = true;
@@ -680,14 +675,16 @@ class _DniCameraMaskState extends State<DniCameraMask>
                     _countdownController,
                   ]),
                   builder: (context, _) {
-                    final isPulsing =
-                        !_isCaptureable && !widget.isLoading && !_isCapturingFromState;
+                    final isPulsing = !_isCaptureable &&
+                        !widget.isLoading &&
+                        !_isCapturingFromState;
                     return CustomPaint(
                       painter: MaskPainter(
                         holeWidth: widget.holeWidth,
                         holeHeight: widget.holeHeight,
                         borderColor: isPulsing
-                            ? _borderColor.withValues(alpha: _pulseAnimation.value)
+                            ? _borderColor.withValues(
+                                alpha: _pulseAnimation.value)
                             : _borderColor,
                         overlayColor: theme.overlayDark,
                         countdownProgress: _countdownController.value,
@@ -771,15 +768,16 @@ class _DniCameraMaskState extends State<DniCameraMask>
                   onPressed: () => _captureController.captureManually(),
                 ),
               ),
-            if (userDataMatch != null && !_isCapturingFromState && !widget.isLoading)
+            if (userDataMatch != null &&
+                !_isCapturingFromState &&
+                !widget.isLoading)
               DataMatchIndicator(
                 matches: userDataMatch,
                 bottom: manualModeActive ? 208 : 80,
               ),
             if (widget.isBackSide)
               Positioned(
-                top:
-                    MediaQuery.sizeOf(context).height / 2 +
+                top: MediaQuery.sizeOf(context).height / 2 +
                     widget.holeHeight / 2 +
                     16,
                 left: 24,
@@ -852,5 +850,3 @@ class StabilityState {
     return math.max(0, current - 1);
   }
 }
-
-

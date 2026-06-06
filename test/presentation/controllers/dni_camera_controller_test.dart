@@ -14,12 +14,13 @@ DniCaptureOrchestrator _orchestrator({
   int gracePeriodMs = 600,
   int manualFallbackMs = 15000,
   int minStableFrames = 2,
-}) => DniCaptureOrchestrator(
-    autoCaptureMs: autoCaptureMs,
-    gracePeriodMs: gracePeriodMs,
-    manualFallbackMs: manualFallbackMs,
-    minStableFrames: minStableFrames,
-  );
+}) =>
+    DniCaptureOrchestrator(
+      autoCaptureMs: autoCaptureMs,
+      gracePeriodMs: gracePeriodMs,
+      manualFallbackMs: manualFallbackMs,
+      minStableFrames: minStableFrames,
+    );
 
 /// Builds a [DocumentValidationResult] for tests without ML Kit.
 DocumentValidationResult _fakeValidation({required bool isCaptureable}) =>
@@ -125,7 +126,9 @@ void main() {
       expect(controller.captureState.value, isA<DniCaptureCountingDown>());
     });
 
-    test('onSideChanged resets to DniCaptureScanning with manualModeActive=false', () {
+    test(
+        'onSideChanged resets to DniCaptureScanning with manualModeActive=false',
+        () {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
@@ -158,7 +161,8 @@ void main() {
   // ── Group 3: Manual fallback timer ────────────────────────────────────────
 
   group('DniCameraController — manual fallback timer', () {
-    test('state becomes manualModeActive=true after manualFallbackMs', () async {
+    test('state becomes manualModeActive=true after manualFallbackMs',
+        () async {
       final controller = DniCameraController(
         orchestrator: _orchestrator(manualFallbackMs: 50), // fast for tests
         isBackSide: false,
@@ -177,7 +181,8 @@ void main() {
       expect((state as DniCaptureScanning).manualModeActive, isTrue);
     });
 
-    test('onSideChanged resets manualModeActive even after timer fires', () async {
+    test('onSideChanged resets manualModeActive even after timer fires',
+        () async {
       final controller = DniCameraController(
         orchestrator: _orchestrator(manualFallbackMs: 50),
         isBackSide: false,
@@ -227,7 +232,8 @@ void main() {
       await expectLater(controller.dispose(), completes);
     });
 
-    test('calling onSideChanged after dispose is a no-op (does not throw)', () async {
+    test('calling onSideChanged after dispose is a no-op (does not throw)',
+        () async {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
@@ -269,7 +275,8 @@ void main() {
       expect(controller.captureState.value, isA<DniCaptureScanning>());
     });
 
-    test('countdown completion (elapsed >= autoCaptureMs) → InFlight', () async {
+    test('countdown completion (elapsed >= autoCaptureMs) → InFlight',
+        () async {
       final controller = DniCameraController(
         orchestrator: _orchestrator(autoCaptureMs: 1, minStableFrames: 1),
         isBackSide: false,
@@ -471,7 +478,8 @@ void main() {
       expect(controller.captureState.value, isA<DniCaptureExpired>());
     });
 
-    test('expired document only fires once even if processFrame called again', () {
+    test('expired document only fires once even if processFrame called again',
+        () {
       var fireCount = 0;
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
@@ -537,7 +545,8 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      controller.onCaptureDelivered(file: 'photo.jpg', consensus: 'some_consensus');
+      controller.onCaptureDelivered(
+          file: 'photo.jpg', consensus: 'some_consensus');
 
       expect(capturedFile, equals('photo.jpg'));
       // isBackSide=false: consensus is always null on front side
@@ -554,7 +563,8 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      controller.onCaptureDelivered(file: 'photo.jpg', consensus: 'back_consensus');
+      controller.onCaptureDelivered(
+          file: 'photo.jpg', consensus: 'back_consensus');
 
       expect(capturedConsensus, equals('back_consensus'));
     });
@@ -684,7 +694,8 @@ void main() {
             confidence: 1.0,
             locked: true,
           ),
-          address: const OcrFieldResult(value: null, confidence: 0, locked: false),
+          address:
+              const OcrFieldResult(value: null, confidence: 0, locked: false),
         );
 
         controller.onCaptureDelivered(file: 'back.jpg', consensus: consensus);
@@ -740,10 +751,14 @@ void main() {
             confidence: 1.0,
             locked: true,
           ),
-          secondLastName: const OcrFieldResult(value: null, confidence: 0, locked: false),
-          dateOfBirth: const OcrFieldResult(value: null, confidence: 0, locked: false),
-          expirationDate: const OcrFieldResult(value: null, confidence: 0, locked: false),
-          address: const OcrFieldResult(value: null, confidence: 0, locked: false),
+          secondLastName:
+              const OcrFieldResult(value: null, confidence: 0, locked: false),
+          dateOfBirth:
+              const OcrFieldResult(value: null, confidence: 0, locked: false),
+          expirationDate:
+              const OcrFieldResult(value: null, confidence: 0, locked: false),
+          address:
+              const OcrFieldResult(value: null, confidence: 0, locked: false),
         );
 
         controller.onCaptureDelivered(file: 'front.jpg', consensus: consensus);
@@ -751,8 +766,7 @@ void main() {
         expect(
           deliveredConsensus,
           isNull,
-          reason:
-              'Controller transitioned to front-side: consensus must be '
+          reason: 'Controller transitioned to front-side: consensus must be '
               'scrubbed regardless of what the host passed.',
         );
       },

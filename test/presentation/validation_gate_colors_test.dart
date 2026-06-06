@@ -22,27 +22,32 @@ void main() {
     });
 
     test('minBlocks → non-null Color from KycTheme', () {
-      final color = ValidationGateColors.colorFor(ValidationGate.minBlocks, theme);
+      final color =
+          ValidationGateColors.colorFor(ValidationGate.minBlocks, theme);
       expect(color, isNotNull);
     });
 
     test('centering → non-null Color from KycTheme', () {
-      final color = ValidationGateColors.colorFor(ValidationGate.centering, theme);
+      final color =
+          ValidationGateColors.colorFor(ValidationGate.centering, theme);
       expect(color, isNotNull);
     });
 
     test('fillHigh → non-null Color from KycTheme', () {
-      final color = ValidationGateColors.colorFor(ValidationGate.fillHigh, theme);
+      final color =
+          ValidationGateColors.colorFor(ValidationGate.fillHigh, theme);
       expect(color, isNotNull);
     });
 
     test('fillLow → non-null Color from KycTheme', () {
-      final color = ValidationGateColors.colorFor(ValidationGate.fillLow, theme);
+      final color =
+          ValidationGateColors.colorFor(ValidationGate.fillLow, theme);
       expect(color, isNotNull);
     });
 
     test('lineCount → non-null Color from KycTheme', () {
-      final color = ValidationGateColors.colorFor(ValidationGate.lineCount, theme);
+      final color =
+          ValidationGateColors.colorFor(ValidationGate.lineCount, theme);
       expect(color, isNotNull);
     });
 
@@ -51,7 +56,8 @@ void main() {
       expect(color, isNotNull);
     });
 
-    test('all failure gates map to either accentOrange or white (theme tokens)', () {
+    test('all failure gates map to either accentOrange or white (theme tokens)',
+        () {
       final failureGates = [
         ValidationGate.minBlocks,
         ValidationGate.centering,

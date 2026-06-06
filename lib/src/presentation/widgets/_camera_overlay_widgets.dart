@@ -6,7 +6,8 @@ import '../theme/kyc_theme.dart';
 Widget animatedSwitcherDedupeLayoutHelper(
   Widget? current,
   List<Widget> previous,
-) => animatedSwitcherDedupeLayout(current, previous);
+) =>
+    animatedSwitcherDedupeLayout(current, previous);
 
 // ─── Manual capture panel ─────────────────────────────────────────────────
 
@@ -51,7 +52,8 @@ class ManualCapturePanel extends StatelessWidget {
                 border: Border.all(color: theme.white, width: 3),
               ),
               child: Center(
-                child: Icon(Icons.camera_alt_outlined, color: theme.white, size: 32),
+                child: Icon(Icons.camera_alt_outlined,
+                    color: theme.white, size: 32),
               ),
             ),
           ),
@@ -90,7 +92,8 @@ class SideIntroRibbon extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.check_circle_rounded, color: Color(0xFF69F0AE), size: 18),
+          const Icon(Icons.check_circle_rounded,
+              color: Color(0xFF69F0AE), size: 18),
           const SizedBox(width: 8),
           Flexible(
             child: Text(
@@ -228,7 +231,8 @@ class GuideTextBanner extends StatelessWidget {
 // ─── Data match indicator ────────────────────────────────────────────────
 
 class DataMatchIndicator extends StatelessWidget {
-  const DataMatchIndicator({required this.matches, this.bottom = 80, super.key});
+  const DataMatchIndicator(
+      {required this.matches, this.bottom = 80, super.key});
   final bool matches;
   final double bottom;
 
@@ -302,7 +306,8 @@ class FlashToggle extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: isOn ? theme.white.withValues(alpha: 0.3) : theme.overlayMedium,
+          color:
+              isOn ? theme.white.withValues(alpha: 0.3) : theme.overlayMedium,
           shape: BoxShape.circle,
         ),
         child: Icon(

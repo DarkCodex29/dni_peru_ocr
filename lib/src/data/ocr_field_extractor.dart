@@ -154,7 +154,8 @@ class OcrExtractedFields {
     // MRZ incoming wins unconditionally over text-OCR current.
     if (incomingIsMrz && !currentIsMrz) {
       if (incoming != current) {
-        _reportMismatch(fieldName, ocrValue: current, mrzValue: incoming, logger: logger);
+        _reportMismatch(fieldName,
+            ocrValue: current, mrzValue: incoming, logger: logger);
       }
       return incoming;
     }
@@ -219,19 +220,19 @@ class OcrExtractedFields {
   set fromMrzForTest(bool value) => _fromMrz = value;
 
   Map<String, String?> get fields => {
-    'N° Documento': documentNumber,
-    'Apellido paterno': lastName,
-    'Apellido materno': secondLastName,
-    'Nombres': firstName,
-    'Nacimiento': dateOfBirth,
-    'Sexo': sex,
-    'Caducidad': expirationDate,
-    'Nacionalidad': nationality,
-    'Dirección': address,
-    'Departamento': department,
-    'Provincia': province,
-    'Distrito': district,
-  };
+        'N° Documento': documentNumber,
+        'Apellido paterno': lastName,
+        'Apellido materno': secondLastName,
+        'Nombres': firstName,
+        'Nacimiento': dateOfBirth,
+        'Sexo': sex,
+        'Caducidad': expirationDate,
+        'Nacionalidad': nationality,
+        'Dirección': address,
+        'Departamento': department,
+        'Provincia': province,
+        'Distrito': district,
+      };
 
   /// Fields that the MRZ parser can populate (when MRZ checksum is valid).
   /// The MRZ ICAO 9303 TD1 format used by Peruvian DNI carries the document
@@ -257,9 +258,8 @@ class OcrExtractedFields {
       // [MRZ] to fields the MRZ actually carries. The address is never in
       // the MRZ — even when this accumulator is MRZ-sourced, the address
       // came from text-OCR, so it must NOT be tagged [MRZ].
-      final src = (_fromMrz && _kMrzSourcedKeys.contains(entry.key))
-          ? ' [MRZ]'
-          : '';
+      final src =
+          (_fromMrz && _kMrzSourcedKeys.contains(entry.key)) ? ' [MRZ]' : '';
       buf.writeln('$status ${entry.key}: ${entry.value ?? '—'}$src');
     }
     return buf.toString();
