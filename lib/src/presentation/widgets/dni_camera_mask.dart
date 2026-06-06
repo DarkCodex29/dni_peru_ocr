@@ -792,7 +792,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
                   ),
                 ),
               ),
-            if (kDebugMode && true)
+            if (kDebugMode)
               ValueListenableBuilder<DniTelemetry>(
                 valueListenable: _captureController.telemetry,
                 builder: (context, telemetry, _) {
