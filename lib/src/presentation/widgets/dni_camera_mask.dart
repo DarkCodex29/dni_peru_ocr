@@ -448,7 +448,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
       filterBlocksInHole(recognized, imageSize);
 
   Future<void> _processDocument(
-    dynamic inputImage,
+    InputImage inputImage,
     Size imageSize,
   ) async {
     final raw = await _textRecognizer.processImage(inputImage);
