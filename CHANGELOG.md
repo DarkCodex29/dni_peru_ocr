@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.7.2 - 2026-06-06
+
+### Changed (BREAKING for callback shape)
+
+- `DniCameraController` constructor parameter `onValidCapture` now has type
+  `void Function(XFile file, OcrConsensusResult? consensus)` instead of
+  `void Function(dynamic file, dynamic consensus)`.
+- `DniCameraController.onCaptureDelivered` named parameters `file` and
+  `consensus` are now typed `XFile` and `OcrConsensusResult?` respectively.
+- Consumers that destructure the callback arguments with explicit dynamic types
+  will get a compile error and must update their callback signature. Consumers
+  using inferred-parameter lambdas (`(_, __) {}`) are unaffected.
+- **Patch version despite the shape change**: this package has never been
+  published to pub.dev, and the only known consumer is InClub (controlled by
+  the same author). v0.8.0 is reserved for the upcoming internal refactor.
+
+### Refactored (internal)
+
+- Overlay widgets in `_camera_overlay_widgets.dart` renamed to library-private
+  (`_ManualCapturePanel`, `_SideIntroRibbon`, `_G1TelemetryOverlay`,
+  `_GuideTextBanner`, `_DataMatchIndicator`, `_FlashToggle`) and converted to
+  a `part` file of `dni_camera_mask.dart` to enforce intra-library privacy.
+- `_DniCameraMaskState._processDocument` parameter `inputImage` typed from
+  `dynamic` to `InputImage` — eliminates an implicit dynamic call into ML Kit.
+
+### Removed
+
+- Dead `&& true` guard on the `kDebugMode` branch in `DniCameraMask.build`
+  (the telemetry overlay was always rendered in debug mode; the guard was a
+  stale boolean from early development).
+
 ## 0.7.1 - 2026-06-06
 
 ### Changed

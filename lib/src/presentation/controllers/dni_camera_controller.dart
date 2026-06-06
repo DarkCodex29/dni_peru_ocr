@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 
 import '../document_validator.dart';
@@ -101,7 +102,7 @@ class DniCameraController {
   DniCameraController({
     required DniCaptureOrchestrator orchestrator,
     required bool isBackSide,
-    required void Function(dynamic file, dynamic consensus) onValidCapture,
+    required void Function(XFile file, OcrConsensusResult? consensus) onValidCapture,
     void Function(DateTime expirationDate)? onDocumentExpired,
     OcrLogger logger = const NoOpOcrLogger(),
   })  : _orchestrator = orchestrator,
@@ -164,7 +165,7 @@ class DniCameraController {
   /// Called from [onCaptureDelivered] — the widget calls [onCaptureDelivered]
   /// after it takes the photo and obtains the file path so the controller never
   /// holds a reference to the real CameraController.
-  final void Function(dynamic file, dynamic consensus) _onValidCapture;
+  final void Function(XFile file, OcrConsensusResult? consensus) _onValidCapture;
 
   final void Function(DateTime expirationDate)? _onDocumentExpired;
 
@@ -407,8 +408,8 @@ class DniCameraController {
   /// The [consensus] argument is the back-side [OcrConsensusResult] snapshot,
   /// or `null` on front-side captures. This mirrors the [_isBackSide] semantics.
   void onCaptureDelivered({
-    required dynamic file,
-    dynamic consensus,
+    required XFile file,
+    OcrConsensusResult? consensus,
   }) {
     if (_isDisposed) return;
     // On front-side captures, consensus is always null — _isBackSide determines
