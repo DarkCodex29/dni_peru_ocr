@@ -11,7 +11,7 @@ import 'ocr_field_strategy.dart';
 /// formats used on Peruvian DNIs.
 ///
 /// Returns `null` when no valid MRZ block is found in the [RecognizedText].
-/// When successful, [OcrExtractedFields.hasMrzData] is `true` and [address]
+/// When successful, [OcrExtractedFields.hasMrzData] is `true` and `address`
 /// is always `null` (address data is never present in MRZ).
 final class MrzFieldStrategy implements OcrFieldStrategy {
   const MrzFieldStrategy();

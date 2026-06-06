@@ -35,7 +35,7 @@ class DocumentValidationResult {
 
   /// The gate that rejected this frame, or `null` when [isCaptureable] is true.
   ///
-  /// Use [failingGate.sentryCode] for stable Sentry breadcrumb codes.
+  /// Use `failingGate.sentryCode` for stable Sentry breadcrumb codes.
   /// All possible gates are enumerated in [ValidationGate].
   final ValidationGate? failingGate;
 

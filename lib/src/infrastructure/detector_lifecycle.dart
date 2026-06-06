@@ -62,7 +62,7 @@ class DetectorLifecycle {
   /// If [safeDispose] has already been called (i.e. [_canProcess] is false),
   /// the [work] is dropped — no native resources are touched after disposal.
   ///
-  /// [Hardening 6] If [work] throws, the [Completer] is still resolved via
+  /// `Hardening 6`: If [work] throws, the [Completer] is still resolved via
   /// the finally block's idempotent complete so [safeDispose] never hangs.
   Future<void> trackInflight(Future<void> Function() work) async {
     // [Hardening 1] check _canProcess as the primary gate
@@ -86,13 +86,13 @@ class DetectorLifecycle {
   }
 
   /// Safely disposes the lifecycle:
-  /// 1. [Hardening 1] Flips [_canProcess] false — no new frames accepted.
+  /// 1. `Hardening 1`: Flips [_canProcess] false — no new frames accepted.
   /// 2. Stops the camera stream so no new frames arrive from native.
   /// 3. Awaits any in-flight frame to complete.
-  /// 4. [Hardening 2] Yields one event-loop tick ([Future.delayed(Duration.zero)])
+  /// 4. `Hardening 2`: Yields one event-loop tick ([Future.delayed(Duration.zero)])
   ///    so the platform channel reply from MLKit's `OnSuccessListener` lands
   ///    before crossing close() to native.
-  /// 5. [Hardening 3] Closes detectors wrapped in try/catch — idempotent.
+  /// 5. `Hardening 3`: Closes detectors wrapped in try/catch — idempotent.
   ///
   /// This method is idempotent — calling it multiple times is safe.
   Future<void> safeDispose() async {

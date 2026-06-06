@@ -65,7 +65,7 @@ class StringSimilarity {
     return prev[m];
   }
 
-  /// Returns a similarity ratio in [0.0, 1.0] derived from Levenshtein
+  /// Returns a similarity ratio in the range `[0.0, 1.0]` derived from Levenshtein
   /// distance:
   ///
   ///   similarity = 1 - (distance / max(|a|, |b|))
