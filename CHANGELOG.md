@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.1 - 2026-06-06
+
+### Changed
+
+- Applied `dart format` across all 25 library and test files (no logic changes).
+- Loosened `google_mlkit_face_detection` constraint from exact pin `0.13.2` to
+  caret `^0.13.2`, clearing the `dart pub publish --dry-run` warning.
+- Added `topics: [ocr, flutter, identity, peru, mrz]` to `pubspec.yaml` for
+  pub.dev discoverability.
+- Added explicit `platforms: android / ios` declaration to `pubspec.yaml`.
+- Fixed 8 unresolved dartdoc cross-references across 5 library files.
+- Updated README installation section: `dni_peru_ocr: ^0.7.1` (pub.dev) is now
+  the primary snippet; `git:` syntax moved to a secondary "Install from source"
+  subsection.
+
 ## 0.7.0 (breaking — deprecated alias removal + ubigeo feature)
 
 Closes every follow-up item identified by the v0.6.x judgment-day audit.
