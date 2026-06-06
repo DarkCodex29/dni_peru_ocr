@@ -1,4 +1,5 @@
 // ignore_for_file: prefer_const_constructors
+import 'package:camera/camera.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dni_peru_ocr/src/data/ocr_consensus.dart';
@@ -533,8 +534,8 @@ void main() {
 
   group('DniCameraController — onCaptureDelivered', () {
     test('onCaptureDelivered fires onValidCapture and transitions to Done', () {
-      dynamic capturedFile;
-      dynamic capturedConsensus;
+      XFile? capturedFile;
+      OcrConsensusResult? capturedConsensus;
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
@@ -545,17 +546,16 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      controller.onCaptureDelivered(
-          file: 'photo.jpg', consensus: 'some_consensus');
+      controller.onCaptureDelivered(file: XFile('photo.jpg'));
 
-      expect(capturedFile, equals('photo.jpg'));
+      expect(capturedFile?.path, equals('photo.jpg'));
       // isBackSide=false: consensus is always null on front side
       expect(capturedConsensus, isNull);
       expect(controller.captureState.value, isA<DniCaptureDone>());
     });
 
     test('onCaptureDelivered on back side passes consensus through', () {
-      dynamic capturedConsensus;
+      OcrConsensusResult? capturedConsensus;
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: true,
@@ -563,10 +563,29 @@ void main() {
       );
       addTearDown(controller.dispose);
 
+      final backConsensus = OcrConsensusResult(
+        success: true,
+        source: OcrConsensusSource.mrzChecksum,
+        documentNumber:
+            const OcrFieldResult(value: '12345678', confidence: 1.0, locked: true),
+        firstName:
+            const OcrFieldResult(value: 'JOSE', confidence: 1.0, locked: true),
+        lastName:
+            const OcrFieldResult(value: 'MORENO', confidence: 1.0, locked: true),
+        secondLastName:
+            const OcrFieldResult(value: null, confidence: 0, locked: false),
+        dateOfBirth:
+            const OcrFieldResult(value: null, confidence: 0, locked: false),
+        expirationDate:
+            const OcrFieldResult(value: null, confidence: 0, locked: false),
+        address:
+            const OcrFieldResult(value: null, confidence: 0, locked: false),
+      );
       controller.onCaptureDelivered(
-          file: 'photo.jpg', consensus: 'back_consensus');
+          file: XFile('photo.jpg'), consensus: backConsensus);
 
-      expect(capturedConsensus, equals('back_consensus'));
+      expect(capturedConsensus, isNotNull);
+      expect(capturedConsensus!.firstName.value, equals('JOSE'));
     });
 
     test('onCaptureDelivered after dispose is a no-op', () async {
@@ -578,7 +597,7 @@ void main() {
       );
 
       await controller.dispose();
-      controller.onCaptureDelivered(file: 'photo.jpg');
+      controller.onCaptureDelivered(file: XFile('photo.jpg'));
 
       expect(called, isFalse);
     });
@@ -645,8 +664,8 @@ void main() {
           orchestrator: _orchestrator(),
           isBackSide: false, // ← starts front-side
           onValidCapture: (file, consensus) {
-            deliveredFile = file as String;
-            deliveredConsensus = consensus as OcrConsensusResult?;
+            deliveredFile = file.path;
+            deliveredConsensus = consensus;
           },
         );
 
@@ -698,7 +717,7 @@ void main() {
               const OcrFieldResult(value: null, confidence: 0, locked: false),
         );
 
-        controller.onCaptureDelivered(file: 'back.jpg', consensus: consensus);
+        controller.onCaptureDelivered(file: XFile('back.jpg'), consensus: consensus);
 
         expect(deliveredFile, 'back.jpg');
         expect(
@@ -726,7 +745,7 @@ void main() {
           orchestrator: _orchestrator(),
           isBackSide: true,
           onValidCapture: (file, consensus) {
-            deliveredConsensus = consensus as OcrConsensusResult?;
+            deliveredConsensus = consensus;
           },
         );
         controller.onSideChanged(isBackSide: false);
@@ -761,7 +780,7 @@ void main() {
               const OcrFieldResult(value: null, confidence: 0, locked: false),
         );
 
-        controller.onCaptureDelivered(file: 'front.jpg', consensus: consensus);
+        controller.onCaptureDelivered(file: XFile('front.jpg'), consensus: consensus);
 
         expect(
           deliveredConsensus,

@@ -190,9 +190,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
     _captureController = DniCameraController(
       orchestrator: orchestrator,
       isBackSide: widget.isBackSide,
-      onValidCapture: (file, consensus) {
-        widget.onValidCapture(file as XFile, consensus as OcrConsensusResult?);
-      },
+      onValidCapture: widget.onValidCapture,
       onDocumentExpired: widget.onDocumentExpired,
     );
 
