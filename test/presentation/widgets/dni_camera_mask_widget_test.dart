@@ -18,24 +18,24 @@ class _FakeXFile extends Fake implements XFile {}
 
 /// Returns a [CameraValue] with [isInitialized]=true and no active stream.
 CameraValue _initializedCameraValue() => const CameraValue(
-  isInitialized: true,
-  previewSize: Size(640, 480),
-  isStreamingImages: false,
-  isRecordingVideo: false,
-  isTakingPicture: false,
-  isRecordingPaused: false,
-  flashMode: FlashMode.off,
-  exposureMode: ExposureMode.auto,
-  focusMode: FocusMode.auto,
-  exposurePointSupported: false,
-  focusPointSupported: false,
-  deviceOrientation: DeviceOrientation.portraitUp,
-  description: CameraDescription(
-    name: 'test-cam',
-    lensDirection: CameraLensDirection.back,
-    sensorOrientation: 0,
-  ),
-);
+      isInitialized: true,
+      previewSize: Size(640, 480),
+      isStreamingImages: false,
+      isRecordingVideo: false,
+      isTakingPicture: false,
+      isRecordingPaused: false,
+      flashMode: FlashMode.off,
+      exposureMode: ExposureMode.auto,
+      focusMode: FocusMode.auto,
+      exposurePointSupported: false,
+      focusPointSupported: false,
+      deviceOrientation: DeviceOrientation.portraitUp,
+      description: CameraDescription(
+        name: 'test-cam',
+        lensDirection: CameraLensDirection.back,
+        sensorOrientation: 0,
+      ),
+    );
 
 _MockCameraController _idleMockCamera() {
   final mock = _MockCameraController();
@@ -123,8 +123,7 @@ void main() {
         await tester.pumpWidget(_buildMask(cameraController: cam));
         await tester.pump();
 
-        final maskState =
-            tester.state(find.byType(DniCameraMask)) as dynamic;
+        final maskState = tester.state(find.byType(DniCameraMask)) as dynamic;
         final controller = maskState.captureController as DniCameraController;
         expect(controller, isNotNull);
 
@@ -142,8 +141,7 @@ void main() {
         // Allow the layout to build once so LayoutBuilder fires.
         await tester.pump();
 
-        final maskState =
-            tester.state(find.byType(DniCameraMask)) as dynamic;
+        final maskState = tester.state(find.byType(DniCameraMask)) as dynamic;
         final controller = maskState.captureController as DniCameraController;
 
         // Verify initial scanning state.
@@ -196,8 +194,7 @@ void main() {
         await tester.pumpWidget(_buildMask(cameraController: cam));
         await tester.pump();
 
-        final maskState =
-            tester.state(find.byType(DniCameraMask)) as dynamic;
+        final maskState = tester.state(find.byType(DniCameraMask)) as dynamic;
 
         // Regression guard: perfectSince must be gone from the widget state.
         expect(
@@ -217,8 +214,7 @@ void main() {
         await tester.pumpWidget(_buildMask(cameraController: cam));
         await tester.pump();
 
-        final maskState =
-            tester.state(find.byType(DniCameraMask)) as dynamic;
+        final maskState = tester.state(find.byType(DniCameraMask)) as dynamic;
 
         expect(
           () => maskState.manualModeActive,
@@ -237,8 +233,7 @@ void main() {
         await tester.pumpWidget(_buildMask(cameraController: cam));
         await tester.pump();
 
-        final maskState =
-            tester.state(find.byType(DniCameraMask)) as dynamic;
+        final maskState = tester.state(find.byType(DniCameraMask)) as dynamic;
 
         expect(
           () => maskState.capturing,
@@ -259,8 +254,7 @@ void main() {
         await tester.pumpWidget(_buildMask(cameraController: cam));
         await tester.pump();
 
-        final maskState =
-            tester.state(find.byType(DniCameraMask)) as dynamic;
+        final maskState = tester.state(find.byType(DniCameraMask)) as dynamic;
         final controller = maskState.captureController as DniCameraController;
 
         expect(controller.telemetry.value, isA<DniTelemetry>());
@@ -289,8 +283,7 @@ void main() {
         await tester.pumpWidget(_buildMask(cameraController: cam));
         await tester.pump();
 
-        final state =
-            tester.state(find.byType(DniCameraMask)) as dynamic;
+        final state = tester.state(find.byType(DniCameraMask)) as dynamic;
         final controller = state.captureController as DniCameraController;
         expect(
           controller.isBackSide,

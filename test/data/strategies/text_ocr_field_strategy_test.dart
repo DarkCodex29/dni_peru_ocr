@@ -24,8 +24,7 @@ TextBlock _makeTextBlock(List<String> lines) {
   );
 }
 
-RecognizedText _recognizedFromLines(List<String> lines) =>
-    RecognizedText(
+RecognizedText _recognizedFromLines(List<String> lines) => RecognizedText(
       text: lines.join('\n'),
       blocks: [_makeTextBlock(lines)],
     );
@@ -119,7 +118,9 @@ void main() {
     });
 
     // ── Scenario: Ordinal name matching for two-column DNI layout ─────────
-    test('extracts names by ordinal when labels and values are in separate passes', () {
+    test(
+        'extracts names by ordinal when labels and values are in separate passes',
+        () {
       final recognized = _recognizedFromLines([
         'PRIMER APELLIDO',
         'SEGUNDO APELLIDO',

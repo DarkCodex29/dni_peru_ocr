@@ -94,7 +94,8 @@ void main() {
   group('KycTheme — value equality and hashCode', () {
     test('two defaults() are equal', () {
       expect(KycTheme.defaults(), equals(KycTheme.defaults()));
-      expect(KycTheme.defaults().hashCode, equals(KycTheme.defaults().hashCode));
+      expect(
+          KycTheme.defaults().hashCode, equals(KycTheme.defaults().hashCode));
     });
 
     test('themes differing in one color are not equal', () {

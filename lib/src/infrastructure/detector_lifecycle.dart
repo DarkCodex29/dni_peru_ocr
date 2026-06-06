@@ -43,8 +43,8 @@ class DetectorLifecycle {
   DetectorLifecycle({
     required Future<void> Function() stopStream,
     required Future<void> Function() closeDetectors,
-  }) : _stopStream = stopStream,
-       _closeDetectors = closeDetectors;
+  })  : _stopStream = stopStream,
+        _closeDetectors = closeDetectors;
 
   final Future<void> Function() _stopStream;
   final Future<void> Function() _closeDetectors;

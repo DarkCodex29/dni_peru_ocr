@@ -117,8 +117,7 @@ class DocumentValidationResult {
       holeRect.bottom + tolY,
     );
 
-    final isContained =
-        gbb.left >= paddedHole.left &&
+    final isContained = gbb.left >= paddedHole.left &&
         gbb.top >= paddedHole.top &&
         gbb.right <= paddedHole.right &&
         gbb.bottom <= paddedHole.bottom;
@@ -144,9 +143,8 @@ class DocumentValidationResult {
 
     // Lower bound only on front — back is MRZ-dominant and less affected.
     if (!isBackSide) {
-      final requiredFill = ocrMatchesUser
-          ? _minFillRatioWithOcr
-          : _minFillRatio;
+      final requiredFill =
+          ocrMatchesUser ? _minFillRatioWithOcr : _minFillRatio;
 
       if (fillRatio < requiredFill) {
         return DocumentValidationResult._(

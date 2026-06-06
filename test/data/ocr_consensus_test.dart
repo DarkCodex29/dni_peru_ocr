@@ -570,7 +570,8 @@ void main() {
   // but ML Kit OCR drops a character on a name line → snapshot returns
   // `firstName: null`, `lastName: null`, and InClub falls back to UserPreference
   // (violating the "OCR ALWAYS WINS" architectural decision).
-  group('BUG 3 regression — front-side seed must survive partial back-side MRZ', () {
+  group('BUG 3 regression — front-side seed must survive partial back-side MRZ',
+      () {
     test(
       'BUG 3A: snapshot falls back to vote map for firstName/lastName when buffer is null',
       () {
@@ -611,7 +612,8 @@ void main() {
         expect(
           snap.firstName.value,
           'JOSE CARLOS JOAO',
-          reason: 'firstName must fall back to vote map when MRZ buffer is null',
+          reason:
+              'firstName must fall back to vote map when MRZ buffer is null',
         );
         expect(
           snap.lastName.value,
@@ -822,7 +824,8 @@ void main() {
       expect(builder.isMrzLocked, isFalse);
 
       builder.recordMrz(mrz);
-      expect(builder.isMrzLocked, isFalse, reason: 'must not lock at frame 2 (<3)');
+      expect(builder.isMrzLocked, isFalse,
+          reason: 'must not lock at frame 2 (<3)');
 
       builder.recordMrz(mrz);
       expect(builder.isMrzLocked, isTrue);
@@ -1137,7 +1140,8 @@ void main() {
   // happened to be processed first. This guards against any future
   // regression that would re-introduce HashMap iteration-order dependency.
   group('Property — snapshot order independence', () {
-    test('address: shuffle 5 micro-variants 30 times, same winner each run', () {
+    test('address: shuffle 5 micro-variants 30 times, same winner each run',
+        () {
       final votes = [
         'ASENT H15 DE ABRIL CALLE EL MILAGRO',
         'ASENT H15 DE ABRIL CALLE EL MILAGRO MZ',

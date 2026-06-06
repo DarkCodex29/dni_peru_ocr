@@ -40,7 +40,8 @@ RecognizedText _makeRecognizedText({
   required int count,
   Rect boundingBox = const Rect.fromLTRB(250, 250, 1650, 800),
 }) {
-  final blocks = List.generate(count, (_) => _makeBlock(boundingBox: boundingBox));
+  final blocks =
+      List.generate(count, (_) => _makeBlock(boundingBox: boundingBox));
   return RecognizedText(text: 'dummy', blocks: blocks);
 }
 
@@ -127,7 +128,8 @@ void main() {
       expect(result.failingGate, ValidationGate.minBlocks);
     });
 
-    test('< 5 blocks (line-count) → failingGate == ValidationGate.lineCount', () {
+    test('< 5 blocks (line-count) → failingGate == ValidationGate.lineCount',
+        () {
       final result = DocumentValidationResult.evaluate(
         recognizedText: _makeRecognizedText(count: 2),
         imageSize: _kImageSize,

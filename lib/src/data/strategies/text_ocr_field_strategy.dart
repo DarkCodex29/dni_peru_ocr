@@ -154,7 +154,8 @@ final class TextOcrFieldStrategy implements OcrFieldStrategy {
         // Split "QUIROZ REMIGIO" → lastName=QUIROZ, secondLastName=REMIGIO.
         // For 3+ tokens (compound maternal like "PEREZ DE LA CRUZ"), keep
         // the first as paternal and join the rest as maternal.
-        final tokens = value.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+        final tokens =
+            value.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
         if (tokens.isNotEmpty) {
           result.lastName ??= tokens.first;
           if (tokens.length >= 2) {
