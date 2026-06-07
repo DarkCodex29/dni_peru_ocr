@@ -183,17 +183,13 @@ class KycTheme {
 
   /// Reads the nearest [KycTheme] in the widget tree.
   ///
-  /// Throws when no [KycThemeProvider] is present.
+  /// Falls back to [KycTheme.defaults] when no [KycThemeProvider] is present,
+  /// so consumers can mount [DniCameraMask] without an explicit theme wrapper.
+  /// Wrap the widget tree with [KycThemeProvider] to override the defaults.
   static KycTheme of(BuildContext context) {
     final provider =
         context.dependOnInheritedWidgetOfExactType<KycThemeProvider>();
-    if (provider == null) {
-      throw FlutterError(
-        'KycTheme.of() called with a context that does not contain a '
-        'KycThemeProvider. Wrap your widget tree with KycThemeProvider.',
-      );
-    }
-    return provider.theme;
+    return provider?.theme ?? KycTheme.defaults();
   }
 
   @override

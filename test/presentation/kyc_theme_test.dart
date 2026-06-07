@@ -170,26 +170,24 @@ void main() {
       expect(captured.primary, equals(const Color(0xFF111111)));
     });
 
-    testWidgets('KycTheme.of(context) throws if no provider in ancestor', (
-      tester,
-    ) async {
-      Object? caughtError;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) {
-              try {
-                KycTheme.of(context);
-              } on Object catch (e) {
-                caughtError = e;
-              }
-              return const SizedBox.shrink();
-            },
+    testWidgets(
+      'KycTheme.of(context) falls back to defaults when no provider is present',
+      (tester) async {
+        KycTheme? captured;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) {
+                captured = KycTheme.of(context);
+                return const SizedBox.shrink();
+              },
+            ),
           ),
-        ),
-      );
+        );
 
-      expect(caughtError, isNotNull);
-    });
+        expect(captured, isNotNull);
+        expect(captured, equals(KycTheme.defaults()));
+      },
+    );
   });
 }
