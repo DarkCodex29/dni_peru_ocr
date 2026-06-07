@@ -1,0 +1,23 @@
+name: dni_peru_ocr_example
+description: Example app demonstrating dni_peru_ocr library integration.
+publish_to: 'none'
+version: 0.0.1+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dni_peru_ocr:
+    path: ../
+  camera: ^0.11.0+2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
