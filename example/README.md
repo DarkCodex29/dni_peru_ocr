@@ -51,6 +51,20 @@ Also ensure `minSdkVersion 21` (or higher) in your `build.gradle`.
 
 Also ensure `platform :ios, '12.0'` (or higher) in your `Podfile`.
 
+## Android release builds
+
+The example ships with ProGuard rules already configured in
+`android/app/proguard-rules.pro` and minification enabled in
+`android/app/build.gradle.kts`. Without these, R8 fails the release build
+because `google_mlkit_text_recognition` references script-specific
+recognizer options (Chinese, Devanagari, Japanese, Korean) that the
+package does not bundle when only the Latin recognizer is used.
+
+If you adapt this example into your own app, copy
+`example/android/app/proguard-rules.pro` and the matching `release` block
+of `build.gradle.kts` over. See the root README's *Android release builds*
+section for the rules and a build snippet.
+
 ## The frontSideFields seeding pattern
 
 This is the most important integration detail. When the user scans the front
