@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.3 - 2026-06-06
+
+### Added
+
+- Runnable example app under `example/` demonstrating the full capture flow:
+  Home → Scan (front + back with `frontSideFields` seeding) → Result.
+- `ErrorScreen` in the example covering document expiration, capture cancellation,
+  camera permission denial, and camera initialization failure paths.
+- Confidence-graded `FieldCard` and `ConfidenceBadge` widgets in the example
+  showing how to render `OcrConsensusResult` to end users.
+- CI step that runs `flutter analyze --fatal-warnings` against the example so
+  future API changes cannot silently break the demo.
+
+### Changed
+
+- Root README now points to the example app as the recommended starting point
+  for new consumers.
+
 ## 0.7.2 - 2026-06-06
 
 ### Changed (BREAKING for callback shape)
