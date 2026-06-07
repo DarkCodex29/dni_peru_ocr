@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../widgets/loading_overlay.dart';
 import 'error_screen.dart';
-// TODO(PR#25): import result_screen.dart when ResultScreen lands
+import 'result_screen.dart';
 
 /// Capture flow that orchestrates front-side then back-side scanning.
 ///
@@ -194,9 +194,15 @@ class _ScanScreenState extends State<ScanScreen> {
         setState(() {
           _step = _ScanStep.backComplete;
         });
-        // TODO(PR#25): navigate to ResultScreen with consensus data.
-        // For now, pop back to home so the flow is testable end-to-end.
-        Navigator.of(context).popUntil((route) => route.isFirst);
+        if (consensus == null) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+          return;
+        }
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(
+            builder: (_) => ResultScreen(result: consensus),
+          ),
+        );
       },
       onDocumentExpired: (_) => _goToError(ExampleErrorType.expired),
     );
