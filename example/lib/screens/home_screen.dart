@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../widgets/primary_button.dart';
-import 'scan_screen_placeholder.dart';
+import 'scan_screen.dart';
 
 /// Entry screen of the example app.
 ///
@@ -53,7 +53,7 @@ class HomeScreen extends StatelessWidget {
                   onPressed: () {
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => const ScanScreenPlaceholder(),
+                        builder: (_) => const ScanScreen(),
                       ),
                     );
                   },
