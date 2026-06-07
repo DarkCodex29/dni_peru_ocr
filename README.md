@@ -129,6 +129,49 @@ DniCameraMask(
 > so the front side's accumulated OCR is lost unless the host persists
 > it. The `frontSideFields` parameter restores it.
 
+## Android release builds
+
+`google_mlkit_text_recognition` references script-specific recognizer
+options (Chinese, Devanagari, Japanese, Korean) that are not bundled
+when only the Latin recognizer is used. R8 fails the release build with
+`Missing class com.google.mlkit.vision.text.chinese.*` errors unless
+those references are kept or ignored.
+
+Add the following to `android/app/proguard-rules.pro` in your app
+(create the file if it does not exist):
+
+```proguard
+# ML Kit text recognition — keep Latin recognizer wrappers and ignore
+# script-specific options the app does not use.
+-keep class com.google.mlkit.vision.text.** { *; }
+-dontwarn com.google.mlkit.vision.text.chinese.**
+-dontwarn com.google.mlkit.vision.text.devanagari.**
+-dontwarn com.google.mlkit.vision.text.japanese.**
+-dontwarn com.google.mlkit.vision.text.korean.**
+
+# google_mlkit_commons reflects InputImage subtypes via JNI.
+-keep class com.google.mlkit.vision.common.** { *; }
+-keep class com.google_mlkit_commons.** { *; }
+```
+
+Then enable minification with the rules file in `android/app/build.gradle.kts`:
+
+```kotlin
+buildTypes {
+    release {
+        isMinifyEnabled = true
+        isShrinkResources = true
+        proguardFiles(
+            getDefaultProguardFile("proguard-android-optimize.txt"),
+            "proguard-rules.pro",
+        )
+    }
+}
+```
+
+The example app under [`example/android/app/`](example/android/app/) ships
+with the rules already configured — copy them as-is.
+
 ## Public API
 
 | Type | Purpose |
