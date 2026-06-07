@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.4 - 2026-06-06
+
+### Fixed
+
+- **Android release builds** — `google_mlkit_text_recognition` references
+  script-specific recognizer options (Chinese, Devanagari, Japanese, Korean)
+  that R8 could not resolve when consumers ran `flutter build apk --release`,
+  causing `Missing class com.google.mlkit.vision.text.chinese.*` failures.
+  The library README now documents the required ProGuard rules, and the
+  example app ships them under `example/android/app/proguard-rules.pro`
+  with minification enabled.
+
+### Added
+
+- *Android release builds* section in the root README with the ProGuard
+  rules and the matching `build.gradle.kts` `release` block snippet.
+- *Android release builds* section in the example README pointing to the
+  configured rules and the root documentation.
+
 ## 0.7.3 - 2026-06-06
 
 ### Added
