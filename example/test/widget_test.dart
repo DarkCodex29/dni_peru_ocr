@@ -8,6 +8,6 @@ import 'package:dni_peru_ocr_example/main.dart';
 void main() {
   testWidgets('Example app renders without throwing', (WidgetTester tester) async {
     await tester.pumpWidget(const DniPeruOcrExampleApp());
-    expect(find.text('dni_peru_ocr example'), findsOneWidget);
+    expect(find.text('Example'), findsOneWidget);
   });
 }
