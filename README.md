@@ -58,6 +58,14 @@ dependencies:
       ref: v0.7.1
 ```
 
+## Example
+
+A runnable example app is available under [`example/`](example/). It demonstrates
+the complete DNI capture flow — front scan, back scan with `frontSideFields`
+seeding, and result display with per-field confidence indicators — on a real
+Android or iOS device. See [example/README.md](example/README.md) for setup
+instructions and a walkthrough of the recommended integration pattern.
+
 ## Quick start — headless extraction
 
 ```dart
