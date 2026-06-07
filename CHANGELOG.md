@@ -11,6 +11,13 @@
   The library README now documents the required ProGuard rules, and the
   example app ships them under `example/android/app/proguard-rules.pro`
   with minification enabled.
+- **`KycTheme.of(context)` no longer throws when there is no
+  `KycThemeProvider` in the ancestor chain.** It now falls back to
+  `KycTheme.defaults()`, allowing consumers to mount `DniCameraMask`
+  without wrapping the widget tree explicitly. Wrap with
+  `KycThemeProvider` only when you need to override the defaults. This
+  closes a runtime trap that produced an infinite rebuild loop and a
+  blank screen in release builds when the provider was missing.
 
 ### Added
 
