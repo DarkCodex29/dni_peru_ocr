@@ -269,6 +269,23 @@ class _DniCameraMaskState extends State<DniCameraMask>
     }
     _startStream();
     unawaited(_captureController.start());
+    if (widget.isBackSide) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _triggerSideIntro();
+      });
+    }
+  }
+
+  void _triggerSideIntro() {
+    if (!mounted) return;
+    setState(() => _showSideIntro = true);
+    _sideIntroTimer?.cancel();
+    _sideIntroTimer = Timer(
+      const Duration(seconds: CameraOverlayTuning.sideIntroSeconds),
+      () {
+        if (mounted) setState(() => _showSideIntro = false);
+      },
+    );
   }
 
   // ─── State change listener ─────────────────────────────────────────────────
@@ -389,14 +406,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
     // onSideChanged(isBackSide: true, frontSideFields: ...) creates and seeds it.
     if (!old.isBackSide && widget.isBackSide) {
       _expiredHandled = false;
-      _showSideIntro = true;
-      _sideIntroTimer?.cancel();
-      _sideIntroTimer = Timer(
-        const Duration(seconds: CameraOverlayTuning.sideIntroSeconds),
-        () {
-          if (mounted) setState(() => _showSideIntro = false);
-        },
-      );
+      _triggerSideIntro();
       // Delegate accumulator creation + seeding to the controller.
       _captureController.onSideChanged(
         isBackSide: true,

@@ -1,6 +1,6 @@
 name: dni_peru_ocr
 description: Peruvian DNI OCR helpers — ML Kit text recognition denoise, MRZ parsing, address extraction, and surname normalization for the Peruvian Documento Nacional de Identidad.
-version: 0.11.1
+version: 0.11.2
 homepage: https://github.com/DarkCodex29/dni_peru_ocr
 repository: https://github.com/DarkCodex29/dni_peru_ocr
 issue_tracker: https://github.com/DarkCodex29/dni_peru_ocr/issues

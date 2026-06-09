@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.11.2
+
+### Fixed
+- `_SideIntroRibbon` ("Voltee el documento" banner) now activates correctly when
+  `DniCameraMask` is constructed directly with `isBackSide: true`, not only when
+  the same widget instance transitions from front to back via `didUpdateWidget`.
+  This unblocks integrations like Inclub mobile app where each KYC step builds
+  a fresh `DniCameraMask` instance and the previous code path never triggered.
+
+### Notes
+- No public API change. Existing consumers reusing one widget across front/back
+  see identical behavior. New behavior only fires for consumers constructing a
+  back-side widget from scratch.
+
 ## 0.11.1
 
 ### Changed
