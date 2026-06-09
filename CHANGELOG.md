@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.1
+
+### Added
+- `ValidationGate.sideMismatch` — new gate emitted when the user is showing
+  the wrong side of the DNI (front while `isBackSide: true`, or back while
+  `isBackSide: false`).
+- `DocumentValidator.evaluate` now rejects capture and shows
+  "Estás mostrando el reverso. Voltea al frente del DNI." (or the inverse)
+  using the existing `DocumentSideDetector` anchors (CUI, REPÚBLICA DEL PERÚ,
+  DONACIÓN DE ÓRGANOS, CONSTANCIA DE SUFRAGIO). Works on Modelo 2020 AND
+  the azul booklet (DNI viejo).
+
+### Notes
+- Prevents capturing the same side twice (e.g. user showed the back twice and
+  the back's MRZ filled both anverso and reverso slots).
+- No public API change. Existing consumers automatically benefit.
+
 ## 0.13.0
 
 ### Added

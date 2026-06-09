@@ -22,7 +22,10 @@ enum ValidationGate {
   lineCount,
 
   /// Median tilt angle exceeded the maximum allowed degrees.
-  tilt;
+  tilt,
+
+  /// MRZ detected while the front side was expected — user is showing the back.
+  sideMismatch;
 
   /// Stable Sentry breadcrumb code for this gate.
   ///
@@ -35,5 +38,6 @@ enum ValidationGate {
         ValidationGate.fillLow => 'fill_low',
         ValidationGate.lineCount => 'line_count',
         ValidationGate.tilt => 'tilt',
+        ValidationGate.sideMismatch => 'side_mismatch',
       };
 }

@@ -78,7 +78,7 @@ void main() {
     // ── Exactly 6 cases (exhaustiveness guarantee) ─────────────────────────
 
     test('ValidationGate has exactly 6 values', () {
-      expect(ValidationGate.values.length, 6);
+      expect(ValidationGate.values.length, 7);
     });
 
     // ── Sentry-stable codes (no translation) ───────────────────────────────
@@ -185,6 +185,7 @@ void main() {
         ValidationGate.fillLow => 'fill_low',
         ValidationGate.lineCount => 'line_count',
         ValidationGate.tilt => 'tilt',
+        ValidationGate.sideMismatch => 'side_mismatch',
         null => 'ok',
       };
       expect(code, isNotNull);

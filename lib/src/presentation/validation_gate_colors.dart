@@ -28,5 +28,6 @@ abstract final class ValidationGateColors {
         ValidationGate.fillLow => theme.accentOrange,
         ValidationGate.lineCount => theme.white,
         ValidationGate.tilt => theme.accentOrange,
+        ValidationGate.sideMismatch => theme.accentOrange,
       };
 }

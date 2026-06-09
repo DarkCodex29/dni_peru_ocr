@@ -4,6 +4,7 @@ import 'dart:ui' show Offset, Rect, Size;
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '../domain/entities/document_side.dart';
 import '../domain/entities/validation_gate.dart';
 import '../infrastructure/tilt_calculator.dart';
 
@@ -82,6 +83,23 @@ class DocumentValidationResult {
         message: 'Posiciona tu documento en el recuadro',
         isCaptureable: false,
         failingGate: ValidationGate.minBlocks,
+      );
+    }
+
+    final detectedSide =
+        const DocumentSideDetector().detect(recognizedText.text);
+    if (!isBackSide && detectedSide == DocumentSide.back) {
+      return const DocumentValidationResult._(
+        message: 'Estás mostrando el reverso. Voltea al frente del DNI.',
+        isCaptureable: false,
+        failingGate: ValidationGate.sideMismatch,
+      );
+    }
+    if (isBackSide && detectedSide == DocumentSide.front) {
+      return const DocumentValidationResult._(
+        message: 'Estás mostrando el frente. Voltea al reverso del DNI.',
+        isCaptureable: false,
+        failingGate: ValidationGate.sideMismatch,
       );
     }
 
@@ -186,4 +204,5 @@ class DocumentValidationResult {
       isCaptureable: true,
     );
   }
+
 }
