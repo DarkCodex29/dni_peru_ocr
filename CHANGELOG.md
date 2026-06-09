@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.2
+
+### Changed
+- `DniScanner` now scales `HuntStateMachine.minFieldsForFastAdvance`
+  based on the consumer's `DniFields.length`, so smaller field
+  selections (e.g. `DniFields.kyc()` = 7 fields) hit the fast-advance
+  threshold instead of being stuck on the 12-field default.
+- Telemetry log now reports `filled/<selectedCount>` instead of the
+  hardcoded `filled/19`.
+
 ## 0.15.1
 
 ### Added

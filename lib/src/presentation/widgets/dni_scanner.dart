@@ -146,9 +146,12 @@ class _DniScannerState extends State<DniScanner>
     final initialPhase = widget.isBackSide == true
         ? HuntPhase.waitingBack
         : HuntPhase.waitingFront;
+    final selectedCount = widget.fields?.length ?? 19;
     _stateMachine = widget.stateMachine ??
         HuntStateMachine(
           idleFramesThreshold: widget.idleFramesBeforeCapture,
+          minFieldsForFastAdvance:
+              (selectedCount * 0.66).round().clamp(2, selectedCount),
           initialPhase: initialPhase,
         );
     _lastPhaseRendered = initialPhase;
@@ -242,10 +245,11 @@ class _DniScannerState extends State<DniScanner>
       filledFields: filled,
     );
 
+    final total = widget.fields?.length ?? 19;
     DniLogger.info(
       'DniScanner',
       'side=$detectedSide addedNew=$addedNew phase=${_stateMachine.phase} '
-          'signal=$signal filled=$filled/19',
+          'signal=$signal filled=$filled/$total',
     );
 
     if (mounted &&
