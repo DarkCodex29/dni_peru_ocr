@@ -104,7 +104,12 @@ void main() {
       );
       addTearDown(controller.dispose);
 
-      expect(controller.telemetry.value, isA<DniTelemetry>());
+      // ValueListenable contract: can add/remove listeners without crashing
+      var notified = false;
+      void listener() => notified = true;
+      controller.telemetry.addListener(listener);
+      controller.telemetry.removeListener(listener);
+      expect(notified, isFalse);
     });
   });
 
@@ -144,9 +149,11 @@ void main() {
       addTearDown(controller.dispose);
 
       controller.onSideChanged();
-      final state = controller.captureState.value;
-      expect(state, isA<DniCaptureScanning>());
-      expect((state as DniCaptureScanning).manualModeActive, isFalse);
+      expect(
+        controller.captureState.value,
+        isA<DniCaptureScanning>()
+            .having((s) => s.manualModeActive, 'manualModeActive', isFalse),
+      );
     });
 
     test('onSideChanged can be called multiple times safely', () {
@@ -183,9 +190,11 @@ void main() {
       // Wait for the timer to fire
       await Future<void>.delayed(const Duration(milliseconds: 150));
 
-      final state = controller.captureState.value;
-      expect(state, isA<DniCaptureScanning>());
-      expect((state as DniCaptureScanning).manualModeActive, isTrue);
+      expect(
+        controller.captureState.value,
+        isA<DniCaptureScanning>()
+            .having((s) => s.manualModeActive, 'manualModeActive', isTrue),
+      );
     });
 
     test('onSideChanged resets manualModeActive even after timer fires',
@@ -446,17 +455,26 @@ void main() {
       addTearDown(controller.dispose);
 
       // Inject expiration via processFrame
+      final expiredOn = DateTime(2020, 1, 1);
       controller.processFrame(
         validation: _fakeValidation(isCaptureable: false),
         stableFrames: 0,
         userDataMatch: null,
-        expirationDate: DateTime(2020, 1, 1),
+        expirationDate: expiredOn,
       );
-      expect(controller.captureState.value, isA<DniCaptureExpired>());
+      expect(
+        controller.captureState.value,
+        isA<DniCaptureExpired>()
+            .having((s) => s.expirationDate, 'expirationDate', equals(expiredOn)),
+      );
 
       // captureManually on Expired must be no-op
       controller.captureManually();
-      expect(controller.captureState.value, isA<DniCaptureExpired>());
+      expect(
+        controller.captureState.value,
+        isA<DniCaptureExpired>()
+            .having((s) => s.expirationDate, 'expirationDate', equals(expiredOn)),
+      );
     });
   });
 

@@ -46,10 +46,12 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupSuccess>());
-      final data = (result as DniLookupSuccess).data;
-      expect(data.ubigeo, equals('-'));
-      expect(data.departamento, equals('-'));
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.ubigeo, 'data.ubigeo', equals('-'))
+            .having((s) => s.data.departamento, 'data.departamento', equals('-')),
+      );
     });
 
     test('extraHeaders are forwarded to HTTP client', () async {
@@ -95,9 +97,11 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupNetworkError>());
-      final error = result as DniLookupNetworkError;
-      expect(error.cause, isNotNull);
+      expect(
+        result,
+        isA<DniLookupNetworkError>()
+            .having((e) => e.cause, 'cause', isNotNull),
+      );
     });
 
     test('HTTP 404 returns DniLookupNotFound', () async {
@@ -129,12 +133,18 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupSuccess>());
-      final data = (result as DniLookupSuccess).data;
-      expect(data.dni, equals('43005787'));
-      expect(data.nombres, equals('JUAN CARLOS'));
-      expect(data.ubigeo, equals('150101'));
-      expect(data.departamento, equals('LIMA'));
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.dni, 'data.dni', equals('43005787'))
+            .having((s) => s.data.nombres, 'data.nombres', equals('JUAN CARLOS'))
+            .having((s) => s.data.ubigeo, 'data.ubigeo', equals('150101'))
+            .having(
+              (s) => s.data.departamento,
+              'data.departamento',
+              equals('LIMA'),
+            ),
+      );
     });
 
     test('HTTP 429 returns DniLookupRateLimited', () async {

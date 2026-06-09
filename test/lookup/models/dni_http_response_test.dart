@@ -13,8 +13,12 @@ void main() {
     test('statusCode and body are accessible as int and String', () {
       const response = DniHttpResponse(statusCode: 404, body: 'Not Found');
 
-      expect(response.statusCode, isA<int>());
-      expect(response.body, isA<String>());
+      // Fields are statically typed as int/String — assert real values
+      // and that the int participates in arithmetic / the String in concatenation.
+      expect(response.statusCode, equals(404));
+      expect(response.statusCode + 1, equals(405));
+      expect(response.body, equals('Not Found'));
+      expect('${response.body}!', equals('Not Found!'));
     });
 
     test('500 status with plain text body', () {

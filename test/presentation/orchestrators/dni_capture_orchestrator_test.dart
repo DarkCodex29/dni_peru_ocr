@@ -78,7 +78,17 @@ void main() {
     });
 
     test('DniCaptureDone is a valid sealed subtype', () {
-      expect(const DniCaptureDone(), isA<DniCaptureState>());
+      // Exhaustive switch over the sealed hierarchy: if DniCaptureDone ever
+      // stops being a subtype of DniCaptureState, this stops compiling.
+      const DniCaptureState s = DniCaptureDone();
+      final tag = switch (s) {
+        DniCaptureScanning() => 'scanning',
+        DniCaptureCountingDown() => 'countingDown',
+        DniCaptureInFlight() => 'inFlight',
+        DniCaptureExpired() => 'expired',
+        DniCaptureDone() => 'done',
+      };
+      expect(tag, equals('done'));
     });
   });
 
@@ -128,10 +138,12 @@ void main() {
         now: t0,
       );
 
-      expect(next, isA<DniCaptureCountingDown>());
-      final c = next as DniCaptureCountingDown;
-      expect(c.elapsedMs, equals(0));
-      expect(c.totalMs, equals(1500));
+      expect(
+        next,
+        isA<DniCaptureCountingDown>()
+            .having((c) => c.elapsedMs, 'elapsedMs', equals(0))
+            .having((c) => c.totalMs, 'totalMs', equals(1500)),
+      );
     });
 
     test('countingDown → countingDown with growing elapsed', () {
@@ -162,9 +174,14 @@ void main() {
         userDataMatch: null,
       );
 
-      expect(afterSecond, isA<DniCaptureCountingDown>());
-      expect((afterSecond as DniCaptureCountingDown).elapsedMs,
-          greaterThanOrEqualTo(500));
+      expect(
+        afterSecond,
+        isA<DniCaptureCountingDown>().having(
+          (c) => c.elapsedMs,
+          'elapsedMs',
+          greaterThanOrEqualTo(500),
+        ),
+      );
     });
 
     test('countingDown → inFlight at autoCaptureMs', () {
@@ -326,8 +343,11 @@ void main() {
 
       final result = orc.onManualFallbackTimeout(initial);
 
-      expect(result, isA<DniCaptureScanning>());
-      expect((result as DniCaptureScanning).manualModeActive, isTrue);
+      expect(
+        result,
+        isA<DniCaptureScanning>()
+            .having((s) => s.manualModeActive, 'manualModeActive', isTrue),
+      );
     });
 
     test('onManualFallbackTimeout is no-op on non-scanning states', () {
@@ -357,8 +377,11 @@ void main() {
         userDataMatch: null,
       );
 
-      expect(next, isA<DniCaptureScanning>());
-      expect((next as DniCaptureScanning).manualModeActive, isTrue);
+      expect(
+        next,
+        isA<DniCaptureScanning>()
+            .having((s) => s.manualModeActive, 'manualModeActive', isTrue),
+      );
     });
   });
 
@@ -378,10 +401,12 @@ void main() {
 
       final result = orc.onSideToggle(counting);
 
-      expect(result, isA<DniCaptureScanning>());
-      final s = result as DniCaptureScanning;
-      expect(s.manualModeActive, isFalse);
-      expect(s.stableFrames, equals(0));
+      expect(
+        result,
+        isA<DniCaptureScanning>()
+            .having((s) => s.manualModeActive, 'manualModeActive', isFalse)
+            .having((s) => s.stableFrames, 'stableFrames', equals(0)),
+      );
     });
 
     test('onSideToggle from scanning with manual mode clears manual mode', () {
@@ -396,11 +421,13 @@ void main() {
 
       final result = orc.onSideToggle(scanning);
 
-      expect(result, isA<DniCaptureScanning>());
-      final s = result as DniCaptureScanning;
-      expect(s.manualModeActive, isFalse);
-      expect(s.stableFrames, equals(0));
-      expect(s.validationProgress, equals(0));
+      expect(
+        result,
+        isA<DniCaptureScanning>()
+            .having((s) => s.manualModeActive, 'manualModeActive', isFalse)
+            .having((s) => s.stableFrames, 'stableFrames', equals(0))
+            .having((s) => s.validationProgress, 'validationProgress', equals(0)),
+      );
     });
   });
 
@@ -439,9 +466,14 @@ void main() {
         userDataMatch: null,
       );
 
-      expect(result, isA<DniCaptureCountingDown>());
-      expect((result as DniCaptureCountingDown).elapsedMs,
-          greaterThanOrEqualTo(0));
+      expect(
+        result,
+        isA<DniCaptureCountingDown>().having(
+          (c) => c.elapsedMs,
+          'elapsedMs',
+          greaterThanOrEqualTo(0),
+        ),
+      );
     });
 
     test('same timestamp gives elapsedMs = 0, does not trigger capture', () {
@@ -470,8 +502,11 @@ void main() {
         userDataMatch: null,
       );
 
-      expect(sameTs, isA<DniCaptureCountingDown>());
-      expect((sameTs as DniCaptureCountingDown).elapsedMs, equals(0));
+      expect(
+        sameTs,
+        isA<DniCaptureCountingDown>()
+            .having((c) => c.elapsedMs, 'elapsedMs', equals(0)),
+      );
     });
 
     test('large clock jump beyond autoCaptureMs triggers inFlight', () {

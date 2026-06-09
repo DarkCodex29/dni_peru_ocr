@@ -52,9 +52,16 @@ void main() {
       expect(result, isNull);
     });
 
-    test('interface can be implemented via implements keyword', () {
+    test('interface can be implemented via implements keyword', () async {
+      // Static typing already proves _InMemoryDniCache implements DniCache
+      // (the assignment would not compile otherwise). Exercise the interface
+      // end-to-end to verify the contract really works.
       final DniCache dniCache = _InMemoryDniCache();
-      expect(dniCache, isA<DniCache>());
+      await dniCache.set('43005787', testData);
+      final result = await dniCache.get('43005787');
+      expect(result?.dni, equals('43005787'));
+      await dniCache.evict('43005787');
+      expect(await dniCache.get('43005787'), isNull);
     });
 
     test('cache miss for unknown DNI returns null', () async {

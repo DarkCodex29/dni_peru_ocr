@@ -34,17 +34,21 @@ void main() {
   group('DniLookupService contract', () {
     test('lookup signature returns Future<DniLookupResult>', () async {
       final service = _FakeLookupService();
+      // Statically typed Future<DniLookupResult>: awaiting yields a non-null
+      // sealed variant. Verify the call actually completes with a value.
       final result = await service.lookup('43005787');
-      expect(result, isA<DniLookupResult>());
+      expect(result, isNotNull);
     });
 
     test('successful lookup returns DniLookupSuccess with populated DniData', () async {
       final service = _FakeLookupService();
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupSuccess>());
-      final success = result as DniLookupSuccess;
-      expect(success.data.dni, '43005787');
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.dni, 'data.dni', '43005787'),
+      );
     });
 
     test('implementation can return DniLookupNotFound', () async {
@@ -57,14 +61,24 @@ void main() {
       final service = _NetworkErrorService();
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupNetworkError>());
-      final error = result as DniLookupNetworkError;
-      expect(error.cause, isNotNull);
+      expect(
+        result,
+        isA<DniLookupNetworkError>()
+            .having((e) => e.cause, 'cause', isNotNull),
+      );
     });
 
-    test('interface can be implemented via implements keyword', () {
+    test('interface can be implemented via implements keyword', () async {
+      // Static typing already proves _FakeLookupService implements
+      // DniLookupService — this assignment wouldn't compile otherwise.
+      // Strengthen by actually invoking the interface and asserting behavior.
       final DniLookupService service = _FakeLookupService();
-      expect(service, isA<DniLookupService>());
+      final result = await service.lookup('43005787');
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.dni, 'data.dni', equals('43005787')),
+      );
     });
   });
 }

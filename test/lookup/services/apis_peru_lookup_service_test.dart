@@ -38,12 +38,22 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupSuccess>());
-      final success = result as DniLookupSuccess;
-      expect(success.data.dni, equals('43005787'));
-      expect(success.data.nombres, equals('JUAN CARLOS'));
-      expect(success.data.apellidoPaterno, equals('GARCIA'));
-      expect(success.data.apellidoMaterno, equals('LOPEZ'));
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.dni, 'data.dni', equals('43005787'))
+            .having((s) => s.data.nombres, 'data.nombres', equals('JUAN CARLOS'))
+            .having(
+              (s) => s.data.apellidoPaterno,
+              'data.apellidoPaterno',
+              equals('GARCIA'),
+            )
+            .having(
+              (s) => s.data.apellidoMaterno,
+              'data.apellidoMaterno',
+              equals('LOPEZ'),
+            ),
+      );
     });
 
     test('HTTP 200 success:false returns DniLookupNotFound', () async {
@@ -78,9 +88,11 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupNetworkError>());
-      final networkError = result as DniLookupNetworkError;
-      expect(networkError.cause, isNotNull);
+      expect(
+        result,
+        isA<DniLookupNetworkError>()
+            .having((e) => e.cause, 'cause', isNotNull),
+      );
     });
 
     test('includeRaw:true populates DniData.raw with original response fields', () async {
@@ -93,10 +105,16 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupSuccess>());
-      final data = (result as DniLookupSuccess).data;
-      expect(data.raw, isNotNull);
-      expect(data.raw, containsPair('success', true));
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.raw, 'data.raw', isNotNull)
+            .having(
+              (s) => s.data.raw,
+              'data.raw',
+              containsPair('success', true),
+            ),
+      );
     });
 
     test('HTTP 429 returns DniLookupRateLimited', () async {

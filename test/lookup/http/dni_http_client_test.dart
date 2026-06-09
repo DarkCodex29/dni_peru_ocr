@@ -25,8 +25,8 @@ void main() {
       final client = _FakeHttpClient();
       final response = await client.get(Uri.parse('https://example.com'));
 
-      expect(response, isA<DniHttpResponse>());
-      expect(response.statusCode, 200);
+      // Response is statically typed DniHttpResponse — assert real fields.
+      expect(response.statusCode, equals(200));
       expect(response.body, isNotEmpty);
     });
 
@@ -47,9 +47,14 @@ void main() {
       expect(response.statusCode, 200);
     });
 
-    test('interface can be implemented via implements keyword', () {
+    test('interface can be implemented via implements keyword', () async {
+      // Static typing already proves _FakeHttpClient implements DniHttpClient
+      // (this assignment would not compile otherwise). Exercise the interface
+      // to assert the contract behaves end-to-end.
       final DniHttpClient client = _FakeHttpClient();
-      expect(client, isA<DniHttpClient>());
+      final response = await client.get(Uri.parse('https://example.com'));
+      expect(response.statusCode, equals(200));
+      expect(response.body, equals('{"success":true}'));
     });
   });
 }

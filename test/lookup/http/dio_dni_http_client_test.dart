@@ -34,7 +34,7 @@ void main() {
 
       final response = await client.get(uri);
 
-      expect(response, isA<DniHttpResponse>());
+      // response is statically typed DniHttpResponse — assert real fields.
       expect(response.statusCode, equals(200));
       expect(response.body, equals('{"success":true}'));
     });
@@ -56,8 +56,11 @@ void main() {
 
       final response = await client.get(uri);
 
-      expect(response, isA<DniHttpResponse>());
+      // response is statically typed DniHttpResponse — assert sentinel statusCode 0
+      // (encodes "transport failure, no HTTP status") and that the error message
+      // is preserved in the body so callers can surface it.
       expect(response.statusCode, equals(0));
+      expect(response.body, equals('Connection refused'));
     });
 
     test('forwards custom headers to Dio request', () async {

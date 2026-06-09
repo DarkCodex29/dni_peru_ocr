@@ -257,8 +257,9 @@ void main() {
         final maskState = tester.state(find.byType(DniCameraMask)) as dynamic;
         final controller = maskState.captureController as DniCameraController;
 
-        expect(controller.telemetry.value, isA<DniTelemetry>());
+        // Telemetry is statically typed as DniTelemetry; assert real initial fields.
         expect(controller.telemetry.value.stableFrames, 0);
+        expect(controller.telemetry.value.failingGate, isNull);
 
         await _disposeWidget(tester);
       },

@@ -65,8 +65,11 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupSuccess>());
-      expect((result as DniLookupSuccess).data.dni, equals('43005787'));
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.dni, 'data.dni', equals('43005787')),
+      );
       expect(delegate.callCount, equals(0));
     });
 
@@ -81,8 +84,11 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupSuccess>());
-      expect((result as DniLookupSuccess).data.dni, equals('43005787'));
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.dni, 'data.dni', equals('43005787')),
+      );
       expect(delegate.callCount, equals(1));
       expect(cache.setCalls, equals(1));
       expect(cache.stored, equals(data));

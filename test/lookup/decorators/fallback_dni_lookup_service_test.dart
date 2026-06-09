@@ -37,8 +37,11 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupSuccess>());
-      expect((result as DniLookupSuccess).data.dni, equals('43005787'));
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.dni, 'data.dni', equals('43005787')),
+      );
       expect(first.callCount, equals(1));
       expect(second.callCount, equals(0));
     });
@@ -51,8 +54,11 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupSuccess>());
-      expect((result as DniLookupSuccess).data.dni, equals('43005787'));
+      expect(
+        result,
+        isA<DniLookupSuccess>()
+            .having((s) => s.data.dni, 'data.dni', equals('43005787')),
+      );
       expect(first.callCount, equals(1));
       expect(second.callCount, equals(1));
     });
@@ -76,8 +82,11 @@ void main() {
 
       final result = await service.lookup('43005787');
 
-      expect(result, isA<DniLookupServerError>());
-      expect((result as DniLookupServerError).statusCode, equals(503));
+      expect(
+        result,
+        isA<DniLookupServerError>()
+            .having((e) => e.statusCode, 'statusCode', equals(503)),
+      );
       expect(first.callCount, equals(1));
       expect(second.callCount, equals(1));
     });
