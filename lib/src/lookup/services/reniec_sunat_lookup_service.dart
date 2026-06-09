@@ -6,9 +6,6 @@ import 'package:dni_peru_ocr/src/lookup/models/dni_lookup_result.dart';
 import 'package:dni_peru_ocr/src/lookup/services/dni_lookup_service.dart';
 
 /// Resolves DNI data from a ReniecSunat-compatible backend.
-///
-/// Endpoint: `GET {baseUrl}/api/v1/dni/{dni}`
-/// Placeholder `"-"` values in optional fields are preserved verbatim.
 final class ReniecSunatLookupService implements DniLookupService {
   const ReniecSunatLookupService({
     required this.baseUrl,

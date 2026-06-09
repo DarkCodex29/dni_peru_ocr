@@ -33,7 +33,7 @@ import '_shared_scan_widgets.dart';
 part '_camera_overlay_widgets.dart';
 
 class DniCameraMask extends StatefulWidget {
-  const DniCameraMask({
+  DniCameraMask({
     super.key,
     required this.controller,
     required this.onValidCapture,
@@ -54,8 +54,10 @@ class DniCameraMask extends StatefulWidget {
     this.lookupService,
     this.onDniReady,
     this.lookupTimeout = const Duration(milliseconds: 1500),
-    this.fields,
-  });
+    DniFields? fields,
+  }) : fields = fields ?? _kycDefault;
+
+  static final DniFields _kycDefault = DniFields.kyc();
 
   final CameraController controller;
 
@@ -125,13 +127,14 @@ class DniCameraMask extends StatefulWidget {
 
   final Duration lookupTimeout;
 
-  /// Restricts the FieldHunter path to the specified fields. When null,
-  /// all 19 fields are extracted (v0.10.0 behavior).
+  /// Restricts the FieldHunter path to the specified fields. Defaults to
+  /// [DniFields.kyc] so consumers that omit this parameter get the most
+  /// common KYC field set (7 fields: documentNumber, names, dates, address).
   ///
   /// This parameter ONLY applies to the [fieldHunter] pipeline. The legacy
   /// [OcrConsensusAccumulator] path is not filtered by [fields] and always
   /// runs unmodified.
-  final DniFields? fields;
+  final DniFields fields;
 
   @override
   State<DniCameraMask> createState() => _DniCameraMaskState();
@@ -227,10 +230,8 @@ class _DniCameraMaskState extends State<DniCameraMask>
     );
 
     _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-    _effectiveHunter = widget.fieldHunter ??
-        (widget.fields != null
-            ? FieldHunter.standard(fields: widget.fields)
-            : null);
+    _effectiveHunter =
+        widget.fieldHunter ?? FieldHunter.standard(fields: widget.fields);
     _lifecycle = DetectorLifecycle(
       stopStream: () => _safeStopStream(widget.controller),
       closeDetectors: _closeDetectors,
@@ -567,6 +568,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
       final signal = widget.captureDecider.decide(
         hunt: snapshot,
         framingStable: result.isCaptureable,
+        isBackSide: widget.isBackSide,
       );
       if (signal.shouldCapture) {
         final captureState = _captureController.captureState.value;
@@ -658,7 +660,7 @@ class _DniCameraMaskState extends State<DniCameraMask>
     );
   }
 
-  /// Throttled (≤1 Hz) Sentry breadcrumb emission for the G.1 telemetry.
+  /// Throttled breadcrumb emission for telemetry.
   void _emitGateBreadcrumb({
     required String? failingGate,
     required int stableFrames,
@@ -927,7 +929,7 @@ class StabilityState {
   ///
   /// A frame is "stable" when [blockDiff] ≤ 2 AND [isEmpty] is false.
   /// Stable → increment by 1.
-  /// Unstable → decrement by 1, floored at 0 (REQ-STAB-1 forgiveness).
+  /// Unstable → decrement by 1, floored at 0.
   static int update({
     required int current,
     required int blockDiff,

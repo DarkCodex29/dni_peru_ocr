@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.14.0
+
+### Added
+- `DniScanner` now supports `lookupService`, `lookupTimeout` and
+  `onDniReady`. Fires the RENIEC lookup automatically when the front
+  capture exposes a `documentNumber` and bundles the resolved
+  `DniData` into `DniScanResult.reniecData`.
+
+### Changed
+- `DniCameraMask.fields` defaults to `DniFields.kyc()` when omitted.
+- `DniCameraMask` constructor is no longer `const` because `fields`
+  defaults to a non-const `DniFields.kyc()` instance.
+
+### Fixed
+- **Premature front-side capture**: `CaptureDecider` is now side-aware.
+  Previously, the auto-capture path required `HuntResult.isComplete`
+  (all 6 fixed fields including MRZ-only ones like `expirationDate`),
+  which could never become `true` while the user was still on the front.
+  The widget then fell back to framing-only gates and captured blurry
+  front shots before the OCR pipeline had consensus on the front-printed
+  fields.
+- The decider now requires:
+  - Front side: every requested `DniField` that is physically printed on the
+    front of the DNI (documentNumber, names, sex, nationality, organDonor,
+    votingGroup, stateCivil) must be consensuated.
+  - Back side: full `HuntResult.isComplete` (unchanged behavior).
+
+### Added
+- `HuntResult.requiredFields` — propagates the consumer's `DniFields`
+  selection so `isComplete` honors it.
+- `HuntResult.isFrontReady` — new front-only gate, intersects the requested
+  fields with `HuntResult.frontPrintedFields`.
+- `HuntResult.frontPrintedFields` — public constant set listing every
+  `DniField` physically printed on the front of the DNI Modelo 2020.
+- `CaptureDecider.decide` now accepts `isBackSide` (defaults to `false`
+  for source compatibility).
+
+### Notes
+- Backwards-compatible: hosts that don't pass `fields` keep the legacy
+  triplet gate (documentNumber + lastName + firstName) on the front
+  instead of capturing on framing alone.
+
 ## 0.13.1
 
 ### Added

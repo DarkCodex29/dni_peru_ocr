@@ -27,7 +27,6 @@ abstract final class InputImageConverter {
     final width = image.width;
     final height = image.height;
 
-    // Some Android cameras deliver a pre-interleaved NV21 image as a single plane.
     if (image.planes.length == 1) {
       final plane = image.planes[0];
       return InputImage.fromBytes(
@@ -41,11 +40,6 @@ abstract final class InputImageConverter {
       );
     }
 
-    // YUV_420_888 → NV21 with correct stride handling.
-    //
-    // yPlane.bytes has length = height * yPlane.bytesPerRow, where bytesPerRow
-    // is often LARGER than width (stride padding). Copying the first width*height
-    // bytes of the flat buffer produces corrupted row data. Copy row-by-row instead.
     final yPlane = image.planes[0];
     final uPlane = image.planes[1];
     final vPlane = image.planes[2];
@@ -87,7 +81,6 @@ abstract final class InputImageConverter {
         size: Size(width.toDouble(), height.toDouble()),
         rotation: rotation,
         format: InputImageFormat.nv21,
-        // The NV21 we generate has stride-free rows (exactly width bytes each).
         bytesPerRow: width,
       ),
     );

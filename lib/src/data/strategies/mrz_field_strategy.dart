@@ -6,13 +6,6 @@ import '../../data/ocr_field_extractor.dart';
 import 'ocr_field_strategy.dart';
 
 /// Strategy that extracts OCR fields from a Machine Readable Zone (MRZ).
-///
-/// Supports both TD1 (3 lines × 30 chars) and TD3 (2 lines × 44 chars)
-/// formats used on Peruvian DNIs.
-///
-/// Returns `null` when no valid MRZ block is found in the [RecognizedText].
-/// When successful, [OcrExtractedFields.hasMrzData] is `true` and `address`
-/// is always `null` (address data is never present in MRZ).
 final class MrzFieldStrategy implements OcrFieldStrategy {
   const MrzFieldStrategy();
 
@@ -22,16 +15,12 @@ final class MrzFieldStrategy implements OcrFieldStrategy {
     return _tryParseMrz(recognized);
   }
 
-  /// Attempts to locate and parse MRZ lines from [recognized].
-  /// Returns `null` when no valid MRZ is found.
   OcrExtractedFields? _tryParseMrz(RecognizedText recognized) {
     final candidateLines = <String>[];
 
     for (final block in recognized.blocks) {
       final blockText = block.text.replaceAll(' ', '');
-      // An MRZ block has many `<` fillers and is long.
       if ('<'.allMatches(blockText).length >= 3 && blockText.length >= 20) {
-        // Split by lines and clean OCR-noise substitutions.
         for (final rawLine in block.text.split('\n')) {
           final clean = rawLine
               .replaceAll(' ', '')
@@ -40,7 +29,6 @@ final class MrzFieldStrategy implements OcrFieldStrategy {
               .replaceAll('«', '<')
               .trim();
           if (clean.length >= 20 && _looksLikeMrz(clean)) {
-            // Pad to 30 or 44 chars when truncated by partial OCR.
             final padded = clean.padRight(
               clean.length < 35 ? 30 : 44,
               '<',
@@ -54,14 +42,11 @@ final class MrzFieldStrategy implements OcrFieldStrategy {
 
     if (candidateLines.length < 2) return null;
 
-    // Peruvian DNI uses TD1 (3 lines × 30 chars) or TD3 (2 lines × 44 chars).
     for (int i = 0; i < candidateLines.length - 1; i++) {
-      // Try TD3 (2 lines).
       final pair = [candidateLines[i], candidateLines[i + 1]];
       final td3Result = _tryParseLines(pair);
       if (td3Result != null) return td3Result;
 
-      // Try TD1 (3 lines).
       if (i + 2 < candidateLines.length) {
         final triple = [
           candidateLines[i],
@@ -92,7 +77,6 @@ final class MrzFieldStrategy implements OcrFieldStrategy {
         ..documentNumber = result.documentNumber
         ..nationality = result.nationalityCountryCode;
 
-      // Split surnames (MRZ packs paternal + maternal into `surnames`).
       final surnames = result.surnames.split(' ');
       if (surnames.isNotEmpty) fields.lastName = surnames.first;
       if (surnames.length > 1) {
@@ -101,11 +85,6 @@ final class MrzFieldStrategy implements OcrFieldStrategy {
 
       fields.firstName = result.givenNames;
 
-      // Guard: when OCR reads `<<` as `<`, the MRZ parser folds the given
-      // names into surnames. The resulting `secondLastName == firstName`
-      // (same content, possibly with 0/O substitution) — null out the
-      // false split so the text-OCR vote from the front side can win in
-      // consensus.
       if (fields.secondLastName != null && fields.firstName != null) {
         final sln = fields.secondLastName!.toUpperCase().replaceAll('0', 'O');
         final fn = fields.firstName!.toUpperCase().replaceAll('0', 'O');

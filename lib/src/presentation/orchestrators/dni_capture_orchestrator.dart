@@ -1,28 +1,7 @@
 import '../document_validator.dart';
 import 'dni_capture_state.dart';
 
-/// Pure stateless state machine for the DNI auto-capture flow.
-///
-/// Takes the current [DniCaptureState] plus frame-level inputs, and returns
-/// the next [DniCaptureState]. The caller ([DniCameraController]) owns the
-/// [ValueNotifier] and calls [onFrame] on every processed frame.
-///
-/// [now] is injected so tests can drive time deterministically without
-/// relying on [DateTime.now()].
-///
-/// ### Transitions
-/// ```
-/// Scanning(captureable=false)  ──────────────────────────────▶ Scanning
-/// Scanning(captureable=true, stableFrames≥min)  ─────────────▶ CountingDown(t=0)
-/// CountingDown(captureable=true, elapsed < auto)  ───────────▶ CountingDown(t+)
-/// CountingDown(captureable=true, elapsed ≥ auto)  ───────────▶ InFlight
-/// CountingDown(captureable=false, elapsed < grace)  ─────────▶ CountingDown (hold)
-/// CountingDown(captureable=false, elapsed ≥ grace)  ─────────▶ Scanning (reset)
-/// InFlight / Expired / Done  ────────────────────────────────▶ unchanged
-/// ```
-///
-/// Side toggle: [onSideToggle] resets any in-progress countdown.
-/// Manual fallback: [onManualFallbackTimeout] activates manual mode.
+/// Stateless state machine for the DNI auto-capture flow.
 final class DniCaptureOrchestrator {
   DniCaptureOrchestrator({
     required this.autoCaptureMs,
@@ -31,29 +10,12 @@ final class DniCaptureOrchestrator {
     required this.minStableFrames,
   });
 
-  /// Milliseconds of holding a captureable frame before auto-capture fires.
   final int autoCaptureMs;
-
-  /// Grace window (ms): a non-captureable frame within this window does NOT
-  /// reset the countdown (tolerates single noisy frames between stable reads).
   final int gracePeriodMs;
-
-  /// Milliseconds after stream start before the manual-capture button appears.
   final int manualFallbackMs;
-
-  /// Minimum consecutive stable-block frames required before starting the
-  /// auto-capture countdown.
   final int minStableFrames;
 
-  // ── Public API ─────────────────────────────────────────────────────────
-
-  /// Pure state transition: process one camera frame.
-  ///
-  /// [current] — the state before this frame.
-  /// [validation] — quality-gate result for this frame.
-  /// [stableFrames] — consecutive stable-block-count frames so far.
-  /// [userDataMatch] — OCR/user-data match result (`null` if no data to match).
-  /// [now] — current wall-clock time (injected for determinism in tests).
+  /// Pure state transition for one camera frame.
   DniCaptureState onFrame({
     required DniCaptureState current,
     required DocumentValidationResult validation,
@@ -61,7 +23,6 @@ final class DniCaptureOrchestrator {
     required bool? userDataMatch,
     required DateTime now,
   }) {
-    // Terminal / in-flight states are pass-through.
     if (current is DniCaptureInFlight ||
         current is DniCaptureExpired ||
         current is DniCaptureDone) {
@@ -70,11 +31,10 @@ final class DniCaptureOrchestrator {
 
     final isCaptureable = validation.isCaptureable;
 
-    // ── CountingDown branch ─────────────────────────────────────────────
     if (current is CountingDownWithAnchor) {
       final elapsedMs =
           (now.millisecondsSinceEpoch - current.perfectSinceEpochMs)
-              .clamp(0, autoCaptureMs * 10); // guard against backward clock
+              .clamp(0, autoCaptureMs * 10);
 
       if (isCaptureable) {
         if (elapsedMs >= autoCaptureMs) {
@@ -87,9 +47,7 @@ final class DniCaptureOrchestrator {
           perfectSinceEpochMs: current.perfectSinceEpochMs,
         );
       } else {
-        // Quality regression
         if (elapsedMs < gracePeriodMs) {
-          // Within grace: freeze elapsed, keep counting
           return CountingDownWithAnchor(
             guideText: current.guideText,
             elapsedMs: current.elapsedMs,
@@ -97,14 +55,10 @@ final class DniCaptureOrchestrator {
             perfectSinceEpochMs: current.perfectSinceEpochMs,
           );
         }
-        // Beyond grace: reset
         return _resetToScanning(current);
       }
     }
 
-    // ── Defensive: plain DniCaptureCountingDown without anchor ──────────
-    // Should not occur in normal flow (orchestrator always emits anchored
-    // states), but guard in case the controller injects a hand-crafted value.
     if (current is DniCaptureCountingDown) {
       if (isCaptureable && stableFrames >= minStableFrames) {
         return CountingDownWithAnchor(
@@ -117,7 +71,6 @@ final class DniCaptureOrchestrator {
       return _resetToScanning(current);
     }
 
-    // ── Scanning branch ─────────────────────────────────────────────────
     if (current is DniCaptureScanning) {
       if (isCaptureable && stableFrames >= minStableFrames) {
         return CountingDownWithAnchor(
@@ -137,13 +90,10 @@ final class DniCaptureOrchestrator {
       );
     }
 
-    // Unreachable with a complete sealed hierarchy.
     return current;
   }
 
-  /// Manual-fallback timer expired — activate manual-capture mode.
-  ///
-  /// Only has an effect when [current] is [DniCaptureScanning].
+  /// Manual-fallback timer expired — activates manual-capture mode.
   DniCaptureState onManualFallbackTimeout(DniCaptureState current) {
     if (current is DniCaptureScanning) {
       return DniCaptureScanning(
@@ -158,7 +108,7 @@ final class DniCaptureOrchestrator {
     return current;
   }
 
-  /// Side toggle (front ↔ back) — resets countdown and manual mode.
+  /// Side toggle — resets countdown and manual mode.
   DniCaptureState onSideToggle(DniCaptureState current) =>
       const DniCaptureScanning(
         guideText: '',
@@ -168,8 +118,6 @@ final class DniCaptureOrchestrator {
         userDataMatch: null,
         manualModeActive: false,
       );
-
-  // ── Private helpers ────────────────────────────────────────────────────
 
   DniCaptureScanning _resetToScanning(DniCaptureState current) {
     final manualModeActive =

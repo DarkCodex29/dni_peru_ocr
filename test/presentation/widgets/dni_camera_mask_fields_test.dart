@@ -178,7 +178,7 @@ void main() {
     });
 
     testWidgets(
-        'fields: null without fieldHunter — effectiveFieldHunter is null',
+        'fields: omitted — effectiveFieldHunter defaults to DniFields.kyc',
         (tester) async {
       final cam = _idleMockCamera();
       await tester.pumpWidget(
@@ -197,7 +197,7 @@ void main() {
       await tester.pump();
       final maskState = tester.state(find.byType(DniCameraMask)) as dynamic;
       final hunter = maskState.effectiveFieldHunter as FieldHunter?;
-      expect(hunter, isNull);
+      expect(hunter, isNotNull);
       await _disposeWidget(tester);
     });
   });

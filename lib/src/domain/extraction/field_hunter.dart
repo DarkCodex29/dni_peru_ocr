@@ -88,6 +88,7 @@ class FieldHunter {
       backDetected: _backDetected,
       lastSeen: _lastSeen,
       format: _format,
+      requiredFields: _fields,
     );
   }
 

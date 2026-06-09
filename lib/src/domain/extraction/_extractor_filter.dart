@@ -78,8 +78,7 @@ const _nameToFields = <String, Set<DniField>>{
   'UbigeoNacimientoExtractor': {DniField.birthUbigeoCode},
 };
 
-/// Returns the subset of [all] extractors whose produced fields intersect
-/// [fields]. Returns [all] unchanged when [fields] is null or full.
+/// Returns the subset of [all] extractors that produce any field in [fields].
 List<FieldExtractor> filteredExtractors(
   DniFields? fields,
   List<FieldExtractor> all,
@@ -94,8 +93,7 @@ List<FieldExtractor> filteredExtractors(
   }).toList();
 }
 
-/// Returns true if the extractor named [extractorClassName] should run for
-/// [selectedFields]. Defaults to true for unknown extractors (defensive).
+/// Whether the extractor named [extractorClassName] should run for [selectedFields].
 bool shouldRunExtractor(String extractorClassName, DniFields? selectedFields) {
   if (selectedFields == null) return true;
   final produced = _nameToFields[extractorClassName];
@@ -104,8 +102,6 @@ bool shouldRunExtractor(String extractorClassName, DniFields? selectedFields) {
 }
 
 /// Scales the fast-advance threshold based on the number of selected fields.
-///
-/// Formula: `(selectedFieldCount * 0.75).round().clamp(3, 14)`
 int scaledThreshold(int selectedFieldCount) {
   return (selectedFieldCount * 0.75).round().clamp(3, 14);
 }

@@ -1,12 +1,6 @@
 import 'package:logger/logger.dart';
 
-/// Process-wide debug logger for the DNI OCR pipeline.
-///
-/// OFF by default. Host apps enable it from `main()` for diagnostics —
-/// every frame, partial extraction, vote, and snapshot is then emitted to
-/// both `print` (release-build logcat) and the `logger` package (pretty
-/// formatting in debug). Production apps should keep it disabled to avoid
-/// leaking document text.
+/// Process-wide debug logger for the DNI OCR pipeline. Disabled by default.
 class DniLogger {
   DniLogger._();
 
@@ -15,7 +9,7 @@ class DniLogger {
 
   static bool get isEnabled => _enabled;
 
-  /// Turn the pipeline logging ON. Safe to call multiple times.
+  /// Turns the pipeline logging on.
   static void enable() {
     _enabled = true;
     _logger ??= Logger(
@@ -30,7 +24,7 @@ class DniLogger {
     );
   }
 
-  /// Turn the pipeline logging OFF.
+  /// Turns the pipeline logging off.
   static void disable() {
     _enabled = false;
   }
@@ -59,8 +53,6 @@ class DniLogger {
     _logger?.e('[$tag] $message', error: error, stackTrace: stackTrace);
   }
 
-  /// Emits to plain `print` so it reaches release-build logcat
-  /// (where `logger` is not visible).
   static void _emit(String level, String tag, String message) {
     // ignore: avoid_print
     print('DNI_OCR[$level][$tag] $message');

@@ -3,10 +3,6 @@ import 'package:mrz_parser/mrz_parser.dart';
 import 'ocr_field_normalizer.dart';
 import 'string_similarity.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Value types
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Result for a single OCR field after consensus.
 class OcrFieldResult<T> {
   const OcrFieldResult({
@@ -15,25 +11,15 @@ class OcrFieldResult<T> {
     required this.locked,
   });
 
-  /// The best-effort value for this field (may be null if no data yet).
   final T? value;
-
-  /// Confidence level 0.0–1.0.
   final double confidence;
-
-  /// Whether the field has crossed its locking threshold.
   final bool locked;
 }
 
 /// Source that triggered the consensus lock.
 enum OcrConsensusSource {
-  /// Locked via ≥2 consecutive MRZ checksum-valid parses.
   mrzChecksum,
-
-  /// Locked via temporal vote accumulation threshold.
   temporalVote,
-
-  /// Manual fallback — caller forced a snapshot before full consensus.
   manualFallback,
 }
 
@@ -51,10 +37,7 @@ class OcrConsensusResult {
     required this.address,
   });
 
-  /// True when all mandatory fields are locked.
   final bool success;
-
-  /// What triggered this result.
   final OcrConsensusSource source;
 
   final OcrFieldResult<String> documentNumber;
@@ -66,92 +49,17 @@ class OcrConsensusResult {
   final OcrFieldResult<String> address;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Consensus builder
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Per-field thresholds (vote ratio required to lock).
 const _kDocumentNumberThreshold = 0.95;
 const _kNameThreshold = 0.80;
 const _kAddressThreshold = 0.60;
 
-/// For date fields: match required in N of last M frames.
 const _kDateMatchRequired = 4;
 const _kDateWindowSize = 5;
 
-/// Default number of consecutive MRZ-valid frames required to fast-lock.
-///
-/// At a 30 fps preview, 2 frames is ~66 ms — fast enough for the front of a
-/// document or the back of older booklet-style cards, where the camera is
-/// usually stable. The electronic DNI back side benefits from a higher
-/// value (~5 frames, ~165 ms) because the OCR pipeline runs in parallel
-/// with the still-camera pipeline and a too-aggressive lock can fire a
-/// `takePicture()` while the device is still moving.
-///
-/// Overridable per instance via [OcrConsensusAccumulator.mrzConsecutiveRequired].
 const _kMrzConsecutiveRequired = 2;
 
 /// Accumulates per-field OCR consensus across multiple camera frames.
-///
-/// ## Role
-///
-/// This is the **Accumulator** in a Strategy + Accumulator pipeline:
-///
-///   [OcrFieldExtractor] (strategies extract per-frame)
-///         │
-///         ▼
-///   [OcrConsensusAccumulator] (this class — aggregates across frames)
-///         │
-///         ▼
-///   [OcrConsensusResult] (final value, emitted by [snapshot])
-///
-/// Each frame is a hypothesis. The accumulator collects hypotheses as
-/// votes per field, applies field-specific normalization, and emits the
-/// most likely value once enough agreement is reached (lock threshold)
-/// or on demand (manual fallback).
-///
-/// ## SOLID
-///
-/// - **SRP**: this class accumulates votes and emits snapshots. It does
-///   NOT extract fields (that is [OcrFieldExtractor]'s job), normalize
-///   names (delegated to [OcrFieldNormalizer]), or compare strings
-///   (delegated to [StringSimilarity]).
-/// - **OCP**: per-field normalization is dispatched via [_normalize] +
-///   [_computeDisplay], extensible without changing the public API.
-/// - **DIP**: depends on the abstract `MRZResult` interface of the MRZ
-///   parser and on lightweight value types — no I/O, no Flutter widget
-///   dependency.
-///
-/// ## Invariants
-///
-/// - `_votes` and `_displayValues` are always keyed identically; both
-///   maps have the same set of field keys after every public mutation.
-/// - Once [_mrzLocked] flips to `true`, MRZ-sourced fields override any
-///   text-OCR votes in [snapshot] output.
-/// - [snapshot] is idempotent: calling it twice without intervening
-///   [recordVote] / [recordMrz] / [lockFromMrzFields] returns equal data.
-///
-/// ## Lifecycle
-///
-/// 1. Construct (optionally with a custom [mrzConsecutiveRequired]).
-/// 2. Call [recordVote] for each processed frame's extracted fields,
-///    OR [recordMrz] when the MRZ parser returns a checksum-valid result,
-///    OR [lockFromMrzFields] when the field-extractor already split out
-///    the MRZ fields (no raw [MRZResult] available).
-/// 3. Read [isMrzLocked] / [checkAllThresholds] to decide whether to
-///    trigger capture in the host widget.
-/// 4. Call [snapshot] to obtain the final [OcrConsensusResult].
-/// 5. Call [dispose] when the host widget tears down.
 class OcrConsensusAccumulator {
-  /// Creates an empty accumulator.
-  ///
-  /// [mrzConsecutiveRequired] sets how many consecutive MRZ-valid frames
-  /// the accumulator collects before flipping [isMrzLocked] to `true`.
-  /// Tunes the trade-off between speed (lower value → captures earlier)
-  /// and motion-blur risk (higher value → more stable still frame).
-  ///
-  /// See [_kMrzConsecutiveRequired] for the rationale and recommended
-  /// per-side values.
   OcrConsensusAccumulator({
     this.mrzConsecutiveRequired = _kMrzConsecutiveRequired,
   }) : assert(
@@ -159,11 +67,8 @@ class OcrConsensusAccumulator {
           'mrzConsecutiveRequired must be >= 1',
         );
 
-  /// Number of consecutive MRZ-valid frames required to fast-lock.
-  /// Immutable for the lifetime of the accumulator.
   final int mrzConsecutiveRequired;
 
-  // ── Vote maps: field → (normalizedValue → count) ─────────────────────────
   final Map<String, Map<String, int>> _votes = {
     'documentNumber': {},
     'firstName': {},
@@ -172,16 +77,6 @@ class OcrConsensusAccumulator {
     'address': {},
   };
 
-  /// Parallel map: field → (voteKey → displayValue).
-  /// Keyed identically to [_votes] but holds the tilde-preserving variant
-  /// (output of [OcrFieldNormalizer.normalizeForDisplay]). Used so that
-  /// `MUNXXOZ`, `MUNOZ`, and `MUÑOZ` collapse to the same vote bucket while
-  /// still surfacing `MUÑOZ` as the stored result.
-  ///
-  /// Upgrade rule on insert:
-  ///   - if missing → set
-  ///   - else if new displayValue contains `Ñ`/`ñ` AND current does not → replace
-  ///   - else → keep current
   final Map<String, Map<String, String>> _displayValues = {
     'documentNumber': {},
     'firstName': {},
@@ -190,24 +85,17 @@ class OcrConsensusAccumulator {
     'address': {},
   };
 
-  // ── Date sliding windows: field → list of last N raw values ──────────────
   final Map<String, List<String?>> _dateWindows = {
     'dateOfBirth': [],
     'expirationDate': [],
   };
 
-  // ── MRZ fast-lock tracking ────────────────────────────────────────────────
   int _consecutiveMrzCount = 0;
 
-  // ── Lock state ────────────────────────────────────────────────────────────
   bool _mrzLocked = false;
   MRZResult? _lockedMrz;
 
   /// Records OCR field votes for one processed frame.
-  ///
-  /// [fields] is a map of field name → raw OCR value (null/empty = no data).
-  /// Keys: `documentNumber`, `firstName`, `lastName`, `dateOfBirth`,
-  ///       `expirationDate`, `address`.
   void recordVote(Map<String, String?> fields) {
     for (final entry in fields.entries) {
       final rawValue = entry.value;
@@ -225,11 +113,6 @@ class OcrConsensusAccumulator {
     }
   }
 
-  /// Inserts or upgrades the display value for ([field], [voteKey]).
-  ///
-  /// Only name fields are tilde-bearing; other fields fall back to a
-  /// simple trim/uppercase via [OcrFieldNormalizer.normalizeForDisplay]
-  /// so the map always has a value to return.
   void _updateDisplayValue(String field, String voteKey, String rawValue) {
     final displayValue = _computeDisplay(field, rawValue);
     final bucket = _displayValues[field]!;
@@ -246,11 +129,6 @@ class OcrConsensusAccumulator {
     }
   }
 
-  /// Picks the right display normalizer for the field:
-  /// name fields preserve `Ñ`; others use minimal trim-only logic
-  /// (document numbers and addresses must NOT be uppercased here — they
-  /// already have their own normalizers in [_normalize] and we only need
-  /// a non-empty fallback display value).
   String _computeDisplay(String field, String rawValue) {
     switch (field) {
       case 'firstName':
@@ -265,9 +143,6 @@ class OcrConsensusAccumulator {
   }
 
   /// Records a checksum-valid MRZ parse.
-  ///
-  /// After [mrzConsecutiveRequired] consecutive valid parses, all MRZ
-  /// fields are fast-locked, overriding any text-OCR votes.
   void recordMrz(MRZResult mrz) {
     if (_mrzLocked) return;
     _consecutiveMrzCount++;
@@ -278,9 +153,7 @@ class OcrConsensusAccumulator {
     }
   }
 
-  /// Fast-locks consensus from MRZ-extracted fields when the extractor
-  /// already parsed the MRZ (and a raw [MRZResult] is not available).
-  /// Locks after [mrzConsecutiveRequired] consecutive observations.
+  /// Fast-locks consensus from MRZ-extracted fields.
   void lockFromMrzFields({
     required String? documentNumber,
     required String? firstName,
@@ -291,11 +164,6 @@ class OcrConsensusAccumulator {
   }) {
     if (_mrzLocked) return;
     _consecutiveMrzCount++;
-    // Merge into the previous buffer: a frame whose MRZ checksum is still
-    // valid but whose name line ML Kit garbled to nulls must NOT erase the
-    // fields captured by an earlier clean frame. The accumulator favours
-    // monotonic enrichment — once a field is known, only a non-null new
-    // value can change it.
     final prev = _mrzFieldsBuffer;
     _mrzFieldsBuffer = _MrzFieldsBuffer(
       documentNumber: documentNumber ?? prev?.documentNumber,
@@ -310,11 +178,7 @@ class OcrConsensusAccumulator {
     }
   }
 
-  /// Resets the MRZ consecutive counter so partial detections in non-MRZ
-  /// frames do not accumulate toward the lock threshold.
-  /// The buffer is intentionally preserved — Peruvian DNI azul holograms
-  /// produce intermittent MRZ frames, so the last-seen fields stay
-  /// available for [snapshot] even while the consecutive counter resets.
+  /// Resets the MRZ consecutive counter without clearing the buffer.
   void resetMrzConsecutiveCount() {
     if (_mrzLocked) return;
     _consecutiveMrzCount = 0;
@@ -335,9 +199,6 @@ class OcrConsensusAccumulator {
   }
 
   /// Emits the current [OcrConsensusResult].
-  ///
-  /// If [checkAllThresholds] is false, emits a partial result with
-  /// `success = false` and `source = manualFallback`.
   OcrConsensusResult snapshot() {
     if (_mrzLocked && _lockedMrz != null) {
       return _buildMrzResult(_lockedMrz!);
@@ -362,12 +223,7 @@ class OcrConsensusAccumulator {
     );
   }
 
-  /// Releases resources. Call when the OCR pipeline is disposed.
-  void dispose() {
-    // No-op currently. Placeholder for future timer cancellation.
-  }
-
-  // ── Private helpers ───────────────────────────────────────────────────────
+  void dispose() {}
 
   String _normalize(String field, String value) {
     switch (field) {
@@ -411,7 +267,6 @@ class OcrConsensusAccumulator {
     final last = window.length > _kDateWindowSize
         ? window.sublist(window.length - _kDateWindowSize)
         : window;
-    // Count matches for the most frequent value in last window
     final freq = <String, int>{};
     for (final v in last) {
       if (v != null) freq[v] = (freq[v] ?? 0) + 1;
@@ -428,36 +283,15 @@ class OcrConsensusAccumulator {
     }
     final total = map.values.fold<int>(0, (a, b) => a + b);
 
-    // Address-specific consolidation: ML Kit emits the same address in many
-    // micro-variants across frames (`MILAGRO MZ`, `MILAGRO MZ.B`, `MILAGRO
-    // MZ.B LT.19`, `MLAGRO MZ.B LT.19`...). The previous logic gave each
-    // variant its own bucket, so a `reduce(max)` over single-vote buckets
-    // returned a non-deterministic winner — often the corrupted variant.
-    //
-    // We consolidate by grouping buckets that share a normalized prefix:
-    // shorter variants merge into their longer SUPERSTRING when the
-    // shorter is a tilde-insensitive prefix of the longer's first N tokens.
-    // Among the consolidated group, we prefer the LONGEST string (most
-    // preserved OCR data) and sum the vote counts.
     if (field == 'address') {
       return _consolidatedAddressVote(map, total, threshold);
     }
 
-    // For name and document-number fields, consolidate only by **strict
-    // tilde-insensitive prefix containment**: a vote for `MORENO` merges
-    // into a vote for `MORENO ALEMAN` because the first is a structural
-    // prefix of the second, but `JUAN` does NOT merge into `JOSE` even
-    // though their Levenshtein similarity is high. Names are short and
-    // fuzzy matching produces too many false positives — prefix is the
-    // only safe consolidation primitive here.
     final consolidated = _consolidatedNameVote(map, total, threshold);
     if (consolidated != null) return consolidated;
 
     final leading = map.entries.reduce((a, b) => a.value > b.value ? a : b);
     final confidence = total == 0 ? 0.0 : leading.value / total;
-    // Prefer the tilde-preserving display value; fall back to the ASCII
-    // vote-key when the display map has nothing recorded (defensive — the
-    // upgrade rule in [_updateDisplayValue] guarantees it exists).
     final displayValue = _displayValues[field]?[leading.key] ?? leading.key;
     return OcrFieldResult(
       value: displayValue,
@@ -466,19 +300,6 @@ class OcrConsensusAccumulator {
     );
   }
 
-  /// Consolidates name / document-number votes by **strict prefix containment**
-  /// after diacritic stripping. Returns `null` when consolidation would not
-  /// change the winner (in that case the caller falls back to the original
-  /// `reduce(max)` path).
-  ///
-  /// ### Why prefix-only (no Levenshtein)
-  ///
-  /// Address tolerates fuzzy 80% similarity because it is long free-text
-  /// where 1–2 character glitches are likely the same string. Names are
-  /// short and 80% similarity between `JUAN` and `JOSE` would wrongly
-  /// merge two different first names. Prefix containment requires the
-  /// shorter string to be an exact tilde-insensitive prefix of the
-  /// longer — `MORENO` ⊂ `MORENO ALEMAN`, but `JUAN` ⊄ `JOSE`.
   OcrFieldResult<String>? _consolidatedNameVote(
     Map<String, int> map,
     int total,
@@ -515,7 +336,6 @@ class OcrConsensusAccumulator {
     }
 
     if (groups.length == map.length) {
-      // No consolidation happened — defer to the original reduce(max) path.
       return null;
     }
 
@@ -535,42 +355,17 @@ class OcrConsensusAccumulator {
     );
   }
 
-  /// Strict tilde-insensitive prefix containment for name consolidation.
-  ///
-  /// Returns true when [shorter] is a whitespace-collapsed prefix of
-  /// [anchor] after diacritic stripping. Both inputs are expected to come
-  /// from [_normalize] for the same field, which uppercases and removes
-  /// diacritics already.
   bool _nameIsPrefixOf(String anchor, String shorter) {
     if (anchor.length <= shorter.length) return false;
     if (anchor.isEmpty || shorter.isEmpty) return false;
-    // Require the prefix to end on a word boundary so `MORE` does NOT
-    // merge into `MORENO` (only the full-word prefix `MORENO` merges
-    // into `MORENO ALEMAN`).
     return anchor.startsWith('$shorter ');
   }
 
-  /// Consolidates address votes by grouping near-duplicate variants.
-  ///
-  /// Strategy:
-  ///   1. Sort buckets by string length descending.
-  ///   2. For each bucket starting from the longest, absorb every shorter
-  ///      bucket whose first tokens are a tilde-insensitive prefix of the
-  ///      longer string, OR whose Levenshtein similarity to the longer
-  ///      string is ≥ 0.80 over the common length.
-  ///   3. The longest string in each group wins; its absorbed votes sum.
-  ///   4. Return the group with the highest combined vote count.
-  ///
-  /// This prevents OCR micro-variants (`MILAGRO MZ` vs `MLAGRO MZ.B LT.19`
-  /// vs `MILAGRO MZ.B LT.19`) from each landing in a separate single-vote
-  /// bucket and producing a non-deterministic `reduce(max)` winner.
   OcrFieldResult<String> _consolidatedAddressVote(
     Map<String, int> map,
     int total,
     double threshold,
   ) {
-    // Snapshot entries sorted by length descending so the longest seeds
-    // each group.
     final entries = map.entries.toList()
       ..sort((a, b) {
         final byLen = b.key.length.compareTo(a.key.length);
@@ -612,11 +407,6 @@ class OcrConsensusAccumulator {
     final displayValue =
         _displayValues['address']?[winner.anchor] ?? winner.anchor;
     final confidence = total == 0 ? 0.0 : winner.totalVotes / total;
-    // A single-frame consolidation reaches confidence = 1.0 (1/1) which
-    // would otherwise flip [locked] to true on the very first vote. That
-    // is too eager: address is a noisy free-text field and we want at
-    // least two corroborating frames before declaring a stable consensus.
-    // The display value is still emitted; only the `locked` flag is gated.
     final locked = total >= 2 && confidence >= threshold;
     return OcrFieldResult(
       value: displayValue,
@@ -625,30 +415,18 @@ class OcrConsensusAccumulator {
     );
   }
 
-  /// Returns true when [shorter] is plausibly the same address as [longer]:
-  ///   - same upper-cased length-normalized prefix (`MILAGRO MZ` is a prefix
-  ///     of `MILAGRO MZ.B LT.19` after collapsing whitespace + dots), OR
-  ///   - Levenshtein similarity ≥ 0.80 over the SHORTER string's length
-  ///     (catches single-character OCR glitches like `MILAGRO` vs `MLAGRO`).
-  ///
-  /// `shorter` here means the second argument; the caller groups around the
-  /// longest anchor first, so [other] should never be longer than [anchor].
   bool _addressVariantsAreEquivalent(String anchor, String other) {
     if (anchor.length < other.length) {
-      // Caller should pass anchor as the longer; defensive swap is a no-op
-      // for correctness because the prefix check below is symmetric.
       return _addressVariantsAreEquivalent(other, anchor);
     }
     if (anchor.isEmpty || other.isEmpty) return false;
 
-    // Collapse runs of whitespace and remove dots for prefix comparison.
     String collapse(String s) =>
         s.toUpperCase().replaceAll('.', '').replaceAll(RegExp(r'\s+'), ' ');
     final a = collapse(anchor);
     final o = collapse(other);
     if (a.startsWith(o)) return true;
 
-    // Fuzzy: distance over the shorter length. ≤ 20% character edits.
     final dist = StringSimilarity.distance(a, o);
     final shorterLen = o.length;
     if (shorterLen == 0) return false;
@@ -656,19 +434,10 @@ class OcrConsensusAccumulator {
     return similarity >= 0.80;
   }
 
-  /// Looks up a tilde-bearing display value to upgrade an MRZ-provided name.
-  /// Returns [mrzValue] unchanged unless text-OCR voted a `Ñ`/`ñ` variant of
-  /// the same ASCII root, OR a text-OCR variant that matches after collapsing
-  /// the RENIEC `NXX` placeholder back to `N` (Peruvian MRZ encodes `Ñ` as
-  /// `NXX` because ICAO 9303 has no `Ñ` codepoint — `ERMITAÑO` → `ERMITANXXO`).
   String _recoverTildeFromText(String field, String mrzValue) {
-    // Try direct normalised match first (handles plain accents Á É Í Ó Ú).
     final mrzVoteKey = OcrFieldNormalizer.normalizeName(mrzValue);
     var textDisplay = _displayValues[field]?[mrzVoteKey];
 
-    // Peruvian MRZ Ñ recovery: collapse `NXX` → `N` and trailing `0` → `O`
-    // BEFORE normalising, so `ERMITANXX0` becomes `ERMITANO` which matches
-    // the text-OCR vote key for `ERMITAÑO` (both normalise to `ERMITANO`).
     if (textDisplay == null && mrzValue.contains('XX')) {
       final mrzCollapsed = mrzValue
           .replaceAll(RegExp(r'NXX'), 'N')
@@ -715,15 +484,12 @@ class OcrConsensusAccumulator {
     final secondLastName =
         surnames.length > 1 ? surnames.sublist(1).join(' ') : null;
 
-    // Recover tildes that the MRZ stripped, when text-OCR has them
-    // in its display map for the same ASCII root.
     final lastNameDisplay = _recoverTildeFromText('lastName', lastName);
     final firstNameDisplay = _recoverTildeFromText('firstName', mrz.givenNames);
     final secondLastNameDisplay = secondLastName != null
         ? _recoverTildeFromText('secondLastName', secondLastName)
         : null;
 
-    // Best-effort address from text-OCR votes
     final addressResult = _voteResult('address', _kAddressThreshold);
 
     return OcrConsensusResult(
@@ -765,12 +531,6 @@ class OcrConsensusAccumulator {
 
   OcrConsensusResult _buildMrzResultFromFields(_MrzFieldsBuffer buf) {
     final addressResult = _voteResult('address', _kAddressThreshold);
-    // Field-uniform fallback chain: every MRZ-sourced field falls back to
-    // its text-OCR vote when the MRZ buffer is null for that field. This
-    // guarantees symmetry — firstName, lastName, secondLastName, document
-    // number, and dates all behave the same. The vote map is populated
-    // either from the host's front-side seed (via [recordVote]) or from
-    // earlier back-side frames whose MRZ was readable.
     final firstNameVote = _voteResult('firstName', _kNameThreshold);
     final lastNameVote = _voteResult('lastName', _kNameThreshold);
     final slnVote = _voteResult('secondLastName', _kNameThreshold);
@@ -781,8 +541,6 @@ class OcrConsensusAccumulator {
     final dobVote = _dateResult('dateOfBirth');
     final expVote = _dateResult('expirationDate');
 
-    // Prefer the tilde-bearing variant that text-OCR may have recorded
-    // for the same ASCII root.
     final firstNameDisplay = buf.firstName != null
         ? _recoverTildeFromText('firstName', buf.firstName!)
         : null;
@@ -849,32 +607,16 @@ class _MrzFieldsBuffer {
   final String? expirationDate;
 }
 
-/// A consolidated group of address vote-keys representing the same
-/// underlying address, plus their summed vote count. Used internally by
-/// [OcrConsensusAccumulator._consolidatedAddressVote] to recover a stable
-/// winner across OCR micro-variants.
 class _AddressGroup {
   _AddressGroup({required this.anchor, required this.totalVotes});
 
-  /// The longest variant in the group — chosen as the canonical display
-  /// value because it preserves the most OCR data.
   final String anchor;
-
-  /// Sum of votes from every variant that consolidated into [anchor].
   int totalVotes;
 }
 
-/// A consolidated group of name vote-keys where one vote is a strict
-/// tilde-insensitive prefix of another. Names are short and high-signal,
-/// so consolidation here is intentionally conservative — see
-/// [OcrConsensusAccumulator._consolidatedNameVote].
 class _NameGroup {
   _NameGroup({required this.anchor, required this.totalVotes});
 
-  /// The longest variant in the group (paternal + maternal beats paternal
-  /// alone when both were voted).
   final String anchor;
-
-  /// Sum of votes from every prefix variant that consolidated into [anchor].
   int totalVotes;
 }

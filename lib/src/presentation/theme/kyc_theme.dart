@@ -1,11 +1,6 @@
 import 'package:flutter/material.dart';
 
 /// Theming abstraction for the KYC scanner widgets.
-///
-/// Decouples the camera mask, scanner steps and validators from the host
-/// application's color constants. The host app passes a [KycTheme] (or relies
-/// on [KycTheme.defaults]) and every internal widget reads colors from this
-/// object instead of importing host-specific color palettes.
 @immutable
 class KycTheme {
   const KycTheme({
@@ -32,8 +27,7 @@ class KycTheme {
     required this.gradientEnd,
   });
 
-  /// Default theme using neutral, brand-agnostic values. Consumers should
-  /// override colors that need to match their app's palette.
+  /// Default theme using neutral, brand-agnostic values.
   factory KycTheme.defaults() => const KycTheme(
         primary: Color(0xFF19809E),
         primarySolid: Color(0xFF0B3A47),
@@ -58,8 +52,7 @@ class KycTheme {
         gradientEnd: Color(0xFF1DE9B6),
       );
 
-  /// Dark variant of the default theme. Tuned for OLED displays — uses
-  /// near-black surfaces and brighter accents to preserve contrast.
+  /// Dark variant of the default theme.
   factory KycTheme.darkDefaults() => const KycTheme(
         primary: Color(0xFF2EAFD4),
         primarySolid: Color(0xFF052631),
@@ -84,9 +77,7 @@ class KycTheme {
         gradientEnd: Color(0xFF34D399),
       );
 
-  /// Derives a [KycTheme] from a Material 3 [ThemeData], mapping Material
-  /// semantic roles onto the KYC color slots. Useful when the host app
-  /// already drives styling from Material 3 instead of bespoke palettes.
+  /// Derives a [KycTheme] from a Material 3 [ThemeData].
   factory KycTheme.fromMaterialTheme(ThemeData material) {
     final scheme = material.colorScheme;
     return KycTheme(
@@ -115,7 +106,6 @@ class KycTheme {
   }
 
   /// Returns a copy of this theme with the given fields replaced.
-  /// Useful for one-off color overrides without redefining the whole theme.
   KycTheme copyWith({
     Color? primary,
     Color? primarySolid,
@@ -164,36 +154,30 @@ class KycTheme {
     );
   }
 
-  // Brand
   final Color primary;
   final Color primarySolid;
   final Color accentOrange;
 
-  // Status
   final Color success;
   final Color warningIcon;
   final Color error;
   final Color errorLight;
   final Color errorBorder;
 
-  // Text
   final Color textPrimary;
   final Color textTertiary;
 
-  // Surfaces
   final Color border;
   final Color backgroundFieldAlt;
   final Color backgroundGrey;
   final Color shadowCard;
 
-  // Camera overlay
   final Color overlayDark;
   final Color overlayMedium;
   final Color white;
   final Color white60;
   final Color white70;
 
-  // Banner gradient
   final Color gradientStart;
   final Color gradientEnd;
 
@@ -258,8 +242,7 @@ class KycTheme {
       ];
 }
 
-/// Injects a [KycTheme] into the widget tree for descendants to read via
-/// [KycTheme.of].
+/// Injects a [KycTheme] into the widget tree.
 class KycThemeProvider extends InheritedWidget {
   const KycThemeProvider({
     required this.theme,

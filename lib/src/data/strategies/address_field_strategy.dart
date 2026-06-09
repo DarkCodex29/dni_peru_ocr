@@ -4,15 +4,7 @@ import '../../data/address_noise_filter.dart';
 import '../../data/ocr_field_extractor.dart';
 import 'ocr_field_strategy.dart';
 
-/// Strategy that extracts address from OCR text blocks.
-///
-/// Implements three address-detection strategies in order:
-///   1. `DOMICILIO` label — value inline or on next lines.
-///   2. Peruvian address prefix (`ASEN`, `AV.`, `JR.`, `CALLE`, …) — direct content.
-///   3. Ubigeo anchor (`DEPT/PROV/DIST`) — address is 1–4 lines above.
-///
-/// All non-address fields on the returned [OcrExtractedFields] are `null`.
-/// Returns `null` when no address signal is found.
+/// Strategy that extracts address and ubigeo fields from OCR text blocks.
 final class AddressFieldStrategy implements OcrFieldStrategy {
   const AddressFieldStrategy();
 
@@ -23,8 +15,6 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     final result = OcrExtractedFields();
     _extractAddressFromBlocks(recognized, result);
 
-    // Return the result if any address-related field landed: the street
-    // address itself OR any of the three ubigeo administrative fields.
     final hasAnyField = result.address != null ||
         result.department != null ||
         result.province != null ||
@@ -45,10 +35,6 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
         }
       }
     }
-    // Single pass: try every line as both an address anchor AND a ubigeo
-    // line. Address extraction short-circuits once a valid value lands;
-    // ubigeo extraction always runs because the three administrative
-    // fields are independent of [result.address].
     for (int i = 0; i < lines.length; i++) {
       if (result.address == null) {
         _tryExtractAddress(lines, i, result);
@@ -57,22 +43,6 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     }
   }
 
-  /// Parses the `DEPARTAMENTO/PROVINCIA/DISTRITO` line on the back of the
-  /// DNI and populates [OcrExtractedFields.department], [.province], and
-  /// [.district].
-  ///
-  /// Format on real Peruvian electronic DNI cards is one of:
-  ///
-  ///   `/CALLAO/VENTANILLA`               (department / district, no province)
-  ///   `ANCASH/SANTA/CHIMBOTE`            (3 parts)
-  ///   `LIMA/LIMA/VILLA MARIA DEL TRIUNFO` (3 parts, district has spaces)
-  ///
-  /// We always emit the **last** part as the district. When 3 parts are
-  /// present we map them positionally `[department, province, district]`.
-  /// When 2 parts are present we treat the first as the department and
-  /// the second as the district, leaving the province null — this matches
-  /// RENIEC's convention for districts that belong directly to a regional
-  /// government (e.g. Callao constitutional province).
   void _tryExtractUbigeo(String line, OcrExtractedFields result) {
     if (result.department != null &&
         result.province != null &&
@@ -81,8 +51,6 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     }
     final trimmed = line.trim().toUpperCase();
     if (!_isUbigeoLine(trimmed)) return;
-    // The form label itself is shaped like a ubigeo line (three slash-
-    // separated tokens). Skip lines that contain the literal label words.
     if (RegExp(r'\b(DEPARTAMENTO|PROVINCIA|DISTRITO)\b').hasMatch(trimmed)) {
       return;
     }
@@ -99,21 +67,15 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
       result.district ??= parts[2];
     } else if (parts.length == 2) {
       result.department ??= parts[0];
-      // province stays null — RENIEC convention for constitutional districts.
       result.district ??= parts[1];
     }
   }
 
-  /// Returns true when a single OCR line looks like a MRZ line.
   bool _looksLikeMrzLine(String line) {
     final clean = line.replaceAll(' ', '');
     return clean.length >= 20 && '<'.allMatches(clean).length >= 3;
   }
 
-  /// Three strategies, tried in order:
-  ///   1. `DOMICILIO` label — value inline or on next lines.
-  ///   2. Peruvian address prefix (`ASEN`, `AV.`, `JR.`, `CALLE`, …) — direct content.
-  ///   3. Ubigeo anchor (`DEPT/PROV/DIST`) — address is 1-3 lines above.
   void _tryExtractAddress(
     List<String> lines,
     int i,
@@ -122,12 +84,6 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     if (result.address != null) return;
     final upper = lines[i].toUpperCase().trim();
 
-    // Strategy 1 — explicit label anchor (`DOMICILIO` / `DIRECCIÓN` family).
-    //
-    // The booklet-style DNI prints `DOMICILIO`; the electronic DNI prints
-    // `Dirección` (Spanish accent, possibly with colon). We accept both
-    // spellings plus the abbreviated `DOM` / `DOM.` forms used by some
-    // older issuers.
     final isDomicilioAnchor = upper.contains('DOMICILIO') ||
         upper.startsWith('DOM ') ||
         upper == 'DOM.';
@@ -154,13 +110,11 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
       return;
     }
 
-    // Strategy 2: Peruvian address prefix on the current line.
     if (_hasAddressPrefix(upper)) {
       _assignFilteredAddress(result, _buildAddress(lines, i));
       return;
     }
 
-    // Strategy 3: Ubigeo line as anchor.
     if (_isUbigeoLine(upper)) {
       final segments = <String>[];
       for (int offset = 4; offset >= 1; offset--) {
@@ -184,8 +138,6 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     }
   }
 
-  /// Funnels a raw recovered address through [AddressNoiseFilter.cleanAddressLine] and
-  /// [AddressNoiseFilter.stripAddressLabelTail] before assigning.
   void _assignFilteredAddress(
     OcrExtractedFields result,
     String rawAddress,
@@ -197,26 +149,6 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     result.address = stripped;
   }
 
-  /// Builds the address string starting at [startIdx], collecting up to 3
-  /// additional lines while they look like address continuations.
-  ///
-  /// Three independent rules attach a candidate line:
-  ///
-  ///   1. **Prefixed continuation** — line starts with a known continuation
-  ///      prefix (`MZ.`, `LT.`, `MZA.`, `LTE.`, `NRO.`, `INT.`, `DPTO.`,
-  ///      and their bare-space variants).
-  ///   2. **Prefixed address** — line starts with a known street prefix
-  ///      (`AV.`, `JR.`, `CALLE`, `PSJ.`, `URB.`, …).
-  ///   3. **Dangling anchor recovery** — the previous line ended with an
-  ///      orphan anchor token (a bare `MZ`/`LT`/`NRO` without its value),
-  ///      and the next line carries the missing tail (e.g. `B LT.19` or
-  ///      `19`). ML Kit occasionally splits `MZ.B LT.19` across two visual
-  ///      lines depending on document tilt and lighting, so the tail line
-  ///      cannot rely on a prefix match.
-  ///
-  /// Rule 3 is gated by [_looksLikeContinuationFragment] which enforces a
-  /// 30-character cap and a label denylist so unrelated content does not
-  /// get stitched into the address.
   String _buildAddress(List<String> lines, int startIdx) {
     final parts = <String>[lines[startIdx].trim().toUpperCase()];
     for (int j = startIdx + 1; j < lines.length && j <= startIdx + 3; j++) {
@@ -234,13 +166,8 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
     return parts.join(' ');
   }
 
-  /// Detects an OCR-split continuation: previous line ends with a bare
-  /// continuation anchor (`MZ`, `LT`, `NRO`, `INT`, `DPTO`, `MZA`, `LTE`)
-  /// or a trailing dot/period, and the next line carries the missing value
-  /// (a single alphanumeric token, a `B LT.19`-shaped tail, etc.).
   bool _looksLikeContinuationFragment(String prev, String next) {
     if (prev.isEmpty || next.isEmpty) return false;
-    // Strip trailing dot for the tail check (`MZ.` ↔ `MZ`).
     final prevTail =
         prev.split(RegExp(r'\s+')).last.replaceAll(RegExp(r'\.+$'), '');
     const danglingAnchors = {
@@ -253,8 +180,6 @@ final class AddressFieldStrategy implements OcrFieldStrategy {
       'DPTO',
     };
     if (!danglingAnchors.contains(prevTail)) return false;
-    // The next line must look like an address fragment: short tokens,
-    // letters/numbers/dots only, ≤ 30 chars. Reject obvious labels.
     if (next.length > 30) return false;
     if (!RegExp(r'^[A-Z0-9. ]+$').hasMatch(next)) return false;
     if (RegExp(

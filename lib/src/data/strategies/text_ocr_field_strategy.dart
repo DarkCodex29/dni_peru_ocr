@@ -5,14 +5,6 @@ import '../../data/ocr_field_normalizer.dart';
 import 'ocr_field_strategy.dart';
 
 /// Strategy that extracts OCR fields from heuristic text-block analysis.
-///
-/// Handles label-anchored name extraction, document number, dates, and sex.
-/// Does NOT extract address — that is delegated to [AddressFieldStrategy].
-/// Does NOT set [OcrExtractedFields.hasMrzData].
-///
-/// Returns `null` when no blocks are present. Returns an
-/// [OcrExtractedFields] (possibly with all-null fields) otherwise —
-/// the coordinator decides whether to use the output.
 final class TextOcrFieldStrategy implements OcrFieldStrategy {
   const TextOcrFieldStrategy();
 
@@ -23,7 +15,6 @@ final class TextOcrFieldStrategy implements OcrFieldStrategy {
     final result = OcrExtractedFields();
     _extractFromTextBlocks(recognized, result);
 
-    // Return null only if truly nothing was found.
     final hasAnyField = result.documentNumber != null ||
         result.lastName != null ||
         result.secondLastName != null ||
@@ -67,7 +58,6 @@ final class TextOcrFieldStrategy implements OcrFieldStrategy {
       }
     }
 
-    // Pass 2: ordinal matching for two-column DNI layouts.
     if (result.lastName == null ||
         result.secondLastName == null ||
         result.firstName == null) {
@@ -75,8 +65,6 @@ final class TextOcrFieldStrategy implements OcrFieldStrategy {
     }
   }
 
-  /// Collects name labels and person-name values in document order, then
-  /// assigns them by ordinal: 1st label → 1st value, 2nd → 2nd, etc.
   void _extractNamesByOrdinal(
     List<String> lines,
     OcrExtractedFields result,
@@ -111,7 +99,6 @@ final class TextOcrFieldStrategy implements OcrFieldStrategy {
     }
   }
 
-  /// Returns true when a single OCR line looks like a MRZ line.
   bool _looksLikeMrzLine(String line) {
     final clean = line.replaceAll(' ', '');
     return clean.length >= 20 && '<'.allMatches(clean).length >= 3;
@@ -134,14 +121,6 @@ final class TextOcrFieldStrategy implements OcrFieldStrategy {
       if (value != null) result.secondLastName ??= value;
     }
 
-    // Modern DNI cards use a single "Apellidos" label (NOT "Primer/Segundo
-    // Apellido") with both surnames joined on one line: "QUIROZ REMIGIO".
-    // The back-side MRZ carries only the paternal half, so we need text-OCR
-    // here to split the joined value and seed both lastName and
-    // secondLastName for the consensus accumulator. Without this split, the
-    // back-side snapshot would show only "QUIROZ" and drop "REMIGIO".
-    // Guard the match so it does NOT collide with "PRIMER APELLIDO" /
-    // "SEGUNDO APELLIDO" (those already matched above).
     if (!upper.contains('PRIMER APEL') &&
         !upper.contains('SEGUNDO APEL') &&
         !upper.contains('PRMER APEL') &&
@@ -151,9 +130,6 @@ final class TextOcrFieldStrategy implements OcrFieldStrategy {
             upper.startsWith('APELLIDOS:'))) {
       final value = _findNameNear(lines, i);
       if (value != null) {
-        // Split "QUIROZ REMIGIO" → lastName=QUIROZ, secondLastName=REMIGIO.
-        // For 3+ tokens (compound maternal like "PEREZ DE LA CRUZ"), keep
-        // the first as paternal and join the rest as maternal.
         final tokens =
             value.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
         if (tokens.isNotEmpty) {
@@ -229,10 +205,8 @@ final class TextOcrFieldStrategy implements OcrFieldStrategy {
     if (RegExp('[0-9<>/]').hasMatch(clean)) return false;
     if (!RegExp('^[A-ZÁÉÍÓÚÑ ]+\$').hasMatch(clean)) return false;
 
-    // Reject text with too many consecutive consonants (corrupt OCR).
     if (RegExp('[BCDFGHJKLMNPQRSTVWXYZ]{4,}').hasMatch(clean)) return false;
 
-    // Reject DNI labels.
     const forbidden = [
       'REPUBLICA',
       'PERU',

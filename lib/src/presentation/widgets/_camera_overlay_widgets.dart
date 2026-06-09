@@ -6,8 +6,6 @@ Widget animatedSwitcherDedupeLayoutHelper(
 ) =>
     animatedSwitcherDedupeLayout(current, previous);
 
-// ─── Manual capture panel ─────────────────────────────────────────────────
-
 class _ManualCapturePanel extends StatelessWidget {
   const _ManualCapturePanel({
     required this.isBackSide,
@@ -68,8 +66,6 @@ class _ManualCapturePanel extends StatelessWidget {
     );
   }
 }
-
-// ─── Side intro ribbon ────────────────────────────────────────────────────
 
 class _SideIntroRibbon extends StatefulWidget {
   const _SideIntroRibbon();

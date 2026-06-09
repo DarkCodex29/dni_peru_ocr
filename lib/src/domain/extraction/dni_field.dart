@@ -1,4 +1,4 @@
-/// Public enum representing each extractable field on a Peruvian DNI.
+/// An extractable field on a Peruvian DNI.
 enum DniField {
   documentNumber,
   firstName,

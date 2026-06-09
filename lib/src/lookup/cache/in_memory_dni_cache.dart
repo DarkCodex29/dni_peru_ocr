@@ -1,10 +1,7 @@
 import '../models/dni_data.dart';
 import 'dni_cache.dart';
 
-/// Convenience [DniCache] implementation that keeps entries in a process-local
-/// [Map]. Useful for tests, demos, and apps that do not need persistence across
-/// process restarts. For production caching across sessions, implement
-/// [DniCache] backed by `shared_preferences`, Hive, sqflite, or similar.
+/// In-memory [DniCache] implementation backed by a [Map]. No persistence.
 class InMemoryDniCache implements DniCache {
   final Map<String, DniData> _store = <String, DniData>{};
 

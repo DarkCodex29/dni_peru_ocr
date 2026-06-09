@@ -1,27 +1,7 @@
 /// Utility for filtering address noise from OCR text lines.
-///
-/// Hardens address extraction against QR/barcode text artifacts
-/// (`WHAPP AGE 0-- AT 220S MG`) and corrupted label tokens
-/// (`DIRECCIS`, `DIRECCI`, …).
-///
-/// All methods are static; this class is not meant to be instantiated.
-///
-/// Design:
-///   • Per-line noise ratio: any line with > 40% non-address tokens is
-///     dropped wholesale (no partial mid-line stripping).
-///   • Address-token classifier: whitelist of Peruvian address prefixes,
-///     Spanish connectors, alphanumeric codes (`MZ.C`, `LT.20`, `3ER`,
-///     `220S`, roman I-X), and a phonotactic-shaped "likely Spanish word"
-///     check.
-///   • Label-tail strip: removes corrupted `DIRECC*` / `DOMICIL*` tokens
-///     from BOTH head and tail of the joined address.
 final class AddressNoiseFilter {
   const AddressNoiseFilter._();
 
-  /// Peruvian address prefix whitelist. Tokens are kept regardless of
-  /// length. All entries are stored with dots stripped (matching the
-  /// dot-stripping behaviour of [_normalizeToken]) so dotted
-  /// compound abbreviations like `PP.JJ.`, `A.H.`, `AA.HH.` are matched.
   static const kAddressPrefixes = <String>{
     'AV',
     'AVENIDA',
@@ -53,11 +33,8 @@ final class AddressNoiseFilter {
     'PROLG',
     'CARRETERA',
     'PISO',
-    // RENIEC SRGDD + INEI official Peru address vocabulary.
-    // Rural, residential complex, and indigenous community prefixes that
-    // real citizens carry on their DNI.
-    'CP', 'CPM', // Centro Poblado / Centro Poblado Menor
-    'CC', 'CCNN', // Comunidad Campesina / Comunidad Nativa
+    'CP', 'CPM',
+    'CC', 'CCNN',
     'CAS', 'CASERIO',
     'ANEXO', 'ANX',
     'RES', 'RESIDENCIAL',
@@ -73,7 +50,6 @@ final class AddressNoiseFilter {
     'PARQUE', 'PQ',
   };
 
-  /// Spanish short-word connectors common in addresses.
   static const kAddressConnectors = <String>{
     'DE',
     'DEL',
@@ -84,29 +60,16 @@ final class AddressNoiseFilter {
     'Y',
   };
 
-  /// Tokens that appear printed on the Peruvian DNI back as LABELS or
-  /// voting-box content, not as part of the address. These are valid
-  /// Spanish words so they pass [_isLikelySpanishWord], but they must
-  /// never enter the address output.
-  ///
-  /// All tokens are uppercased + diacritic-free for matching via
-  /// [_denylistKey].
   static const kAddressNoiseDenylist = <String>{
-    // Voting / civic boxes
     'CONSTANCIA',
     'SUFRAGIO',
-    'VOTACION', // also catches VOTACIÓN after diacritic strip
+    'VOTACION',
     'GRUPO',
     'MESA',
     'ELECCIONES',
     'ELECTORAL',
     'DOMICILIO',
-    // `DIRECCION` is denylisted as a TOKEN to prevent stray copies of the
-    // label from polluting joined address lines (e.g. ML Kit emitting
-    // `MZ.C LT.20 DIRECCION`). The label as a LINE anchor is recognised
-    // separately by [AddressFieldStrategy] before the noise filter runs,
-    // so this entry does not block label-based extraction.
-    'DIRECCION', // matches DIRECCIÓN after diacritic strip
+    'DIRECCION',
     'DEPARTAMENTO',
     'PROVINCIA',
     'DISTRITO',
@@ -120,7 +83,6 @@ final class AddressNoiseFilter {
     'NACIONALIDAD',
     'JEFA',
     'NACIONAL',
-    // RENIEC institutional / republic
     'RENIEC',
     'REPUBLICA',
     'REGISTRO',
@@ -128,12 +90,10 @@ final class AddressNoiseFilter {
     'ESTADO',
     'CIVIL',
     'SEXO',
-    // Common label corruptions from ML Kit on the tilde'd "ó":
     'DIRECCIS',
     'DIRECCI',
     'DIREC',
     'DOMICILI',
-    // DNI front-side labels (defense in depth).
     'DOCUMENTO',
     'IDENTIDAD',
     'CUI',
@@ -153,7 +113,6 @@ final class AddressNoiseFilter {
     'VIUDO',
     'VIUDA',
     'CONVIVIENTE',
-    // Migration / CE document labels.
     'CARNET',
     'EXTRANJERIA',
     'MIGRACIONES',
@@ -163,7 +122,6 @@ final class AddressNoiseFilter {
     'TEMPORAL',
     'PERMANENCIA',
     'RESOLUCION',
-    // DNIe security / spec tokens (RENIEC official).
     'DNI',
     'DNIE',
     'OACI',
@@ -174,15 +132,10 @@ final class AddressNoiseFilter {
     'FIRMA',
   };
 
-  /// Maximum allowed ratio of noise tokens per line before the whole line
-  /// is rejected. Hardcoded — no feature flag, by design.
   static const double kNoiseRatioThreshold = 0.4;
 
-  /// Per-line address noise filter. Tokenises the raw line on whitespace,
-  /// classifies each token (whitelist / code / Spanish-word / noise), and
-  /// returns the cleaned line — or `null` if the noise ratio exceeds
-  /// [kNoiseRatioThreshold] (40%) or the line lacks a structural
-  /// address anchor.
+  /// Per-line address noise filter. Returns `null` when the line lacks an
+  /// address anchor or the noise ratio exceeds [kNoiseRatioThreshold].
   static String? cleanAddressLine(String rawLine) {
     final trimmed = rawLine.trim();
     if (trimmed.isEmpty) return null;
@@ -226,8 +179,7 @@ final class AddressNoiseFilter {
     return cleanTokens.join(' ');
   }
 
-  /// Removes denylist tokens and stranded connectors from BOTH the head
-  /// and tail of an already-joined address.
+  /// Removes denylist tokens and stranded connectors from head and tail.
   static String stripAddressLabelTail(String address) {
     if (address.trim().isEmpty) return '';
     final tokens = address.trim().split(RegExp(r'\s+'));
@@ -272,13 +224,9 @@ final class AddressNoiseFilter {
     return tokens.sublist(start, end).join(' ');
   }
 
-  // ── Private helpers ───────────────────────────────────────────────────
-
-  /// Strips ALL dots and uppercases for whitelist lookup.
   static String _normalizeToken(String token) =>
       token.toUpperCase().replaceAll('.', '');
 
-  /// Strips diacritics + uppercases + removes dots for denylist lookup.
   static String _denylistKey(String token) => _normalizeToken(token)
       .replaceAll('Á', 'A')
       .replaceAll('É', 'E')
@@ -287,7 +235,6 @@ final class AddressNoiseFilter {
       .replaceAll('Ú', 'U')
       .replaceAll('Ü', 'U');
 
-  /// Recognises alphanumeric codes typical of Peruvian addresses.
   static bool _isAlphanumericCode(String token) {
     final upper = token.toUpperCase();
     if (RegExp(r'^[IVX]{1,4}$').hasMatch(upper)) return true;
@@ -304,7 +251,6 @@ final class AddressNoiseFilter {
     return false;
   }
 
-  /// Heuristic check that a token looks like a real Spanish word.
   static bool _isLikelySpanishWord(String token) {
     if (token.length < 3) return false;
     if (RegExp(r'[<>~`|\\/]').hasMatch(token)) return false;
@@ -321,7 +267,6 @@ final class AddressNoiseFilter {
     return true;
   }
 
-  /// Structural anchor: a cleaned line must look LIKE an address.
   static bool _hasAddressAnchor(List<String> tokens) {
     var hasPrefix = false;
     var hasNumericCode = false;

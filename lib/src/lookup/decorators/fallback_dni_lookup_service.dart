@@ -3,12 +3,7 @@ import 'package:dni_peru_ocr/src/lookup/services/dni_lookup_service.dart';
 
 typedef DniLookupRetryPredicate = bool Function(DniLookupResult result);
 
-/// Decorator that tries multiple [DniLookupService] instances in order,
-/// falling back to the next when the current result satisfies [retryOn].
-///
-/// By default, retries only on transient failures ([DniLookupNetworkError]
-/// and [DniLookupServerError]). Configuration errors such as
-/// [DniLookupInvalidToken] immediately stop the chain.
+/// Tries multiple [DniLookupService] instances, falling back on [retryOn].
 final class FallbackDniLookupService implements DniLookupService {
   const FallbackDniLookupService({
     required this.services,

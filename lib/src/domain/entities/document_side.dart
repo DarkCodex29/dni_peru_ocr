@@ -3,8 +3,6 @@ enum DocumentSide { front, back, unknown }
 class DocumentSideDetector {
   const DocumentSideDetector();
 
-  // Front anchors — any one is enough. Covers both Modelo 2020 and azul
-  // booklet front layouts (CUI may be missing on the azul booklet).
   static final RegExp _frontPattern = RegExp(
     r'\bC\W?[UỤÚÙÛŨŬŲ]\W?I\b'
     r'|REP[UÚÙÛŨŬ]BLICA\s+DEL\s+PER[UÚÙÛŨŬ]'
@@ -13,7 +11,6 @@ class DocumentSideDetector {
     r'|\bDNI\b\s*:?\s*\d{8}',
   );
 
-  // Back anchors — both DNI generations share these.
   static final RegExp _backPattern = RegExp(
     r'DONACI[ÓO]N\s+DE\s+[ÓO]RGANOS'
     r'|CONSTANCIA\s+DE\s+SUFRAGIO',

@@ -6,8 +6,6 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
-// ── Abstraction ───────────────────────────────────────────────────────────────
-
 /// Injectable abstraction over image compression.
 abstract class ImageCompressor {
   Future<Uint8List> compress(
@@ -17,8 +15,6 @@ abstract class ImageCompressor {
     int minHeight,
   });
 }
-
-// ── Production implementation ─────────────────────────────────────────────────
 
 /// Delegates to [FlutterImageCompress.compressWithFile].
 class FlutterImageCompressor implements ImageCompressor {
@@ -43,8 +39,6 @@ class FlutterImageCompressor implements ImageCompressor {
   }
 }
 
-// ── KycImageUtils ─────────────────────────────────────────────────────────────
-
 /// Utility class for KYC image processing operations.
 class KycImageUtils {
   KycImageUtils({ImageCompressor? compressor})
@@ -53,16 +47,10 @@ class KycImageUtils {
   final ImageCompressor _compressor;
 
   /// Compresses an image at [imagePath] for KYC upload.
-  ///
-  /// Returns JPEG-encoded [Uint8List] at 92% quality, minimum 1600×1000px.
   Future<Uint8List> compressForUpload(String imagePath) =>
       _compressor.compress(imagePath);
 
-  /// Crops a captured DNI photo to the exact document area visible through
-  /// the overlay hole. Uses the same BoxFit.cover transform that CameraPreview
-  /// applies so the crop maps 1:1 to what the user sees on screen.
-  /// Falls back to the original path on any failure (OOM, decode error, IO
-  /// error) so the capture pipeline never crashes the app.
+  /// Crops a captured DNI photo to the document area. Returns [sourcePath] on failure.
   static Future<String> cropToDocumentArea(
     String sourcePath, {
     required double holeWidth,
@@ -76,9 +64,6 @@ class KycImageUtils {
       var decoded = img.decodeImage(bytes);
       if (decoded == null) return sourcePath;
 
-      // Mid-range Androids OOM when decoding 12MP photos (~48MB RGBA) and
-      // then copyCrop allocates another buffer. Downscale first to keep
-      // memory under control on the main isolate.
       if (decoded.width > maxDimension || decoded.height > maxDimension) {
         decoded = decoded.width >= decoded.height
             ? img.copyResize(decoded, width: maxDimension)
@@ -88,9 +73,6 @@ class KycImageUtils {
       final srcW = decoded.width;
       final srcH = decoded.height;
 
-      // BoxFit.cover scale: same transform CameraPreview applies.
-      // Converts hole DP → camera image pixels so the crop matches exactly
-      // what was visible through the overlay.
       final coverScale = (screenSize.width / srcW) > (screenSize.height / srcH)
           ? screenSize.width / srcW
           : screenSize.height / srcH;
@@ -117,8 +99,6 @@ class KycImageUtils {
       await File(outPath).writeAsBytes(img.encodePng(cropped));
       return outPath;
     } on Object catch (_) {
-      // Includes OOM (Error), decode failures, IO failures — anything that
-      // would otherwise crash the camera pipeline.
       return sourcePath;
     }
   }

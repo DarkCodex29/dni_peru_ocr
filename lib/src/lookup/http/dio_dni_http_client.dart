@@ -4,9 +4,6 @@ import 'package:dni_peru_ocr/src/lookup/http/dni_http_client.dart';
 import 'package:dni_peru_ocr/src/lookup/models/dni_http_response.dart';
 
 /// Dio-backed implementation of [DniHttpClient].
-///
-/// The [Dio] instance is provided by the consumer and MUST be pre-configured
-/// (timeouts, interceptors, proxy). This class does NOT configure Dio internally.
 final class DioDniHttpClient implements DniHttpClient {
   const DioDniHttpClient(this.dio);
 

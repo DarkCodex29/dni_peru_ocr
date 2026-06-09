@@ -9,11 +9,6 @@ import 'strategies/text_ocr_field_strategy.dart';
 import '../domain/interfaces/ocr_logger.dart';
 
 /// Container for fields extracted from a single OCR frame.
-///
-/// Mutable on purpose: the extractor merges values across frames in-place.
-/// A snapshot of [_fromMrz] tracks whether the values originated from
-/// MRZ checksum-valid parsing (highest confidence) or from text-OCR
-/// fallback heuristics. MRZ values always win on merge.
 class OcrExtractedFields {
   String? documentNumber;
   String? firstName;
@@ -24,32 +19,12 @@ class OcrExtractedFields {
   String? expirationDate;
   String? nationality;
   String? address;
-
-  /// Administrative region (department) parsed from the ubigeo line on the
-  /// back of the DNI. Format example: `ANCASH`, `LIMA`, `CALLAO`.
-  ///
-  /// The MRZ does NOT carry ubigeo data; this field is always populated
-  /// by [AddressFieldStrategy] from the text-OCR `DEPARTAMENTO/PROVINCIA/
-  /// DISTRITO` line on the reverse side. Will be `null` when the line is
-  /// missing from the scan or fails to parse.
   String? department;
-
-  /// Administrative sub-region (province) within [department]. Same source
-  /// and same null-semantics as [department].
   String? province;
-
-  /// Administrative locality (district) within [province]. Same source and
-  /// same null-semantics as [department].
   String? district;
 
-  /// Merges [other] into this instance.
-  ///
-  /// MRZ-sourced incoming always wins over text-OCR current.
-  /// Pass an optional [logger] to record OCR/MRZ mismatch breadcrumbs.
-  /// Defaults to a [NoOpOcrLogger] (silent) when not provided.
+  /// Merges [other] into this instance. MRZ-sourced values win.
   void merge(OcrExtractedFields other, {OcrLogger? logger}) {
-    // MRZ-sourced incoming always wins over text-OCR current.
-    // When merging text into an MRZ accumulator, MRZ is preserved.
     final incomingIsMrz = other._fromMrz;
     final currentIsMrz = _fromMrz;
     final effectiveLogger = logger ?? const NoOpOcrLogger();
@@ -105,7 +80,6 @@ class OcrExtractedFields {
       currentIsMrz: currentIsMrz,
     );
 
-    // address is never MRZ-sourced; prefer the longer (more complete) value.
     address = _best(
       address,
       other.address,
@@ -113,9 +87,6 @@ class OcrExtractedFields {
       currentIsMrz: false,
     );
 
-    // Ubigeo fields (department / province / district) are exclusively
-    // text-OCR-sourced — the MRZ does NOT carry them. We merge with the
-    // same "non-null wins, longer wins on tie" rule used for address.
     department = _best(
       department,
       other.department,
@@ -135,11 +106,9 @@ class OcrExtractedFields {
       currentIsMrz: false,
     );
 
-    // Promote MRZ flag if incoming was MRZ-sourced.
     if (incomingIsMrz) _fromMrz = true;
   }
 
-  /// Merges [documentNumber] with a logger breadcrumb on mismatch.
   String? _bestWithMrz({
     required String? current,
     required String? incoming,
@@ -151,7 +120,6 @@ class OcrExtractedFields {
     if (incoming == null || incoming.isEmpty) return current;
     if (current == null || current.isEmpty) return incoming;
 
-    // MRZ incoming wins unconditionally over text-OCR current.
     if (incomingIsMrz && !currentIsMrz) {
       if (incoming != current) {
         _reportMismatch(fieldName,
@@ -160,10 +128,8 @@ class OcrExtractedFields {
       return incoming;
     }
 
-    // Text-OCR incoming does NOT overwrite an MRZ-sourced current.
     if (!incomingIsMrz && currentIsMrz) return current;
 
-    // Both same source — prefer longer (original heuristic).
     return incoming.length >= current.length ? incoming : current;
   }
 
@@ -179,7 +145,6 @@ class OcrExtractedFields {
     if (incomingIsMrz && !currentIsMrz) return incoming;
     if (!incomingIsMrz && currentIsMrz) return current;
 
-    // Both same source — prefer longer (original heuristic).
     return incoming.length >= current.length ? incoming : current;
   }
 
@@ -205,16 +170,9 @@ class OcrExtractedFields {
   bool get hasMrzData => _fromMrz;
   bool _fromMrz = false;
 
-  /// Marks this instance as MRZ-sourced.
-  ///
-  /// Called by [MrzFieldStrategy] after a successful MRZ parse.
-  /// Callers outside this package should use [hasMrzData] for reads.
   // ignore: avoid_setters_without_getters
   set markAsMrzSourced(bool value) => _fromMrz = value;
 
-  /// Test-only helper — marks this instance as MRZ-sourced without going
-  /// through the full MRZ parsing path. Callers should use [hasMrzData]
-  /// for reads; a dedicated getter is intentionally omitted here.
   @visibleForTesting
   // ignore: avoid_setters_without_getters
   set fromMrzForTest(bool value) => _fromMrz = value;
@@ -234,10 +192,6 @@ class OcrExtractedFields {
         'Distrito': district,
       };
 
-  /// Fields that the MRZ parser can populate (when MRZ checksum is valid).
-  /// The MRZ ICAO 9303 TD1 format used by Peruvian DNI carries the document
-  /// number, surnames, given names, birth date, sex, expiry, and nationality.
-  /// It does NOT carry the address — that field always comes from text-OCR.
   static const _kMrzSourcedKeys = {
     'N° Documento',
     'Apellido paterno',
@@ -254,10 +208,6 @@ class OcrExtractedFields {
     final buf = StringBuffer();
     for (final entry in fields.entries) {
       final status = entry.value != null ? '✅' : '⬜';
-      // Per-field source tag: an MRZ-sourced accumulator can only attach
-      // [MRZ] to fields the MRZ actually carries. The address is never in
-      // the MRZ — even when this accumulator is MRZ-sourced, the address
-      // came from text-OCR, so it must NOT be tagged [MRZ].
       final src =
           (_fromMrz && _kMrzSourcedKeys.contains(entry.key)) ? ' [MRZ]' : '';
       buf.writeln('$status ${entry.key}: ${entry.value ?? '—'}$src');
@@ -266,25 +216,8 @@ class OcrExtractedFields {
   }
 }
 
-/// Thin coordinator that turns [RecognizedText] into [OcrExtractedFields]
-/// by delegating to three focused strategies.
-///
-/// Strategy order:
-/// 1. [MrzFieldStrategy] — highest confidence, all fields except address.
-/// 2. [TextOcrFieldStrategy] — label-anchored heuristics (skipped when MRZ
-///    succeeded, except for `secondLastName` back-fill on DNI azul).
-/// 3. [AddressFieldStrategy] — always runs (address is never in MRZ).
-///
-/// All strategies are stateless. The default instance uses the standard
-/// three strategies; pass a custom [List<OcrFieldStrategy>] to the
-/// constructor for testing or alternative pipelines.
-///
-/// Pass an [OcrLogger] to receive breadcrumb events (e.g. OCR/MRZ mismatch).
-/// Defaults to [NoOpOcrLogger] when not provided.
+/// Coordinator that turns [RecognizedText] into [OcrExtractedFields].
 class OcrFieldExtractor {
-  /// Creates a coordinator with optional strategies and logger.
-  ///
-  /// [logger] defaults to [NoOpOcrLogger] (no-op) when not supplied.
   const OcrFieldExtractor({
     List<OcrFieldStrategy>? strategies,
     OcrLogger logger = const NoOpOcrLogger(),
@@ -294,7 +227,6 @@ class OcrFieldExtractor {
   final List<OcrFieldStrategy>? _strategies;
   final OcrLogger _logger;
 
-  /// Runs the extraction pipeline using this instance's strategy list.
   OcrExtractedFields extractWith(RecognizedText recognized) {
     final mrz = _mrzStrategy;
     final text = _textStrategy;
@@ -314,11 +246,6 @@ class OcrFieldExtractor {
       _strategies?.whereType<AddressFieldStrategy>().firstOrNull ??
       const AddressFieldStrategy();
 
-  /// Runs the extraction pipeline on [recognized] and returns the merged
-  /// [OcrExtractedFields]. Returns an empty instance when no blocks are
-  /// present.
-  ///
-  /// Uses the default three strategies (MRZ → Text → Address).
   static OcrExtractedFields extract(RecognizedText recognized) {
     return _runPipeline(
       recognized,
@@ -339,12 +266,9 @@ class OcrFieldExtractor {
     final empty = OcrExtractedFields();
     if (recognized.blocks.isEmpty) return empty;
 
-    // Step 1: Try MRZ — highest confidence source.
     final mrzResult = mrzStrategy.extract(recognized);
 
     if (mrzResult != null) {
-      // Step 2 (address + ubigeo): always runs — neither the address nor
-      // the administrative location fields live in the MRZ.
       final addressResult = addressStrategy.extract(recognized);
       if (addressResult != null) {
         if (addressResult.address != null) {
@@ -361,9 +285,6 @@ class OcrFieldExtractor {
         }
       }
 
-      // Step 3 (secondLastName back-fill): DNI azul has the "Segundo Apellido"
-      // label on the same physical side as the MRZ. MRZ only carries one
-      // surname, so extract the second surname from text if MRZ missed it.
       if (mrzResult.secondLastName == null) {
         final textResult = textStrategy.extract(recognized);
         if (textResult?.secondLastName != null) {
@@ -374,10 +295,8 @@ class OcrFieldExtractor {
       return mrzResult;
     }
 
-    // Step 1 failed: run text-OCR extraction.
     final textResult = textStrategy.extract(recognized) ?? OcrExtractedFields();
 
-    // Step 2 (address + ubigeo): always runs.
     final addressResult = addressStrategy.extract(recognized);
     if (addressResult != null) {
       if (addressResult.address != null) {
@@ -397,22 +316,9 @@ class OcrFieldExtractor {
     return textResult;
   }
 
-  // ── Address noise filter delegators ──────────────────────────────────
-  //
-  // The actual implementation lives in [AddressNoiseFilter].
-  // These delegating static methods preserve the public API surface so
-  // existing callers (including the 1621-line regression test) keep
-  // working without modification.
-
-  /// Per-line address noise filter.
-  ///
-  /// Delegates to [AddressNoiseFilter.cleanAddressLine].
   static String? cleanAddressLine(String rawLine) =>
       AddressNoiseFilter.cleanAddressLine(rawLine);
 
-  /// Removes denylist tokens from both the head and tail of an address.
-  ///
-  /// Delegates to [AddressNoiseFilter.stripAddressLabelTail].
   static String stripAddressLabelTail(String address) =>
       AddressNoiseFilter.stripAddressLabelTail(address);
 }

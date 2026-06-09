@@ -17,6 +17,9 @@ import '../../domain/extraction/hunt_state_machine.dart';
 import '../../infrastructure/detector_lifecycle.dart';
 import '../../infrastructure/dni_logger.dart';
 import '../../infrastructure/input_image_converter.dart';
+import '../../lookup/models/dni_data.dart';
+import '../../lookup/models/dni_lookup_result.dart';
+import '../../lookup/services/dni_lookup_service.dart';
 import '../theme/kyc_theme.dart';
 
 class DniScanResult {
@@ -24,11 +27,13 @@ class DniScanResult {
     required this.frontPhoto,
     required this.backPhoto,
     required this.hunt,
+    this.reniecData,
   });
 
   final XFile frontPhoto;
   final XFile backPhoto;
   final HuntResult hunt;
+  final DniData? reniecData;
 }
 
 class DniScanner extends StatefulWidget {
@@ -39,6 +44,9 @@ class DniScanner extends StatefulWidget {
     this.hunter,
     this.stateMachine,
     this.fields,
+    this.lookupService,
+    this.lookupTimeout = const Duration(milliseconds: 2500),
+    this.onDniReady,
     this.idleFramesBeforeCapture = 18,
     this.holeWidth = 300,
     this.holeHeight = 220,
@@ -49,10 +57,20 @@ class DniScanner extends StatefulWidget {
   final FieldHunter? hunter;
   final HuntStateMachine? stateMachine;
 
-  /// Restricts OCR extraction to the specified fields. When null, all 19
-  /// fields are extracted (v0.10.0 behavior). Only applies to the
-  /// FieldHunter path; has no effect when [hunter] is provided directly.
   final DniFields? fields;
+
+  /// When provided, fires a RENIEC lookup against [lookupService] as soon
+  /// as the front-side capture exposes a [documentNumber]. The result is
+  /// delivered via [onDniReady] and bundled into [DniScanResult.reniecData].
+  final DniLookupService? lookupService;
+
+  /// Timeout for the RENIEC lookup. Defaults to 2500ms.
+  final Duration lookupTimeout;
+
+  /// Fires once when the RENIEC lookup resolves with a successful payload.
+  /// Hosts that want to enrich UI state mid-scan can listen here.
+  final void Function(DniData data)? onDniReady;
+
   final int idleFramesBeforeCapture;
   final double holeWidth;
   final double holeHeight;
@@ -75,6 +93,9 @@ class _DniScannerState extends State<DniScanner>
   bool _torchOn = false;
   XFile? _frontPhoto;
   XFile? _backPhoto;
+  DniData? _reniecData;
+  Future<void>? _reniecLookup;
+  String? _lookupAttemptedDni;
   HuntPhase _lastPhaseRendered = HuntPhase.waitingFront;
   Offset? _focusIndicator;
   Timer? _focusIndicatorTimer;
@@ -238,12 +259,38 @@ class _DniScannerState extends State<DniScanner>
           await _cropToHole(raw, suffix: 'front', preview: preview) ?? raw;
       _frontPhoto = cropped;
       _stateMachine.advanceToWaitingBack();
-      DniLogger.info('DniScanner', 'FRONT CAPTURED — advancing to waitingBack');
+      _maybeStartLookup();
       HapticFeedback.mediumImpact();
     } on CameraException catch (e) {
       DniLogger.error('DniScanner', 'front capture failed: ${e.code}');
     } finally {
       _capturing = false;
+    }
+  }
+
+  void _maybeStartLookup() {
+    final service = widget.lookupService;
+    if (service == null) return;
+    final dni = _hunter.snapshot.fields.documentNumber;
+    if (dni == null || dni.isEmpty) return;
+    if (_lookupAttemptedDni == dni) return;
+    _lookupAttemptedDni = dni;
+    _reniecLookup = _runLookup(service, dni);
+  }
+
+  Future<void> _runLookup(DniLookupService service, String dni) async {
+    try {
+      final result = await service
+          .lookup(dni)
+          .timeout(widget.lookupTimeout, onTimeout: () =>
+              const DniLookupNetworkError());
+      if (!mounted) return;
+      if (result is DniLookupSuccess && result.data.dni == dni) {
+        _reniecData = result.data;
+        widget.onDniReady?.call(result.data);
+      }
+    } catch (_) {
+      // graceful: missing data is acceptable, OCR remains source of truth
     }
   }
 
@@ -258,18 +305,18 @@ class _DniScannerState extends State<DniScanner>
           await _cropToHole(raw, suffix: 'back', preview: preview) ?? raw;
       _backPhoto = cropped;
       _stateMachine.advanceToDone();
+      _maybeStartLookup();
+      if (_reniecLookup != null) {
+        await _reniecLookup;
+      }
       if (_frontPhoto != null) {
         final finalSnapshot = _hunter.snapshot;
-        DniLogger.info(
-          'DniScanner',
-          'BACK CAPTURED — scan complete. Final snapshot:\n'
-              '${_dumpFields(finalSnapshot.fields)}',
-        );
         widget.onScanComplete(
           DniScanResult(
             frontPhoto: _frontPhoto!,
             backPhoto: cropped,
             hunt: finalSnapshot,
+            reniecData: _reniecData,
           ),
         );
       }
@@ -345,28 +392,6 @@ class _DniScannerState extends State<DniScanner>
     }
   }
 
-  String _dumpFields(ExtractedFields f) {
-    return '''
-  documentNumber  = ${f.documentNumber ?? '∅'}
-  firstName       = ${f.firstName ?? '∅'}
-  lastName        = ${f.lastName ?? '∅'}
-  secondLastName  = ${f.secondLastName ?? '∅'}
-  dateOfBirth     = ${f.dateOfBirth ?? '∅'}
-  expirationDate  = ${f.expirationDate ?? '∅'}
-  emissionDate    = ${f.emissionDate ?? '∅'}
-  inscriptionDate = ${f.inscriptionDate ?? '∅'}
-  sex             = ${f.sex ?? '∅'}
-  nationality     = ${f.nationality ?? '∅'}
-  address         = ${f.address ?? '∅'}
-  department      = ${f.department ?? '∅'}
-  province        = ${f.province ?? '∅'}
-  district        = ${f.district ?? '∅'}
-  stateCivil      = ${f.stateCivil ?? '∅'}
-  cardNumber      = ${f.cardNumber ?? '∅'}
-  organDonor      = ${f.organDonor ?? '∅'}
-  votingGroup     = ${f.votingGroup ?? '∅'}
-  birthUbigeoCode = ${f.birthUbigeoCode ?? '∅'}''';
-  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {

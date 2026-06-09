@@ -6,8 +6,6 @@ import 'package:dni_peru_ocr/src/lookup/models/dni_lookup_result.dart';
 import 'package:dni_peru_ocr/src/lookup/services/dni_lookup_service.dart';
 
 /// Resolves DNI data using the ApisPeru endpoint.
-///
-/// Endpoint: `GET https://dniruc.apisperu.com/api/v1/dni/{dni}?token={jwt}`
 final class ApisPeruLookupService implements DniLookupService {
   const ApisPeruLookupService({
     required this.token,
