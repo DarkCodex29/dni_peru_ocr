@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
 import 'package:dni_peru_ocr/src/lookup/http/dio_dni_http_client.dart';
-import 'package:dni_peru_ocr/src/lookup/models/dni_http_response.dart';
 
 class _MockDio extends Mock implements Dio {}
 
