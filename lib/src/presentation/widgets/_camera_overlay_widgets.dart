@@ -224,55 +224,6 @@ class _G1TelemetryOverlay extends StatelessWidget {
   }
 }
 
-// ─── Guide text banner ────────────────────────────────────────────────────
-
-class _GuideTextBanner extends StatelessWidget {
-  const _GuideTextBanner({
-    required this.text,
-    required this.holeHeight,
-    this.insideHole = false,
-  });
-  final String text;
-  final double holeHeight;
-  final bool insideHole;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = KycTheme.of(context);
-    final screenH = MediaQuery.sizeOf(context).height;
-    final holeBottom = screenH / 2 + holeHeight / 2;
-    final top = insideHole ? holeBottom - 52 : holeBottom + 16;
-    return Positioned(
-      top: top,
-      left: 32,
-      right: 32,
-      child: AnimatedSwitcher(
-        duration: const Duration(
-          milliseconds: CameraOverlayTuning.switcherFadeMs,
-        ),
-        layoutBuilder: animatedSwitcherDedupeLayoutHelper,
-        child: Container(
-          key: ValueKey(text),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(
-            color: theme.overlayMedium,
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Text(
-            text,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: theme.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // ─── Data match indicator ────────────────────────────────────────────────
 
 class _DataMatchIndicator extends StatelessWidget {
@@ -331,50 +282,4 @@ class _DataMatchIndicator extends StatelessWidget {
   }
 }
 
-// ─── Flash toggle ─────────────────────────────────────────────────────────
 
-class _FlashToggle extends StatelessWidget {
-  const _FlashToggle({
-    required this.isOn,
-    required this.onToggle,
-    super.key,
-  });
-  final bool isOn;
-  final VoidCallback onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = KycTheme.of(context);
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onToggle();
-      },
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: isOn
-              ? theme.warningIcon
-              : Colors.black.withValues(alpha: 0.55),
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: theme.white.withValues(alpha: 0.85),
-            width: 2,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.35),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Icon(
-          isOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
-          color: theme.white,
-          size: 26,
-        ),
-      ),
-    );
-  }
-}

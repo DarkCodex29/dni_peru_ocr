@@ -167,7 +167,7 @@ class ScannerFlashToggle extends StatelessWidget {
         unawaited(onToggle());
       },
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isOn
               ? theme.warningIcon
@@ -188,7 +188,7 @@ class ScannerFlashToggle extends StatelessWidget {
         child: Icon(
           isOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
           color: theme.white,
-          size: 20,
+          size: 22,
         ),
       ),
     );

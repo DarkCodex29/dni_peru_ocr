@@ -143,7 +143,7 @@ void main() {
   });
 
   group('_FlashToggle — icon size', () {
-    testWidgets('flash icon has size 26', (tester) async {
+    testWidgets('flash icon has size 22', (tester) async {
       final cam = _idleMock();
       await tester.pumpWidget(_buildApp(cam));
       await tester.pump();
@@ -155,8 +155,8 @@ void main() {
             i.icon == Icons.flash_on_rounded,
       );
       expect(flashIcons, isNotEmpty, reason: 'Flash icon not found');
-      expect(flashIcons.first.size, equals(26.0),
-          reason: 'Flash icon should be size 26');
+      expect(flashIcons.first.size, equals(22.0),
+          reason: 'Flash icon should be size 22 (shared ScannerFlashToggle)');
 
       await _dispose(tester);
     });

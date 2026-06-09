@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.12.1
+
+### Changed
+- `DniCameraMask` now uses shared `ScannerHint` and `ScannerFlashToggle` widgets
+  (same as `DniScanner`). Hint pill appears below the document frame; flash
+  toggle is centered at the bottom with high-contrast black background, white
+  border, and shadow.
+- Flash toggle icon size increased to 22 (was 20) and padding to 12 (was 10)
+  to meet Material accessibility 44×44 touch target minimum.
+- Removed legacy `_GuideTextBanner` and `_FlashToggle` from
+  `_camera_overlay_widgets.dart` — single source of truth.
+
+### Notes
+- No public API change.
+- Consumers using `DniCameraMask` (Inclub, etc.) now see the same in-camera
+  chrome that `DniScanner` already used in the example app: orange gradient
+  banner, dark hint pill, accessible flash toggle.
+
 ## 0.12.0
 
 ### Changed

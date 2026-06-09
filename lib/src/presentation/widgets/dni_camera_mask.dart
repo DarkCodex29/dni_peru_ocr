@@ -791,20 +791,23 @@ class _DniCameraMaskState extends State<DniCameraMask>
                 right: 52,
                 child: widget.topContent!,
               ),
-            // Flash toggle
             Positioned(
               bottom: manualModeActive
-                  ? MediaQuery.of(context).padding.bottom + 56
-                  : MediaQuery.of(context).padding.bottom + 24,
-              right: 24,
-              child: AnimatedSwitcher(
-                duration: const Duration(
-                  milliseconds: CameraOverlayTuning.torchSwitcherFadeMs,
-                ),
-                child: _FlashToggle(
-                  key: ValueKey<bool>(_torchOn),
-                  isOn: _torchOn,
-                  onToggle: _toggleTorch,
+                  ? MediaQuery.of(context).padding.bottom + 96
+                  : MediaQuery.of(context).padding.bottom + 32,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: AnimatedSwitcher(
+                  duration: const Duration(
+                    milliseconds: CameraOverlayTuning.torchSwitcherFadeMs,
+                  ),
+                  child: ScannerFlashToggle(
+                    key: ValueKey<bool>(_torchOn),
+                    isOn: _torchOn,
+                    onToggle: _toggleTorch,
+                    theme: theme,
+                  ),
                 ),
               ),
             ),
@@ -838,10 +841,15 @@ class _DniCameraMaskState extends State<DniCameraMask>
                 ),
               )
             else if (!manualModeActive)
-              _GuideTextBanner(
-                text: _guideText,
-                holeHeight: widget.holeHeight,
-                insideHole: false,
+              Positioned(
+                top: MediaQuery.sizeOf(context).height / 2 +
+                    widget.holeHeight / 2 +
+                    16,
+                left: 32,
+                right: 32,
+                child: Center(
+                  child: ScannerHint(hint: _guideText, theme: theme),
+                ),
               ),
             if (_showFlash)
               IgnorePointer(
