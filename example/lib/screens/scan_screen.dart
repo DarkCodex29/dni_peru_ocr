@@ -6,7 +6,6 @@ import 'package:dni_peru_ocr/dni_peru_ocr.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-import '../lookup/in_memory_dni_cache.dart';
 import '../widgets/loading_overlay.dart';
 import 'error_screen.dart';
 import 'result_screen_v2.dart';

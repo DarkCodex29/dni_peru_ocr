@@ -69,5 +69,6 @@ export 'src/lookup/services/reniec_sunat_lookup_service.dart';
 export 'src/lookup/http/dni_http_client.dart';
 export 'src/lookup/http/dio_dni_http_client.dart';
 export 'src/lookup/cache/dni_cache.dart';
+export 'src/lookup/cache/in_memory_dni_cache.dart';
 export 'src/lookup/decorators/caching_dni_lookup_service.dart';
 export 'src/lookup/decorators/fallback_dni_lookup_service.dart';

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.0
+
+### Added
+- `InMemoryDniCache` — public convenience implementation of `DniCache` backed
+  by a `Map<String, DniData>`. Useful for tests, demos, and consumer apps that
+  do not need persistence across process restarts. For production cross-session
+  caching, consumers can still implement `DniCache` backed by Hive,
+  `shared_preferences`, sqflite, etc.
+
+### Notes
+- Additive only. No public API change beyond the new export.
+- The example app used to ship its own `InMemoryDniCache` copy; that file was
+  removed and the example now consumes the library's implementation.
+
 ## 0.12.1
 
 ### Changed
