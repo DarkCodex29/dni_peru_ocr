@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.16.0
+
+### Changed (BREAKING)
+- `DniData` identity fields (`nombres`, `apellidoPaterno`,
+  `apellidoMaterno`, `nombreCompleto`) are now `String?` instead of
+  `String`. A `null` value means "not selected in `DniFields`" or "not
+  returned by the lookup source", which consumers can distinguish from
+  an empty string returned by a backend.
+- `DniDataMerger` now returns `null` instead of `''` for fields the
+  consumer did not request via `DniFields`.
+
+### Migration
+- Consumers that called `data.nombres.trim()` (etc.) must guard against
+  `null`: `(data.nombres ?? '').trim()`.
+
 ## 0.15.2
 
 ### Changed

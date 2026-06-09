@@ -321,7 +321,7 @@ void main() {
           {DniField.documentNumber, DniField.address},
         ),
       );
-      expect(result.nombreCompleto, isEmpty);
+      expect(result.nombreCompleto, isNull);
     });
 
     test(
@@ -360,7 +360,7 @@ void main() {
           {DniField.documentNumber, DniField.address},
         ),
       );
-      expect(result.nombreCompleto, isEmpty);
+      expect(result.nombreCompleto, isNull);
     });
 
     test('fields: kyc() → nombre, apellidos, address populated; '

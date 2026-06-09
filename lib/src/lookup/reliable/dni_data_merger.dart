@@ -10,23 +10,15 @@ final class DniDataMerger {
     required DniData reniec,
     DniFields? fields,
   }) {
-    final nombres =
-        reniec.nombres.trim().isNotEmpty ? reniec.nombres : ocr.nombres;
-    final apellidoPaterno = reniec.apellidoPaterno.trim().isNotEmpty
-        ? reniec.apellidoPaterno
-        : ocr.apellidoPaterno;
-    final apellidoMaterno = reniec.apellidoMaterno.trim().isNotEmpty
-        ? reniec.apellidoMaterno
-        : ocr.apellidoMaterno;
-    final nombreCompleto = reniec.nombreCompleto.trim().isNotEmpty
-        ? reniec.nombreCompleto
-        : ocr.nombreCompleto;
+    final nombres = _pick(reniec.nombres, ocr.nombres);
+    final apellidoPaterno = _pick(reniec.apellidoPaterno, ocr.apellidoPaterno);
+    final apellidoMaterno = _pick(reniec.apellidoMaterno, ocr.apellidoMaterno);
+    final nombreCompleto = _pick(reniec.nombreCompleto, ocr.nombreCompleto);
 
-    final ubigeo = _mergeOptional(reniec.ubigeo, ocr.ubigeo);
-    final departamento =
-        _mergeOptional(reniec.departamento, ocr.departamento);
-    final provincia = _mergeOptional(reniec.provincia, ocr.provincia);
-    final distrito = _mergeOptional(reniec.distrito, ocr.distrito);
+    final ubigeo = _pick(reniec.ubigeo, ocr.ubigeo);
+    final departamento = _pick(reniec.departamento, ocr.departamento);
+    final provincia = _pick(reniec.provincia, ocr.provincia);
+    final distrito = _pick(reniec.distrito, ocr.distrito);
 
     if (fields == null || fields.length == DniField.values.length) {
       return DniData(
@@ -50,12 +42,12 @@ final class DniDataMerger {
 
     return DniData(
       dni: ocr.dni,
-      nombres: fields.contains(DniField.firstName) ? nombres : '',
+      nombres: fields.contains(DniField.firstName) ? nombres : null,
       apellidoPaterno:
-          fields.contains(DniField.lastName) ? apellidoPaterno : '',
+          fields.contains(DniField.lastName) ? apellidoPaterno : null,
       apellidoMaterno:
-          fields.contains(DniField.secondLastName) ? apellidoMaterno : '',
-      nombreCompleto: hasAnyNameField ? nombreCompleto : '',
+          fields.contains(DniField.secondLastName) ? apellidoMaterno : null,
+      nombreCompleto: hasAnyNameField ? nombreCompleto : null,
       ubigeo: fields.contains(DniField.department) ? ubigeo : null,
       departamento:
           fields.contains(DniField.department) ? departamento : null,
@@ -66,7 +58,7 @@ final class DniDataMerger {
     );
   }
 
-  String? _mergeOptional(String? reniecField, String? ocrField) {
+  String? _pick(String? reniecField, String? ocrField) {
     if (reniecField != null && reniecField.trim().isNotEmpty) {
       return reniecField;
     }

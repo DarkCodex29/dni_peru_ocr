@@ -1,11 +1,16 @@
 /// Enriched person data resolved from a Peruvian DNI number.
+///
+/// All identity fields are nullable. A `null` value means "not selected
+/// in [DniFields]" or "not returned by the lookup source" — consumers
+/// must distinguish that from an empty string that may legitimately come
+/// from a backend.
 final class DniData {
   const DniData({
     required this.dni,
-    required this.nombres,
-    required this.apellidoPaterno,
-    required this.apellidoMaterno,
-    required this.nombreCompleto,
+    this.nombres,
+    this.apellidoPaterno,
+    this.apellidoMaterno,
+    this.nombreCompleto,
     this.ubigeo,
     this.departamento,
     this.provincia,
@@ -15,10 +20,10 @@ final class DniData {
   });
 
   final String dni;
-  final String nombres;
-  final String apellidoPaterno;
-  final String apellidoMaterno;
-  final String nombreCompleto;
+  final String? nombres;
+  final String? apellidoPaterno;
+  final String? apellidoMaterno;
+  final String? nombreCompleto;
   final String? ubigeo;
   final String? departamento;
   final String? provincia;
