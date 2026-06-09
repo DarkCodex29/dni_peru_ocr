@@ -21,13 +21,14 @@ class HuntStateMachine {
     this.idleFramesThreshold = 18,
     this.fastAdvanceThreshold = 14,
     this.minFieldsForFastAdvance = 12,
-  });
+    HuntPhase initialPhase = HuntPhase.waitingFront,
+  }) : _phase = initialPhase;
 
   final int idleFramesThreshold;
   final int fastAdvanceThreshold;
   final int minFieldsForFastAdvance;
 
-  HuntPhase _phase = HuntPhase.waitingFront;
+  HuntPhase _phase;
   int _idleFrames = 0;
 
   HuntPhase get phase => _phase;

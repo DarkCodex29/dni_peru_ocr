@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.15.0
+
+### Added
+- `DniScanner` single-side mode: pass `isBackSide: false` to scan only
+  the front, `isBackSide: true` to scan only the back. The scanner emits
+  the new `DniSideScanResult` via `onSideCaptured`. Two-sided mode
+  (legacy default with `isBackSide: null`) remains unchanged.
+- `DniSideScanResult` — payload for single-side captures (`photo`,
+  `isBackSide`, `hunt`, `reniecData`).
+- `HuntStateMachine` accepts `initialPhase`, so single-side mode can
+  start directly at `waitingBack`.
+
+### Notes
+- Single-side mode enables consumers like Inclub to keep step-by-step
+  flows (with intermediate backend uploads between sides) while still
+  using the bundled scanner UI.
+
 ## 0.14.0
 
 ### Added

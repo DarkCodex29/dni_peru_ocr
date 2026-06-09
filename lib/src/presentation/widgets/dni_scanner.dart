@@ -36,11 +36,28 @@ class DniScanResult {
   final DniData? reniecData;
 }
 
+/// Result emitted by [DniScanner] in single-side mode.
+class DniSideScanResult {
+  const DniSideScanResult({
+    required this.photo,
+    required this.isBackSide,
+    required this.hunt,
+    this.reniecData,
+  });
+
+  final XFile photo;
+  final bool isBackSide;
+  final HuntResult hunt;
+  final DniData? reniecData;
+}
+
 class DniScanner extends StatefulWidget {
   const DniScanner({
     super.key,
     required this.controller,
-    required this.onScanComplete,
+    this.onScanComplete,
+    this.onSideCaptured,
+    this.isBackSide,
     this.hunter,
     this.stateMachine,
     this.fields,
@@ -50,25 +67,44 @@ class DniScanner extends StatefulWidget {
     this.idleFramesBeforeCapture = 18,
     this.holeWidth = 300,
     this.holeHeight = 220,
-  });
+  }) : assert(
+          (isBackSide == null && onScanComplete != null) ||
+              (isBackSide != null && onSideCaptured != null),
+          'Use onScanComplete for two-sided mode (isBackSide == null) or '
+          'onSideCaptured for single-side mode (isBackSide != null).',
+        );
 
   final CameraController controller;
-  final void Function(DniScanResult result) onScanComplete;
+
+  /// Fires when both sides have been captured. Used in two-sided mode
+  /// (when [isBackSide] is null).
+  final void Function(DniScanResult result)? onScanComplete;
+
+  /// Fires when the active single-side capture completes. Used in
+  /// single-side mode (when [isBackSide] is set).
+  final void Function(DniSideScanResult result)? onSideCaptured;
+
+  /// Single-side mode selector.
+  /// - `null` (default): two-sided mode — scanner orchestrates front then back
+  ///   and emits a single [onScanComplete].
+  /// - `false`: scan only the front side, emit [onSideCaptured].
+  /// - `true`: scan only the back side, emit [onSideCaptured].
+  final bool? isBackSide;
+
   final FieldHunter? hunter;
   final HuntStateMachine? stateMachine;
 
   final DniFields? fields;
 
   /// When provided, fires a RENIEC lookup against [lookupService] as soon
-  /// as the front-side capture exposes a [documentNumber]. The result is
-  /// delivered via [onDniReady] and bundled into [DniScanResult.reniecData].
+  /// as the active capture exposes a `documentNumber`. The resolved data
+  /// is delivered via [onDniReady] and bundled into the appropriate result.
   final DniLookupService? lookupService;
 
   /// Timeout for the RENIEC lookup. Defaults to 2500ms.
   final Duration lookupTimeout;
 
   /// Fires once when the RENIEC lookup resolves with a successful payload.
-  /// Hosts that want to enrich UI state mid-scan can listen here.
   final void Function(DniData data)? onDniReady;
 
   final int idleFramesBeforeCapture;
@@ -107,10 +143,15 @@ class _DniScannerState extends State<DniScanner>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _hunter = widget.hunter ?? FieldHunter.standard(fields: widget.fields);
+    final initialPhase = widget.isBackSide == true
+        ? HuntPhase.waitingBack
+        : HuntPhase.waitingFront;
     _stateMachine = widget.stateMachine ??
         HuntStateMachine(
           idleFramesThreshold: widget.idleFramesBeforeCapture,
+          initialPhase: initialPhase,
         );
+    _lastPhaseRendered = initialPhase;
     _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
     _lifecycle = DetectorLifecycle(
       stopStream: () => _safeStopStream(widget.controller),
@@ -258,9 +299,22 @@ class _DniScannerState extends State<DniScanner>
       final cropped =
           await _cropToHole(raw, suffix: 'front', preview: preview) ?? raw;
       _frontPhoto = cropped;
-      _stateMachine.advanceToWaitingBack();
       _maybeStartLookup();
       HapticFeedback.mediumImpact();
+      if (widget.isBackSide == false) {
+        _stateMachine.advanceToDone();
+        if (_reniecLookup != null) await _reniecLookup;
+        widget.onSideCaptured?.call(
+          DniSideScanResult(
+            photo: cropped,
+            isBackSide: false,
+            hunt: _hunter.snapshot,
+            reniecData: _reniecData,
+          ),
+        );
+        return;
+      }
+      _stateMachine.advanceToWaitingBack();
     } on CameraException catch (e) {
       DniLogger.error('DniScanner', 'front capture failed: ${e.code}');
     } finally {
@@ -309,9 +363,20 @@ class _DniScannerState extends State<DniScanner>
       if (_reniecLookup != null) {
         await _reniecLookup;
       }
+      if (widget.isBackSide == true) {
+        widget.onSideCaptured?.call(
+          DniSideScanResult(
+            photo: cropped,
+            isBackSide: true,
+            hunt: _hunter.snapshot,
+            reniecData: _reniecData,
+          ),
+        );
+        return;
+      }
       if (_frontPhoto != null) {
         final finalSnapshot = _hunter.snapshot;
-        widget.onScanComplete(
+        widget.onScanComplete?.call(
           DniScanResult(
             frontPhoto: _frontPhoto!,
             backPhoto: cropped,
