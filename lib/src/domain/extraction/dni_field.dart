@@ -1,0 +1,22 @@
+/// Public enum representing each extractable field on a Peruvian DNI.
+enum DniField {
+  documentNumber,
+  firstName,
+  lastName,
+  secondLastName,
+  dateOfBirth,
+  expirationDate,
+  emissionDate,
+  inscriptionDate,
+  sex,
+  nationality,
+  address,
+  department,
+  province,
+  district,
+  stateCivil,
+  cardNumber,
+  organDonor,
+  votingGroup,
+  birthUbigeoCode,
+}

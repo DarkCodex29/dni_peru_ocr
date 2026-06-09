@@ -1,8 +1,14 @@
 // ignore_for_file: prefer_const_constructors
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dni_peru_ocr/src/data/ocr_consensus.dart';
+import 'package:dni_peru_ocr/src/data/ocr_field_extractor.dart';
+import 'package:dni_peru_ocr/src/lookup/models/dni_data.dart';
+import 'package:dni_peru_ocr/src/lookup/models/dni_lookup_result.dart';
+import 'package:dni_peru_ocr/src/lookup/services/dni_lookup_service.dart';
 import 'package:dni_peru_ocr/src/presentation/controllers/dni_camera_controller.dart';
 import 'package:dni_peru_ocr/src/presentation/document_validator.dart';
 import 'package:dni_peru_ocr/src/presentation/orchestrators/dni_capture_orchestrator.dart';
@@ -638,6 +644,146 @@ void main() {
     });
   });
 
+  // ── Group 10: Pipeline wiring — lookupService + onDniReady ───────────────
+
+  group('DniCameraController — lookupService + onDniReady wiring', () {
+    OcrExtractedFields buildMrzFields({String dni = '71542895'}) {
+      final fields = OcrExtractedFields()
+        ..documentNumber = dni
+        ..firstName = 'JOSE'
+        ..lastName = 'MORENO'
+        ..secondLastName = 'ALEMAN'
+        ..dateOfBirth = '01/09/1994'
+        ..expirationDate = '19/02/2028';
+      fields.fromMrzForTest = true;
+      return fields;
+    }
+
+    test(
+      'onDniReady fires once with DniData after consensus when lookupService provided',
+      () async {
+        final completer = Completer<DniData>();
+        final service = _FakeLookupService(
+          DniLookupSuccess(
+            DniData(
+              dni: '71542895',
+              nombres: 'JOSE',
+              apellidoPaterno: 'MORENO',
+              apellidoMaterno: 'ALEMAN',
+              nombreCompleto: 'JOSE MORENO ALEMAN',
+            ),
+          ),
+        );
+        final controller = DniCameraController(
+          orchestrator: _orchestrator(),
+          isBackSide: true,
+          onValidCapture: (_, __) {},
+          lookupService: service,
+          onDniReady: completer.complete,
+        );
+        addTearDown(controller.dispose);
+
+        controller.onSideChanged(isBackSide: true);
+        controller.recordOcrFrame(buildMrzFields());
+        final consensusReached = controller.recordOcrFrame(buildMrzFields());
+        expect(consensusReached, isTrue);
+
+        final result = await completer.future.timeout(
+          const Duration(seconds: 3),
+        );
+        expect(result.dni, equals('71542895'));
+        expect(result.nombres, equals('JOSE'));
+      },
+    );
+
+    test(
+      'onDniReady never called when lookupService is null',
+      () async {
+        var called = false;
+        final controller = DniCameraController(
+          orchestrator: _orchestrator(),
+          isBackSide: true,
+          onValidCapture: (_, __) {},
+          onDniReady: (_) => called = true,
+        );
+        addTearDown(controller.dispose);
+
+        controller.onSideChanged(isBackSide: true);
+        controller.recordOcrFrame(buildMrzFields());
+        controller.recordOcrFrame(buildMrzFields());
+
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(called, isFalse);
+      },
+    );
+
+    test(
+      'no crash when lookupService provided but onDniReady is null',
+      () async {
+        final service = _FakeLookupService(
+          DniLookupSuccess(
+            DniData(
+              dni: '71542895',
+              nombres: 'JOSE',
+              apellidoPaterno: 'MORENO',
+              apellidoMaterno: 'ALEMAN',
+              nombreCompleto: 'JOSE MORENO ALEMAN',
+            ),
+          ),
+        );
+        final controller = DniCameraController(
+          orchestrator: _orchestrator(),
+          isBackSide: true,
+          onValidCapture: (_, __) {},
+          lookupService: service,
+        );
+        addTearDown(controller.dispose);
+
+        controller.onSideChanged(isBackSide: true);
+        controller.recordOcrFrame(buildMrzFields());
+        final consensusReached = controller.recordOcrFrame(buildMrzFields());
+        expect(consensusReached, isTrue);
+
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      },
+    );
+
+    test(
+      'onDniReady fires only once even if consensus fires multiple times',
+      () async {
+        var callCount = 0;
+        final service = _FakeLookupService(
+          DniLookupSuccess(
+            DniData(
+              dni: '71542895',
+              nombres: 'JOSE',
+              apellidoPaterno: 'MORENO',
+              apellidoMaterno: 'ALEMAN',
+              nombreCompleto: 'JOSE MORENO ALEMAN',
+            ),
+          ),
+        );
+        final controller = DniCameraController(
+          orchestrator: _orchestrator(),
+          isBackSide: true,
+          onValidCapture: (_, __) {},
+          lookupService: service,
+          onDniReady: (_) => callCount++,
+        );
+        addTearDown(controller.dispose);
+
+        controller.onSideChanged(isBackSide: true);
+        controller.recordOcrFrame(buildMrzFields());
+        controller.recordOcrFrame(buildMrzFields());
+        controller.recordOcrFrame(buildMrzFields());
+        controller.recordOcrFrame(buildMrzFields());
+
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(callCount, equals(1));
+      },
+    );
+  });
+
   // ── BUG regression — controller side-flag must update on onSideChanged ────
   //
   // Symptom (JC v0.6.3 report): `DniCameraMask` shutter prints
@@ -791,4 +937,12 @@ void main() {
       },
     );
   });
+}
+
+class _FakeLookupService implements DniLookupService {
+  _FakeLookupService(this._result);
+  final DniLookupResult _result;
+
+  @override
+  Future<DniLookupResult> lookup(String dni) async => _result;
 }

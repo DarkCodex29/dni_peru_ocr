@@ -1,0 +1,17 @@
+CUI
+33445566-7
+REPÚBLICA DEL PERÚ
+Apellidos
+MUNHOZ PINHA
+Prenombres
+JUAN PABLO
+Sexo Nacionalidad Fecha de nacimiento
+M PER 04 07 1995
+Estado civil
+SOLTERO
+Fecha de caducidad
+04 07 2033
+Fecha de emisión
+04 07 2025
+Nro. de tarjeta
+0233445566

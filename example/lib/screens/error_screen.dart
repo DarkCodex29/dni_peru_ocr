@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../widgets/primary_button.dart';
 
-/// Failure cases the example surfaces back to the user.
 enum ExampleErrorType {
   expired,
   cancelled,
@@ -10,10 +9,6 @@ enum ExampleErrorType {
   initialization,
 }
 
-/// Friendly error screen reused for every failure path in the capture flow.
-///
-/// Each [ExampleErrorType] maps to an icon, headline, and supporting copy so
-/// that consumers see a clear reason and a single recovery action.
 class ErrorScreen extends StatelessWidget {
   const ErrorScreen({
     super.key,
@@ -28,35 +23,35 @@ class ErrorScreen extends StatelessWidget {
         return _ErrorContent(
           icon: Icons.event_busy_outlined,
           color: colors.error,
-          title: 'Document expired',
+          title: 'Documento vencido',
           message:
-              'The document scanned has an expired date. Please try again '
-              'with a valid identity document.',
+              'El documento escaneado tiene una fecha de caducidad expirada. '
+              'Intente con un documento de identidad vigente.',
         );
       case ExampleErrorType.cancelled:
         return _ErrorContent(
           icon: Icons.close_outlined,
           color: colors.outline,
-          title: 'Capture cancelled',
-          message: 'You left the camera before finishing the scan.',
+          title: 'Captura cancelada',
+          message: 'El escaneo se interrumpió antes de finalizar.',
         );
       case ExampleErrorType.permissionDenied:
         return _ErrorContent(
           icon: Icons.no_photography_outlined,
           color: colors.error,
-          title: 'Camera permission denied',
+          title: 'Permiso de cámara denegado',
           message:
-              'Grant camera access in your device settings to use the scan '
-              'flow.',
+              'Active el acceso a la cámara desde la configuración del '
+              'dispositivo para continuar.',
         );
       case ExampleErrorType.initialization:
         return _ErrorContent(
           icon: Icons.error_outline,
           color: colors.error,
-          title: 'Could not start the camera',
+          title: 'No se pudo iniciar la cámara',
           message:
-              'Something went wrong while initializing the camera. Make sure '
-              'no other app is using it and try again.',
+              'Ocurrió un problema al iniciar la cámara. Verifique que no '
+              'esté siendo usada por otra aplicación e intente nuevamente.',
         );
     }
   }
@@ -93,7 +88,7 @@ class ErrorScreen extends StatelessWidget {
               const Spacer(),
               Center(
                 child: PrimaryButton(
-                  label: 'Try again',
+                  label: 'Reintentar',
                   icon: Icons.refresh,
                   onPressed: () => Navigator.of(context).pop(),
                 ),

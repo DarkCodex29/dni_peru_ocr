@@ -1,0 +1,25 @@
+REPÚBLICA DEL PERÚ
+REGISTRO NACIONAL DE IDENTIFICACIÓN Y ESTADO CIVIL
+DOCUMENTO NACIONAL DE IDENTIDAD
+CUI
+88776655-4
+Primer Apellido
+GARCIA
+Segundo Apellido
+LOPEZ
+Prenombres
+CARLOS ALBERTO
+Sexo
+M
+Nacionalidad
+PER
+Fecha de Nacimiento
+05 08 1990
+Estado Civil
+SOLTERO
+Fecha de Emisión
+12 09 2022
+Nº de Tarjeta
+0288776655
+Fecha de Caducidad
+12 09 2030

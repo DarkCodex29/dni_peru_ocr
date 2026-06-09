@@ -91,6 +91,72 @@ void main() {
     });
   });
 
+  group('KycTheme.defaults — gradient tokens', () {
+    final theme = KycTheme.defaults();
+
+    test('gradientStart is green (#00C853)', () {
+      expect(theme.gradientStart, equals(const Color(0xFF00C853)));
+    });
+
+    test('gradientEnd is teal (#1DE9B6)', () {
+      expect(theme.gradientEnd, equals(const Color(0xFF1DE9B6)));
+    });
+  });
+
+  group('KycTheme.darkDefaults — gradient tokens', () {
+    final theme = KycTheme.darkDefaults();
+
+    test('gradientStart dark is green (#22C55E)', () {
+      expect(theme.gradientStart, equals(const Color(0xFF22C55E)));
+    });
+
+    test('gradientEnd dark is teal (#34D399)', () {
+      expect(theme.gradientEnd, equals(const Color(0xFF34D399)));
+    });
+  });
+
+  group('KycTheme.fromMaterialTheme — gradient tokens', () {
+    testWidgets('gradientStart maps to scheme.primary', (tester) async {
+      final material = ThemeData(
+        colorSchemeSeed: const Color(0xFF00838F),
+        useMaterial3: true,
+      );
+      final theme = KycTheme.fromMaterialTheme(material);
+      expect(theme.gradientStart, equals(material.colorScheme.primary));
+    });
+
+    testWidgets('gradientEnd maps to scheme.tertiary', (tester) async {
+      final material = ThemeData(
+        colorSchemeSeed: const Color(0xFF00838F),
+        useMaterial3: true,
+      );
+      final theme = KycTheme.fromMaterialTheme(material);
+      expect(theme.gradientEnd, equals(material.colorScheme.tertiary));
+    });
+  });
+
+  group('KycTheme.copyWith — gradient tokens', () {
+    test('copyWith replaces gradientStart only', () {
+      final base = KycTheme.defaults();
+      final updated = base.copyWith(gradientStart: const Color(0xFFAABBCC));
+      expect(updated.gradientStart, equals(const Color(0xFFAABBCC)));
+      expect(updated.gradientEnd, equals(base.gradientEnd));
+    });
+
+    test('copyWith replaces gradientEnd only', () {
+      final base = KycTheme.defaults();
+      final updated = base.copyWith(gradientEnd: const Color(0xFFDDEEFF));
+      expect(updated.gradientEnd, equals(const Color(0xFFDDEEFF)));
+      expect(updated.gradientStart, equals(base.gradientStart));
+    });
+
+    test('no overrides preserves gradient tokens', () {
+      final base = KycTheme.defaults();
+      expect(base.copyWith().gradientStart, equals(base.gradientStart));
+      expect(base.copyWith().gradientEnd, equals(base.gradientEnd));
+    });
+  });
+
   group('KycTheme — value equality and hashCode', () {
     test('two defaults() are equal', () {
       expect(KycTheme.defaults(), equals(KycTheme.defaults()));
@@ -120,7 +186,21 @@ void main() {
         white: Colors.white,
         white60: Color(0x99FFFFFF),
         white70: Color(0xB3FFFFFF),
+        gradientStart: Color(0xFF00C853),
+        gradientEnd: Color(0xFF1DE9B6),
       );
+      expect(a, isNot(equals(b)));
+    });
+
+    test('themes differing in gradientStart are not equal', () {
+      final a = KycTheme.defaults();
+      final b = a.copyWith(gradientStart: const Color(0xFF000000));
+      expect(a, isNot(equals(b)));
+    });
+
+    test('themes differing in gradientEnd are not equal', () {
+      final a = KycTheme.defaults();
+      final b = a.copyWith(gradientEnd: const Color(0xFF000000));
       expect(a, isNot(equals(b)));
     });
   });
@@ -149,6 +229,8 @@ void main() {
         white: Color(0xFFFFFFFC),
         white60: Color(0xFFFFFFFB),
         white70: Color(0xFFFFFFFA),
+        gradientStart: Color(0xFF001122),
+        gradientEnd: Color(0xFF334455),
       );
 
       late KycTheme captured;
@@ -170,26 +252,24 @@ void main() {
       expect(captured.primary, equals(const Color(0xFF111111)));
     });
 
-    testWidgets('KycTheme.of(context) throws if no provider in ancestor', (
-      tester,
-    ) async {
-      Object? caughtError;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) {
-              try {
-                KycTheme.of(context);
-              } on Object catch (e) {
-                caughtError = e;
-              }
-              return const SizedBox.shrink();
-            },
+    testWidgets(
+      'KycTheme.of(context) falls back to defaults when no provider is present',
+      (tester) async {
+        KycTheme? captured;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) {
+                captured = KycTheme.of(context);
+                return const SizedBox.shrink();
+              },
+            ),
           ),
-        ),
-      );
+        );
 
-      expect(caughtError, isNotNull);
-    });
+        expect(captured, isNotNull);
+        expect(captured, equals(KycTheme.defaults()));
+      },
+    );
   });
 }

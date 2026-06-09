@@ -9,6 +9,10 @@ import '../orchestrators/dni_capture_state.dart';
 import '../../data/ocr_consensus.dart';
 import '../../data/ocr_field_extractor.dart';
 import '../../domain/interfaces/ocr_logger.dart';
+import '../../lookup/models/dni_data.dart';
+import '../../lookup/reliable/dni_data_merger.dart';
+import '../../lookup/reliable/reliable_dni_pipeline.dart';
+import '../../lookup/services/dni_lookup_service.dart';
 
 /// Diagnostic telemetry emitted each time a camera frame is processed.
 ///
@@ -105,11 +109,22 @@ class DniCameraController {
     required void Function(XFile file, OcrConsensusResult? consensus) onValidCapture,
     void Function(DateTime expirationDate)? onDocumentExpired,
     OcrLogger logger = const NoOpOcrLogger(),
+    DniLookupService? lookupService,
+    void Function(DniData)? onDniReady,
+    Duration lookupTimeout = const Duration(milliseconds: 1500),
   })  : _orchestrator = orchestrator,
         _isBackSide = isBackSide,
         _onValidCapture = onValidCapture,
         _onDocumentExpired = onDocumentExpired,
         _logger = logger,
+        _onDniReady = onDniReady,
+        _pipeline = lookupService != null
+            ? ReliableDniPipeline(
+                lookupService: lookupService,
+                merger: const DniDataMerger(),
+                timeout: lookupTimeout,
+              )
+            : null,
         _captureStateNotifier = ValueNotifier(
           const DniCaptureScanning(
             guideText: '',
@@ -130,6 +145,9 @@ class DniCameraController {
 
   /// Logger for observability breadcrumbs. Defaults to no-op.
   final OcrLogger _logger;
+
+  final ReliableDniPipeline? _pipeline;
+  final void Function(DniData)? _onDniReady;
 
   /// Emits a breadcrumb through the injected logger.
   ///
@@ -176,6 +194,7 @@ class DniCameraController {
 
   bool _isDisposed = false;
   bool _expiredHandled = false;
+  bool _pipelineFired = false;
   Timer? _manualFallbackTimer;
 
   // ── Consensus accumulator (back-side only) ────────────────────────────────
@@ -237,6 +256,7 @@ class DniCameraController {
     if (_isDisposed) return;
     _manualFallbackTimer?.cancel();
     _expiredHandled = false;
+    _pipelineFired = false;
 
     // Authoritative side-flag update path. Synchronises the controller
     // with the caller's intent before mutating the accumulator so that
@@ -297,6 +317,7 @@ class DniCameraController {
     final acc = _accumulator;
     if (acc == null) return false;
 
+    late final bool consensusReached;
     if (frameFields.hasMrzData) {
       acc
         ..lockFromMrzFields(
@@ -316,7 +337,7 @@ class DniCameraController {
           'expirationDate': frameFields.expirationDate,
           'address': frameFields.address,
         });
-      return acc.isMrzLocked;
+      consensusReached = acc.isMrzLocked;
     } else {
       acc
         ..resetMrzConsecutiveCount()
@@ -329,8 +350,15 @@ class DniCameraController {
           'expirationDate': frameFields.expirationDate,
           'address': frameFields.address,
         });
-      return acc.checkAllThresholds();
+      consensusReached = acc.checkAllThresholds();
     }
+
+    if (consensusReached && _pipeline != null && !_pipelineFired) {
+      _pipelineFired = true;
+      _resolveAndDeliver(_dniDataFromSnapshot(acc.snapshot()));
+    }
+
+    return consensusReached;
   }
 
   /// Emits the current consensus snapshot.
@@ -438,6 +466,26 @@ class DniCameraController {
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────
+
+  void _resolveAndDeliver(DniData ocrData) {
+    _pipeline!
+        .resolveOnConsensus(ocrData)
+        .then((data) => _onDniReady?.call(data));
+  }
+
+  DniData _dniDataFromSnapshot(OcrConsensusResult snapshot) {
+    return DniData(
+      dni: snapshot.documentNumber.value ?? '',
+      nombres: snapshot.firstName.value ?? '',
+      apellidoPaterno: snapshot.lastName.value ?? '',
+      apellidoMaterno: snapshot.secondLastName.value ?? '',
+      nombreCompleto: [
+        snapshot.firstName.value ?? '',
+        snapshot.lastName.value ?? '',
+        snapshot.secondLastName.value ?? '',
+      ].where((s) => s.isNotEmpty).join(' '),
+    );
+  }
 
   void _updateState(DniCaptureState next) {
     if (_isDisposed) return;

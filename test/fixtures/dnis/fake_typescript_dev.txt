@@ -1,0 +1,17 @@
+REPÚBLICA DEL PERÚ
+DOCUMENTO NACIONAL DE IDENTIDAD
+DNI 12345678
+Apellidos
+TYPESCRIPT REACT
+Prenombres
+HELLO WORLD
+Sexo
+?
+Nacionalidad
+JS
+Fecha de nacimiento
+99 99 9999
+Estado civil
+SOLTERO
+console.log("hola")
+import React from 'react'

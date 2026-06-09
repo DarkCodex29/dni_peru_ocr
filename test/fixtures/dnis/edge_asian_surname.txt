@@ -1,0 +1,25 @@
+REPÚBLICA DEL PERÚ
+REGISTRO NACIONAL DE IDENTIFICACIÓN Y ESTADO CIVIL
+DOCUMENTO NACIONAL DE IDENTIDAD
+CUI
+98765432-1
+Primer Apellido
+WONG
+Segundo Apellido
+NAKAMURA
+Prenombres
+KENJI HIROSHI
+Sexo
+M
+Nacionalidad
+PER
+Fecha de Nacimiento
+22 11 1992
+Estado Civil
+SOLTERO
+Fecha de Emisión
+01 06 2023
+Nº de Tarjeta
+0298765432
+Fecha de Caducidad
+01 06 2031

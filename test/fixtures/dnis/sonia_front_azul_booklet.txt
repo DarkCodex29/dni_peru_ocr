@@ -1,0 +1,28 @@
+REPUBLICA DEL PERU
+REGISTRO NACIONAL DE IDENTIFICACIÓN Y ESTADO CIVIL
+DOCUMENTO NACIONAL DE IDENTIDAD
+DNI 16793105-2
+CUI:
+16793105
+Primer Apellido
+MIO
+Segundo Apellido
+LOPEZ
+Pre Nombres
+SONIA SOLEDAD
+Nacimiento: Fecha y Ubigeo
+04 12 1976
+130101
+Sexo
+F
+Estado Civil
+S
+Fecha Inscripción
+27 01 2000
+Fecha Emisión
+18 11 2021
+Fecha Caducidad
+18 11 2029
+I<PER16793105<0<<<<<<<<<<<<<<
+7612046F2911180PER<<<<<<<<<<<6
+MIO<<SONIA<SOLEDAD<<<<<<<<<<<

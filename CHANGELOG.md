@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.11.0
+
+### Added
+- `DniField` enum — 19 public values mapped 1:1 to ExtractedFields properties.
+- `DniFields` immutable wrapper with factories `required({...})`, `minimal()`, `kyc()`, `full()` and value-based equality.
+- `FieldHunter.standard()` accepts optional `DniFields? fields` parameter. When provided, only extractors that produce at least one selected field are instantiated, reducing CPU and battery usage.
+- `DniScanner` and `DniCameraMask` widgets accept optional `fields` parameter.
+- `DniDataMerger.merge()` accepts optional `fields` parameter; non-selected fields are null in merged output even if RENIEC returned values.
+- Threshold scaling: `HuntStateMachine.minFieldsForFastAdvance` scales proportionally as `max(3, (selectedCount * 0.75).round())` clamped to 14.
+
+### Changed
+- Library version bumped from 0.10.0 to 0.11.0.
+
+### Notes
+- All field selection APIs are optional. Consumers omitting the `fields` parameter see identical v0.10.0 behavior.
+- Multi-field extractors (MRZ, dates, ubigeo, surname) run if at least one of their produced fields is in the selected set.
+- The `DniCameraMask` legacy `OcrConsensusAccumulator` pipeline is not filtered by `fields`; only the FieldHunter path honors selection.
+
+## 0.10.0
+
+### Added
+- `ReliableDniPipeline` — internal orchestrator that fires lookup once per scan session when DNI consensus is reached, with a configurable 1500ms timeout and silent OCR fallback on failures.
+- `DniDataMerger` — internal pure function applying RENIEC-prevails rules with whitespace defense; DNI number always preserved from OCR consensus.
+- `DniCameraMask` and `DniCameraController` now accept optional `lookupService` and `onDniReady` parameters. When provided, the library automatically wires the lookup pipeline; consumers receive reliable DNI data through `onDniReady` without writing any wiring code.
+- `KycTheme` gains `gradientStart` and `gradientEnd` color tokens for branded UI accents.
+
+### Changed
+- `_SideIntroRibbon` (flip-card hint banner) redesigned with gradient background, slide-in animation, rotating icon, and haptic feedback on mount.
+- `_FlashToggle` (camera flash control) redesigned with larger touch target, higher contrast, and tactile feedback on tap.
+- Library version bumped from 0.9.0 to 0.10.0.
+
+### Notes
+- Lookup remains fully optional — consumers omitting the new parameters continue to use the OCR-only flow from v0.9.0 unchanged.
+- `ReliableDniPipeline` and `DniDataMerger` are internal and never exported. They are wired automatically when `lookupService` is provided.
+- `rawSource` field on `DniData` is never set by the merger, preserving the silent merge contract: consumers cannot distinguish merged from OCR-only data via the API surface.
+
+## 0.9.0
+
+### Added
+- `DniLookupService` abstract contract for plugging external DNI data sources.
+- `DniData` common model with required fields (`dni`, `nombres`, `apellidoPaterno`, `apellidoMaterno`, `nombreCompleto`) and optional fields (`ubigeo`, `departamento`, `provincia`, `distrito`, `rawSource`, opt-in `raw` map).
+- `DniLookupResult` sealed class with 6 variants: `DniLookupSuccess`, `DniLookupNotFound`, `DniLookupRateLimited`, `DniLookupNetworkError`, `DniLookupInvalidToken`, `DniLookupServerError`.
+- `ApisPeruLookupService` — built-in adapter for `dniruc.apisperu.com` with defensive handling of plain-text 500 invalid-token responses.
+- `ReniecSunatLookupService` — built-in adapter for self-hosted RENIEC/SUNAT backends with configurable `baseUrl` and optional `extraHeaders`.
+- `DniHttpClient` abstract HTTP contract + `DioDniHttpClient` adapter (consumer provides configured `Dio` instance).
+- `CachingDniLookupService` decorator — cache-aside pattern with in-memory TTL tracking; consumer provides `DniCache` implementation.
+- `FallbackDniLookupService` decorator — ordered service chain with configurable retry predicate; stops on `InvalidToken` by default.
+- `DniCache` abstract contract for consumer-implemented storage.
+- `DniHttpResponse` value type carrying HTTP status code and response body.
+- `DniLookupRetryPredicate` typedef for `FallbackDniLookupService` customization.
+
+### Changed
+- Library version bumped from 0.7.3 to 0.9.0 to reflect the new lookup capability.
+
+### Notes
+- `dio` is a `dev_dependency`. Library consumers do not pay the bundle cost unless they instantiate `DioDniHttpClient`.
+- The lookup feature is fully optional; OCR-only consumers compile and run identically to v0.7.x.
+- No breaking changes to v0.7.x public API. All existing exports remain intact.
+- `analysis_options.yaml` suppresses `depend_on_referenced_packages` info-level lint as a documented short-term tradeoff.
+
 ## 0.7.3 - 2026-06-06
 
 ### Added

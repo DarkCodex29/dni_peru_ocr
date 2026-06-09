@@ -129,6 +129,91 @@ DniCameraMask(
 > so the front side's accumulated OCR is lost unless the host persists
 > it. The `frontSideFields` parameter restores it.
 
+## DNI Lookup
+
+Beyond OCR, `dni_peru_ocr` ships a flexible lookup contract so you can fetch
+normalized DNI data from any backend. The lookup feature is fully optional —
+OCR-only consumers compile and run identically to v0.7.x.
+
+### Recommended composition — caching + service
+
+Implement `DniCache` for your storage layer (Hive, Isar, SharedPreferences,
+or just in-memory), then compose with a concrete service:
+
+```dart
+import 'package:dio/dio.dart';
+import 'package:dni_peru_ocr/dni_peru_ocr.dart';
+
+// Minimal in-memory cache — replace with Hive / Isar in production.
+class InMemoryDniCache implements DniCache {
+  final Map<String, DniData> _store = {};
+
+  @override
+  Future<DniData?> get(String dni) async => _store[dni];
+
+  @override
+  Future<void> set(String dni, DniData data) async => _store[dni] = data;
+
+  @override
+  Future<void> evict(String dni) async => _store.remove(dni);
+}
+
+final lookup = CachingDniLookupService(
+  delegate: ReniecSunatLookupService(
+    httpClient: DioDniHttpClient(Dio()),
+    baseUrl: 'https://your-reniec-sunat-backend.example.com',
+  ),
+  cache: InMemoryDniCache(),
+  ttl: const Duration(minutes: 5),
+);
+
+final result = await lookup.lookup('43005787');
+switch (result) {
+  case DniLookupSuccess(:final data):
+    print(data.nombreCompleto);
+  case DniLookupNotFound():
+    print('DNI not found');
+  case _:
+    print('Lookup failed');
+}
+```
+
+### Multi-backend fallback
+
+For setups where you want to try a primary service and fall back to a secondary,
+use `FallbackDniLookupService`. It stops the chain on `DniLookupInvalidToken`
+by default so you do not hammer a service with bad credentials:
+
+```dart
+final lookup = FallbackDniLookupService(
+  services: [primaryService, secondaryService],
+);
+
+final result = await lookup.lookup('43005787');
+```
+
+The retry predicate is configurable — pass `retryOn` to override which result
+types allow the chain to continue.
+
+## Field Selection
+
+If your app only needs a subset of fields, configure the scanner with a `DniFields` to reduce CPU usage.
+
+```dart
+final scanner = DniScanner(
+  controller: cameraController,
+  fields: DniFields.kyc(),
+  onScanComplete: (result) { ... },
+);
+```
+
+Built-in presets:
+- `DniFields.minimal()` — 4 fields (dni, firstName, lastName, secondLastName)
+- `DniFields.kyc()` — 7 fields for KYC flows
+- `DniFields.full()` — all 19 fields (default behavior when omitted)
+
+Or define a custom set: `DniFields.required({DniField.documentNumber, DniField.firstName, DniField.address})`.
+
 ## Public API
 
 | Type | Purpose |

@@ -1,9 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Themed primary call-to-action button used across the example screens.
-///
-/// Wraps Material 3 [FilledButton] with consistent padding and accepts an
-/// optional [icon] for actions that benefit from a leading affordance.
 class PrimaryButton extends StatelessWidget {
   const PrimaryButton({
     super.key,

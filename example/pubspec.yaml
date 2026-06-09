@@ -13,6 +13,8 @@ dependencies:
   dni_peru_ocr:
     path: ../
   camera: ^0.11.0+2
+  dio: ^5.0.0
+  flutter_dotenv: ^5.2.1
 
 dev_dependencies:
   flutter_test:
@@ -21,3 +23,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - .env

@@ -28,6 +28,8 @@ class KycTheme {
     required this.white,
     required this.white60,
     required this.white70,
+    required this.gradientStart,
+    required this.gradientEnd,
   });
 
   /// Default theme using neutral, brand-agnostic values. Consumers should
@@ -52,6 +54,8 @@ class KycTheme {
         white: Colors.white,
         white60: Color(0x99FFFFFF),
         white70: Color(0xB3FFFFFF),
+        gradientStart: Color(0xFF00C853),
+        gradientEnd: Color(0xFF1DE9B6),
       );
 
   /// Dark variant of the default theme. Tuned for OLED displays — uses
@@ -76,6 +80,8 @@ class KycTheme {
         white: Colors.white,
         white60: Color(0x99FFFFFF),
         white70: Color(0xB3FFFFFF),
+        gradientStart: Color(0xFF22C55E),
+        gradientEnd: Color(0xFF34D399),
       );
 
   /// Derives a [KycTheme] from a Material 3 [ThemeData], mapping Material
@@ -103,6 +109,8 @@ class KycTheme {
       white: Colors.white,
       white60: const Color(0x99FFFFFF),
       white70: const Color(0xB3FFFFFF),
+      gradientStart: scheme.primary,
+      gradientEnd: scheme.tertiary,
     );
   }
 
@@ -128,6 +136,8 @@ class KycTheme {
     Color? white,
     Color? white60,
     Color? white70,
+    Color? gradientStart,
+    Color? gradientEnd,
   }) {
     return KycTheme(
       primary: primary ?? this.primary,
@@ -149,6 +159,8 @@ class KycTheme {
       white: white ?? this.white,
       white60: white60 ?? this.white60,
       white70: white70 ?? this.white70,
+      gradientStart: gradientStart ?? this.gradientStart,
+      gradientEnd: gradientEnd ?? this.gradientEnd,
     );
   }
 
@@ -181,19 +193,14 @@ class KycTheme {
   final Color white60;
   final Color white70;
 
-  /// Reads the nearest [KycTheme] in the widget tree.
-  ///
-  /// Throws when no [KycThemeProvider] is present.
+  // Banner gradient
+  final Color gradientStart;
+  final Color gradientEnd;
+
   static KycTheme of(BuildContext context) {
     final provider =
         context.dependOnInheritedWidgetOfExactType<KycThemeProvider>();
-    if (provider == null) {
-      throw FlutterError(
-        'KycTheme.of() called with a context that does not contain a '
-        'KycThemeProvider. Wrap your widget tree with KycThemeProvider.',
-      );
-    }
-    return provider.theme;
+    return provider?.theme ?? KycTheme.defaults();
   }
 
   @override
@@ -218,7 +225,9 @@ class KycTheme {
         other.overlayMedium == overlayMedium &&
         other.white == white &&
         other.white60 == white60 &&
-        other.white70 == white70;
+        other.white70 == white70 &&
+        other.gradientStart == gradientStart &&
+        other.gradientEnd == gradientEnd;
   }
 
   @override
@@ -244,6 +253,8 @@ class KycTheme {
         white,
         white60,
         white70,
+        gradientStart,
+        gradientEnd,
       ];
 }
 

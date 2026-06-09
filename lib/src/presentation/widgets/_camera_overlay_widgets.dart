@@ -71,38 +71,89 @@ class _ManualCapturePanel extends StatelessWidget {
 
 // ─── Side intro ribbon ────────────────────────────────────────────────────
 
-class _SideIntroRibbon extends StatelessWidget {
+class _SideIntroRibbon extends StatefulWidget {
   const _SideIntroRibbon();
+
+  @override
+  State<_SideIntroRibbon> createState() => _SideIntroRibbonState();
+}
+
+class _SideIntroRibbonState extends State<_SideIntroRibbon>
+    with TickerProviderStateMixin {
+  late final AnimationController _slideController;
+  late final AnimationController _rotateController;
+
+  @override
+  void initState() {
+    super.initState();
+    _slideController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _rotateController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    HapticFeedback.mediumImpact();
+    _slideController.forward();
+    _rotateController.repeat();
+  }
+
+  @override
+  void dispose() {
+    _slideController.dispose();
+    _rotateController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = KycTheme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: theme.overlayMedium,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: theme.white.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.check_circle_rounded,
-              color: Color(0xFF69F0AE), size: 18),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              'Anverso listo — ahora voltea el DNI',
-              textAlign: TextAlign.center,
-              style: TextStyle(
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, -1),
+        end: Offset.zero,
+      ).animate(CurvedAnimation(
+        parent: _slideController,
+        curve: Curves.easeOutCubic,
+      )),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [theme.gradientStart, theme.gradientEnd],
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: theme.white.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            RotationTransition(
+              turns: _rotateController,
+              child: Icon(
+                Icons.flip_camera_android_rounded,
                 color: theme.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
+                size: 22,
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Anverso listo — ahora voltea el DNI',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: theme.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -295,18 +346,33 @@ class _FlashToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = KycTheme.of(context);
     return GestureDetector(
-      onTap: onToggle,
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onToggle();
+      },
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color:
-              isOn ? theme.white.withValues(alpha: 0.3) : theme.overlayMedium,
+          color: isOn
+              ? theme.warningIcon
+              : Colors.black.withValues(alpha: 0.55),
           shape: BoxShape.circle,
+          border: Border.all(
+            color: theme.white.withValues(alpha: 0.85),
+            width: 2,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.35),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Icon(
           isOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
-          color: isOn ? theme.warningIcon : theme.white70,
-          size: 22,
+          color: theme.white,
+          size: 26,
         ),
       ),
     );

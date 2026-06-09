@@ -1,0 +1,19 @@
+REPÚBLICA DEL PERÚ
+REGISTRO NACIONAL DE IDENTIFICACIÓN Y ESTADO CIVIL
+DOCUMENTO NACIONAL DE IDENTIDAD
+CUI
+12345678-9
+Apellidos
+DE LA CRUZ GARCIA
+Prenombres
+MARIA DEL CARMEN
+Sexo Nacionalidad Fecha de nacimiento
+F PER 15 03 1980
+Estado civil
+CASADA
+Fecha de caducidad
+15 03 2034
+Fecha de emisión
+15 03 2024
+Nro. de tarjeta
+0123456789

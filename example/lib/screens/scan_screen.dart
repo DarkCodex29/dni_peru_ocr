@@ -1,53 +1,58 @@
+import 'dart:async';
+
 import 'package:camera/camera.dart';
+import 'package:dio/dio.dart';
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
+import '../lookup/in_memory_dni_cache.dart';
 import '../widgets/loading_overlay.dart';
 import 'error_screen.dart';
-import 'result_screen.dart';
+import 'result_screen_v2.dart';
 
-/// Capture flow that orchestrates front-side then back-side scanning.
-///
-/// The screen walks the user through a small state machine:
-/// `initializing → frontCapturing → frontComplete → backCapturing → backComplete`.
-/// Front-side extraction seeds the back-side accumulator so the back capture
-/// reaches higher consensus confidence — this is the integration pattern
-/// consumers miss most often.
+DniLookupService? _lookupService;
+
+DniLookupService? _resolveLookupService() {
+  if (_lookupService != null) return _lookupService;
+  final token = dotenv.maybeGet('APISPERU_TOKEN')?.trim();
+  if (token == null || token.isEmpty) {
+    debugPrint(
+      'APISPERU_TOKEN missing in .env — DNI lookup disabled. '
+      'Copy example/.env.example to example/.env and set the token.',
+    );
+    return null;
+  }
+  return _lookupService = CachingDniLookupService(
+    delegate: ApisPeruLookupService(
+      client: DioDniHttpClient(Dio()),
+      token: token,
+    ),
+    cache: InMemoryDniCache(),
+    ttl: const Duration(minutes: 5),
+  );
+}
+
+const Duration _lookupTimeout = Duration(milliseconds: 2500);
+
 class ScanScreen extends StatefulWidget {
-  const ScanScreen({super.key});
+  const ScanScreen({super.key, this.fields});
+
+  final DniFields? fields;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
-enum _ScanStep {
-  initializing,
-  frontCapturing,
-  frontComplete,
-  backCapturing,
-  backComplete,
-}
-
 class _ScanScreenState extends State<ScanScreen> {
-  _ScanStep _step = _ScanStep.initializing;
   CameraController? _controller;
-
-  /// Accumulated OCR fields from the front-side scan.
-  ///
-  /// Populated progressively via [DniCameraMask.onFrontSideOcrUpdated] and
-  /// injected into the back-side widget as [DniCameraMask.frontSideFields].
-  /// This is the state-holder injection pattern: the host persists OCR memory
-  /// across the widget-tree swap so the back-side accumulator starts warm
-  /// instead of empty.
-  OcrExtractedFields? _frontFields;
+  bool _resolving = false;
 
   @override
   void initState() {
     super.initState();
     _initializeCamera();
   }
-
-  // ─── Camera lifecycle ───────────────────────────────────────────────────────
 
   Future<void> _initializeCamera() async {
     try {
@@ -66,17 +71,12 @@ class _ScanScreenState extends State<ScanScreen> {
         await controller.dispose();
         return;
       }
-      setState(() {
-        _controller = controller;
-        _step = _ScanStep.frontCapturing;
-      });
-    } catch (error) {
+      setState(() => _controller = controller);
+    } catch (_) {
       if (!mounted) return;
       await _goToError(ExampleErrorType.initialization);
     }
   }
-
-  // ─── Navigation helpers ─────────────────────────────────────────────────────
 
   Future<void> _goToError(ExampleErrorType type) async {
     if (!mounted) return;
@@ -85,7 +85,83 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  // ─── Lifecycle ──────────────────────────────────────────────────────────────
+  Future<void> _onScanComplete(DniScanResult result) async {
+    if (_resolving) return;
+    _resolving = true;
+    final dni = result.hunt.fields.documentNumber;
+    final wantsNameMerge = _wantsNameMerge();
+    var enriched = result.hunt.fields;
+    DniData? lookupData;
+
+    if (dni != null && dni.isNotEmpty) {
+      lookupData = await _safeLookup(dni);
+      if (lookupData != null && wantsNameMerge) {
+        enriched = _applyReniecMerge(enriched, lookupData);
+      }
+    }
+
+    if (!mounted) return;
+    await Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => ResultScreenV2(
+          fields: enriched,
+          format: result.hunt.format,
+          frontPhoto: result.frontPhoto,
+          backPhoto: result.backPhoto,
+          selectedFields: widget.fields,
+          reniecEnriched: lookupData != null,
+        ),
+      ),
+    );
+  }
+
+  bool _wantsNameMerge() {
+    final filter = widget.fields;
+    if (filter == null) return true;
+    return filter.contains(DniField.firstName) ||
+        filter.contains(DniField.lastName) ||
+        filter.contains(DniField.secondLastName);
+  }
+
+  Future<DniData?> _safeLookup(String dni) async {
+    final service = _resolveLookupService();
+    if (service == null) return null;
+    try {
+      final result = await service.lookup(dni).timeout(
+        _lookupTimeout,
+        onTimeout: () => const DniLookupNetworkError(),
+      );
+      if (result is DniLookupSuccess && result.data.dni == dni) {
+        debugPrint(
+          'Background lookup enriched DNI $dni: ${result.data.nombreCompleto}',
+        );
+        return result.data;
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  ExtractedFields _applyReniecMerge(ExtractedFields ocr, DniData reniec) {
+    final filter = widget.fields;
+    String? pick(String reniecValue, String? ocrValue, DniField field) {
+      if (filter != null && !filter.contains(field)) return ocrValue;
+      final trimmed = reniecValue.trim();
+      if (trimmed.isEmpty) return ocrValue;
+      return trimmed;
+    }
+
+    ocr.firstName = pick(reniec.nombres, ocr.firstName, DniField.firstName);
+    ocr.lastName =
+        pick(reniec.apellidoPaterno, ocr.lastName, DniField.lastName);
+    ocr.secondLastName = pick(
+      reniec.apellidoMaterno,
+      ocr.secondLastName,
+      DniField.secondLastName,
+    );
+    return ocr;
+  }
 
   @override
   void dispose() {
@@ -93,118 +169,27 @@ class _ScanScreenState extends State<ScanScreen> {
     super.dispose();
   }
 
-  // ─── Build ──────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return const Scaffold(
+        body: LoadingOverlay(message: 'Preparando cámara...'),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
-        // Show a back button only when capture is in progress so the user can
-        // cancel. During initializing we hide it to prevent a half-initialized
-        // camera from being left running.
-        leading: _step != _ScanStep.initializing
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => _goToError(ExampleErrorType.cancelled),
-              )
-            : null,
-        title: Text(_appBarTitle()),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => _goToError(ExampleErrorType.cancelled),
+        ),
+        title: const Text('Escanear DNI'),
       ),
-      body: _buildBody(),
-    );
-  }
-
-  String _appBarTitle() {
-    switch (_step) {
-      case _ScanStep.initializing:
-        return 'Starting camera';
-      case _ScanStep.frontCapturing:
-      case _ScanStep.frontComplete:
-        return 'Scan front side';
-      case _ScanStep.backCapturing:
-      case _ScanStep.backComplete:
-        return 'Scan back side';
-    }
-  }
-
-  Widget _buildBody() {
-    switch (_step) {
-      case _ScanStep.initializing:
-        return const LoadingOverlay(message: 'Preparing camera...');
-      case _ScanStep.frontCapturing:
-      case _ScanStep.frontComplete:
-        return _buildFront();
-      case _ScanStep.backCapturing:
-      case _ScanStep.backComplete:
-        return _buildBack();
-    }
-  }
-
-  // ─── Front-side capture ────────────────────────────────────────────────────
-
-  Widget _buildFront() {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) {
-      return const LoadingOverlay(message: 'Preparing camera...');
-    }
-    // NOTE: DniCameraMask.onDocumentExpired fires with a DateTime argument
-    // (not VoidCallback). We ignore the date value and route to ErrorScreen.
-    return DniCameraMask(
-      controller: controller,
-      isBackSide: false,
-      onValidCapture: (file, consensus) {
-        // consensus is always null for the front side — the library only
-        // builds a consensus snapshot during back-side capture. Fields are
-        // accumulated progressively via onFrontSideOcrUpdated below.
-        if (!mounted) return;
-        setState(() {
-          _step = _ScanStep.backCapturing;
-        });
-      },
-      // Accumulate front-side OCR fields progressively so they are ready
-      // to seed the back-side accumulator when the step transitions.
-      onFrontSideOcrUpdated: (fields) {
-        _frontFields = fields;
-      },
-      onDocumentExpired: (_) => _goToError(ExampleErrorType.expired),
-    );
-  }
-
-  // ─── Back-side capture ─────────────────────────────────────────────────────
-
-  Widget _buildBack() {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) {
-      return const LoadingOverlay(message: 'Preparing camera...');
-    }
-
-    // The library's consensus accumulator can be SEEDED with fields from the
-    // front-side capture before mounting the back-side camera. This dramatically
-    // improves back-side OCR confidence because MRZ field hypotheses propagate
-    // forward.
-    //
-    // Without seeding, the back-side reads from scratch and may produce
-    // inferior consensus — this is the integration step consumers miss most.
-    return DniCameraMask(
-      controller: controller,
-      isBackSide: true,
-      frontSideFields: _frontFields, // <-- the seeding pattern
-      onValidCapture: (file, consensus) {
-        if (!mounted) return;
-        setState(() {
-          _step = _ScanStep.backComplete;
-        });
-        if (consensus == null) {
-          Navigator.of(context).popUntil((route) => route.isFirst);
-          return;
-        }
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute<void>(
-            builder: (_) => ResultScreen(result: consensus),
-          ),
-        );
-      },
-      onDocumentExpired: (_) => _goToError(ExampleErrorType.expired),
+      body: DniScanner(
+        controller: controller,
+        fields: widget.fields ?? DniFields.full(),
+        onScanComplete: _onScanComplete,
+      ),
     );
   }
 }

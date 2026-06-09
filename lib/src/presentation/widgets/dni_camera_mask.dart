@@ -9,7 +9,13 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 
 import '../../data/ocr_consensus.dart';
 import '../../data/ocr_field_extractor.dart';
+import '../../domain/capture/capture_decider.dart';
 import '../../domain/entities/user_verification_data.dart';
+import '../../domain/extraction/dni_fields.dart';
+import '../../domain/extraction/field_hunter.dart';
+import '../../domain/extraction/hunt_result.dart';
+import '../../lookup/models/dni_data.dart';
+import '../../lookup/services/dni_lookup_service.dart';
 import '../../infrastructure/breadcrumb_throttle.dart';
 import '../../infrastructure/detector_lifecycle.dart';
 import '../../infrastructure/input_image_converter.dart';
@@ -40,6 +46,14 @@ class DniCameraMask extends StatefulWidget {
     this.kycV2Enabled = true,
     this.frontSideFields,
     this.onFrontSideOcrUpdated,
+    this.fieldHunter,
+    this.onFieldsUpdated,
+    this.onCaptureReady,
+    this.captureDecider = const CaptureDecider(),
+    this.lookupService,
+    this.onDniReady,
+    this.lookupTimeout = const Duration(milliseconds: 1500),
+    this.fields,
   });
 
   final CameraController controller;
@@ -86,6 +100,38 @@ class DniCameraMask extends StatefulWidget {
   /// Ignored on back-side captures (`isBackSide == true`).
   final void Function(OcrExtractedFields fields)? onFrontSideOcrUpdated;
 
+  /// Optional field hunter. When provided, the widget switches to the
+  /// evidence-driven capture flow: side is inferred from OCR anchors, fields
+  /// accumulate across every frame regardless of host hints, and capture
+  /// fires when the hunter reports completeness plus stable framing.
+  final FieldHunter? fieldHunter;
+
+  /// Emits the current hunt snapshot on every processed frame when
+  /// [fieldHunter] is provided.
+  final void Function(HuntResult result)? onFieldsUpdated;
+
+  /// Fires once when the [captureDecider] determines fields are complete and
+  /// framing is stable. Replaces [onValidCapture] in the new API.
+  final void Function(XFile file, HuntResult result)? onCaptureReady;
+
+  /// Resolves the capture decision from a [HuntResult] and the framing
+  /// stability flag. Defaults to the standard decider.
+  final CaptureDecider captureDecider;
+
+  final DniLookupService? lookupService;
+
+  final void Function(DniData)? onDniReady;
+
+  final Duration lookupTimeout;
+
+  /// Restricts the FieldHunter path to the specified fields. When null,
+  /// all 19 fields are extracted (v0.10.0 behavior).
+  ///
+  /// This parameter ONLY applies to the [fieldHunter] pipeline. The legacy
+  /// [OcrConsensusAccumulator] path is not filtered by [fields] and always
+  /// runs unmodified.
+  final DniFields? fields;
+
   @override
   State<DniCameraMask> createState() => _DniCameraMaskState();
 }
@@ -105,6 +151,11 @@ class _DniCameraMaskState extends State<DniCameraMask>
   bool _isDisposed = false;
   late final DetectorLifecycle _lifecycle;
   final OcrExtractedFields _accumulatedFields = OcrExtractedFields();
+
+  FieldHunter? _effectiveHunter;
+
+  @visibleForTesting
+  FieldHunter? get effectiveFieldHunter => _effectiveHunter;
 
   bool _expiredHandled = false;
   Timer? _consensusWindowTimer;
@@ -175,6 +226,10 @@ class _DniCameraMaskState extends State<DniCameraMask>
     );
 
     _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+    _effectiveHunter = widget.fieldHunter ??
+        (widget.fields != null
+            ? FieldHunter.standard(fields: widget.fields)
+            : null);
     _lifecycle = DetectorLifecycle(
       stopStream: () => _safeStopStream(widget.controller),
       closeDetectors: _closeDetectors,
@@ -192,6 +247,9 @@ class _DniCameraMaskState extends State<DniCameraMask>
       isBackSide: widget.isBackSide,
       onValidCapture: widget.onValidCapture,
       onDocumentExpired: widget.onDocumentExpired,
+      lookupService: widget.lookupService,
+      onDniReady: widget.onDniReady,
+      lookupTimeout: widget.lookupTimeout,
     );
 
     // Listen to captureState for side effects: countdown arc and capture trigger
@@ -269,6 +327,9 @@ class _DniCameraMaskState extends State<DniCameraMask>
         file: outFile,
         consensus: captureConsensus,
       );
+      if (_effectiveHunter != null) {
+        widget.onCaptureReady?.call(outFile, _effectiveHunter!.snapshot);
+      }
     } on CameraException catch (_) {
       // Restore scanning state on camera failure
       if (mounted) {
@@ -486,7 +547,26 @@ class _DniCameraMaskState extends State<DniCameraMask>
       isEmpty: recognized.blocks.isEmpty,
     );
 
-    // Delegate expiration detection and state transitions to controller
+    if (_effectiveHunter != null && recognized.blocks.isNotEmpty) {
+      final ocrText =
+          recognized.blocks.map((b) => b.text).join('\n');
+      _effectiveHunter!.process(ocrText);
+      final snapshot = _effectiveHunter!.snapshot;
+      widget.onFieldsUpdated?.call(snapshot);
+      final signal = widget.captureDecider.decide(
+        hunt: snapshot,
+        framingStable: result.isCaptureable,
+      );
+      if (signal.shouldCapture) {
+        final captureState = _captureController.captureState.value;
+        if (captureState is! DniCaptureInFlight &&
+            captureState is! DniCaptureExpired &&
+            captureState is! DniCaptureDone) {
+          _captureController.captureManually();
+        }
+      }
+    }
+
     DateTime? expirationDate;
 
     if (recognized.blocks.isNotEmpty) {
