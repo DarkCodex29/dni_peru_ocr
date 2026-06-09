@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.1
+
+### Added
+- `OcrConsensusResult.fromHunt(HuntResult)` factory — bridges
+  `DniScanner` single-side output (`HuntResult`) to consumers that still
+  expect an `OcrConsensusResult` downstream.
+
 ## 0.15.0
 
 ### Added

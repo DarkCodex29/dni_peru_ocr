@@ -1,5 +1,6 @@
 import 'package:mrz_parser/mrz_parser.dart';
 
+import '../domain/extraction/hunt_result.dart';
 import 'ocr_field_normalizer.dart';
 import 'string_similarity.dart';
 
@@ -47,6 +48,29 @@ class OcrConsensusResult {
   final OcrFieldResult<String> dateOfBirth;
   final OcrFieldResult<String> expirationDate;
   final OcrFieldResult<String> address;
+
+  /// Builds a consensus snapshot from a [HuntResult]. Treats each non-null
+  /// field as a locked vote with confidence 1.0. Used by hosts that consume
+  /// [HuntResult] directly (e.g. via `DniScanner.onSideCaptured`) but still
+  /// need to feed an [OcrConsensusResult] downstream.
+  factory OcrConsensusResult.fromHunt(HuntResult hunt) {
+    OcrFieldResult<String> wrap(String? value) => OcrFieldResult(
+          value: value,
+          confidence: value == null ? 0.0 : 1.0,
+          locked: value != null,
+        );
+    return OcrConsensusResult(
+      success: true,
+      source: OcrConsensusSource.temporalVote,
+      documentNumber: wrap(hunt.fields.documentNumber),
+      firstName: wrap(hunt.fields.firstName),
+      lastName: wrap(hunt.fields.lastName),
+      secondLastName: wrap(hunt.fields.secondLastName),
+      dateOfBirth: wrap(hunt.fields.dateOfBirth),
+      expirationDate: wrap(hunt.fields.expirationDate),
+      address: wrap(hunt.fields.address),
+    );
+  }
 }
 
 const _kDocumentNumberThreshold = 0.95;
