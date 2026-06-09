@@ -28,6 +28,7 @@ import '../controllers/dni_camera_controller.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
 import '_mask_painter.dart';
+import '_shared_scan_widgets.dart';
 
 part '_camera_overlay_widgets.dart';
 
@@ -865,19 +866,11 @@ class _DniCameraMaskState extends State<DniCameraMask>
               ),
             if (widget.isBackSide)
               Positioned(
-                top: MediaQuery.sizeOf(context).height / 2 +
-                    widget.holeHeight / 2 +
-                    16,
-                left: 24,
-                right: 24,
-                child: IgnorePointer(
-                  child: AnimatedOpacity(
-                    opacity: _showSideIntro ? 1.0 : 0.0,
-                    duration: const Duration(
-                      milliseconds: CameraOverlayTuning.sideIntroFadeMs,
-                    ),
-                    child: const _SideIntroRibbon(),
-                  ),
+                top: 0,
+                left: 0,
+                right: 0,
+                child: FlipDocumentBanner(
+                  visible: _showSideIntro,
                 ),
               ),
             if (kDebugMode)

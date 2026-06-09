@@ -67,7 +67,8 @@ Widget _buildApp(CameraController cam, {required bool isBackSide}) =>
       ),
     );
 
-Future<void> _triggerSideIntro(WidgetTester tester, _MockCameraController cam) async {
+Future<void> _triggerSideIntro(
+    WidgetTester tester, _MockCameraController cam) async {
   await tester.pumpWidget(_buildApp(cam, isBackSide: false));
   await tester.pump();
   await tester.pumpWidget(_buildApp(cam, isBackSide: true));
@@ -87,27 +88,8 @@ void main() {
     registerFallbackValue(ImageFormatGroup.bgra8888);
   });
 
-  group('_SideIntroRibbon — gradient background', () {
-    testWidgets('renders LinearGradient when side intro is visible',
-        (tester) async {
-      final cam = _idleMock();
-      await _triggerSideIntro(tester, cam);
-
-      final containers = tester.widgetList<Container>(find.byType(Container));
-      final withGradient = containers.where((c) {
-        final deco = c.decoration;
-        if (deco is BoxDecoration) {
-          return deco.gradient is LinearGradient;
-        }
-        return false;
-      });
-      expect(withGradient, isNotEmpty,
-          reason: 'Expected Container with LinearGradient in _SideIntroRibbon');
-
-      await _dispose(tester);
-    });
-
-    testWidgets('gradient uses theme gradientStart (#00C853) and gradientEnd (#1DE9B6)',
+  group('FlipDocumentBanner — gradient background', () {
+    testWidgets('renders Material Orange 600 → 700 gradient when visible',
         (tester) async {
       final cam = _idleMock();
       await _triggerSideIntro(tester, cam);
@@ -121,46 +103,18 @@ void main() {
           break;
         }
       }
-      expect(found, isNotNull, reason: 'No LinearGradient found');
-      expect(found!.colors, contains(const Color(0xFF00C853)));
-      expect(found.colors, contains(const Color(0xFF1DE9B6)));
+      expect(found, isNotNull,
+          reason: 'No LinearGradient found in FlipDocumentBanner');
+      expect(found!.colors, contains(const Color(0xFFFB8C00)));
+      expect(found.colors, contains(const Color(0xFFF57C00)));
 
       await _dispose(tester);
     });
   });
 
-  group('_SideIntroRibbon — slide animation', () {
-    testWidgets('SlideTransition is present after ribbon mounts', (tester) async {
-      final cam = _idleMock();
-      await _triggerSideIntro(tester, cam);
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(find.byType(SlideTransition), findsWidgets,
-          reason: 'SlideTransition should be present in _SideIntroRibbon');
-
-      await _dispose(tester);
-    });
-
-    testWidgets('SlideTransition position animates — controller is not idle at start',
+  group('FlipDocumentBanner — rotation animation', () {
+    testWidgets('RotationTransition is present and animating (repeat)',
         (tester) async {
-      final cam = _idleMock();
-      await _triggerSideIntro(tester, cam);
-
-      final slides =
-          tester.widgetList<SlideTransition>(find.byType(SlideTransition));
-      expect(slides, isNotEmpty,
-          reason: 'SlideTransition must be present');
-      final slide = slides.first;
-      expect(slide.position.isAnimating || slide.position.value == Offset.zero,
-          isTrue,
-          reason: 'Animation should be active or completed to Offset.zero');
-
-      await _dispose(tester);
-    });
-  });
-
-  group('_SideIntroRibbon — rotation animation', () {
-    testWidgets('RotationTransition is present and animating (repeat)', (tester) async {
       final cam = _idleMock();
       await _triggerSideIntro(tester, cam);
       await tester.pump(const Duration(milliseconds: 50));
@@ -168,38 +122,33 @@ void main() {
       final rotations = tester
           .widgetList<RotationTransition>(find.byType(RotationTransition));
       expect(rotations, isNotEmpty,
-          reason: 'RotationTransition should be in _SideIntroRibbon tree');
+          reason: 'RotationTransition should be in FlipDocumentBanner');
 
       final rotation = rotations.first;
       expect(rotation.turns.isAnimating, isTrue,
-          reason: '_rotateController should be repeating');
+          reason: '_rotate controller should be repeating');
 
       await _dispose(tester);
     });
   });
 
-  group('_SideIntroRibbon — text content', () {
-    testWidgets('preserves existing flip instruction text', (tester) async {
+  group('FlipDocumentBanner — text content', () {
+    testWidgets('renders new flip instruction text', (tester) async {
       final cam = _idleMock();
       await _triggerSideIntro(tester, cam);
 
-      expect(
-        find.text('Anverso listo — ahora voltea el DNI'),
-        findsOneWidget,
-      );
+      expect(find.text('Voltee el documento'), findsOneWidget);
 
       await _dispose(tester);
     });
   });
 
-  group('_SideIntroRibbon — semantics', () {
+  group('FlipDocumentBanner — semantics', () {
     testWidgets('semantics label is present and non-empty', (tester) async {
       final cam = _idleMock();
       await _triggerSideIntro(tester, cam);
 
-      final semantics = tester.getSemantics(
-        find.text('Anverso listo — ahora voltea el DNI'),
-      );
+      final semantics = tester.getSemantics(find.text('Voltee el documento'));
       expect(semantics.label, isNotEmpty,
           reason: 'Expected non-empty semantics on text widget');
 
@@ -207,7 +156,7 @@ void main() {
     });
   });
 
-  group('_SideIntroRibbon — AnimationController disposal', () {
+  group('FlipDocumentBanner — AnimationController disposal', () {
     testWidgets('transientCallbackCount is 0 after full widget removal',
         (tester) async {
       final cam = _idleMock();
@@ -226,8 +175,9 @@ void main() {
     });
   });
 
-  group('_SideIntroRibbon — HapticFeedback', () {
-    testWidgets('HapticFeedback.mediumImpact fires on ribbon mount', (tester) async {
+  group('FlipDocumentBanner — HapticFeedback', () {
+    testWidgets('HapticFeedback.mediumImpact fires on banner mount',
+        (tester) async {
       final hapticCalls = <MethodCall>[];
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
@@ -245,7 +195,8 @@ void main() {
         (c) => c.method == 'HapticFeedback.vibrate',
       );
       expect(vibrateCalls, isNotEmpty,
-          reason: 'HapticFeedback.mediumImpact should have triggered HapticFeedback.vibrate');
+          reason:
+              'HapticFeedback.mediumImpact should have triggered HapticFeedback.vibrate');
 
       await _dispose(tester);
     });

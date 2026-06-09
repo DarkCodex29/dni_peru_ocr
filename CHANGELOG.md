@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.12.0
+
+### Changed
+- **Banner redesign in `DniCameraMask`**: the front→back transition now shows
+  the same orange gradient banner used by `DniScanner` (Material Orange 600 → 700)
+  with rotating flip icon and haptic feedback. Previously `DniCameraMask` had its
+  own gray-translucent `_SideIntroRibbon` that consumers reported as nearly invisible.
+- Banner widget extracted to `_shared_scan_widgets.dart` so both `DniScanner` and
+  `DniCameraMask` render the same `FlipDocumentBanner`. Single source of truth for
+  the in-camera UX.
+- Banner text: `"Voltee el documento"` (was `"Anverso listo — ahora voltea el DNI"`).
+
+### Notes
+- No public API change. The `_SideIntroRibbon` was already a private widget;
+  consumers that embed `DniCameraMask` see the new banner automatically.
+- The orange gradient is hardcoded (not theme-driven) to ensure all consumers
+  get the same protagonist visual without per-app configuration.
+
 ## 0.11.2
 
 ### Fixed
