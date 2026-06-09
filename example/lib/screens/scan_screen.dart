@@ -144,9 +144,9 @@ class _ScanScreenState extends State<ScanScreen> {
 
   ExtractedFields _applyReniecMerge(ExtractedFields ocr, DniData reniec) {
     final filter = widget.fields;
-    String? pick(String reniecValue, String? ocrValue, DniField field) {
+    String? pick(String? reniecValue, String? ocrValue, DniField field) {
       if (filter != null && !filter.contains(field)) return ocrValue;
-      final trimmed = reniecValue.trim();
+      final trimmed = reniecValue?.trim() ?? '';
       if (trimmed.isEmpty) return ocrValue;
       return trimmed;
     }
