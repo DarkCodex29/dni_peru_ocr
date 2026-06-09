@@ -44,6 +44,9 @@ dependencies:
   dni_peru_ocr: ^0.7.1
 ```
 
+> Note: as of v0.11.1, `dio` is a direct runtime dependency of this package (required for pub.dev compliance).
+> You don't need to add it to your own `pubspec.yaml`.
+
 ```bash
 flutter pub get
 ```

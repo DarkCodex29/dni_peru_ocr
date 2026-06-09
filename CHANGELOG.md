@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.11.1
+
+### Changed
+- Moved `dio` from `dev_dependencies` to `dependencies` to comply with pub.dev publication rules.
+  Packages imported from `lib/` must be declared as direct dependencies.
+
+### Removed
+- Removed `analysis_options.yaml` suppression of `depend_on_referenced_packages` that was masking the
+  dio placement issue.
+
+### Notes
+- No functional changes. v0.11.0 consumers see identical behavior.
+- Consumers of `dni_peru_ocr` now transitively load `dio` as a runtime dependency, even when not using
+  `DioDniHttpClient`. This is a tradeoff against the original v0.9.0 design promise of "OCR-only consumers
+  pay no dio cost". Pub.dev compliance is non-negotiable; the bundle impact is ~150KB which is negligible
+  compared to ML Kit dependencies the library already requires.
+
 ## 0.11.0
 
 ### Added
