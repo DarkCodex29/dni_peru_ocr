@@ -39,11 +39,44 @@ final class DniFields {
 
   final Set<DniField> _fields;
 
+  /// Fields printed on the front side of a Peruvian DNI.
+  static const Set<DniField> frontSideFields = {
+    DniField.documentNumber,
+    DniField.firstName,
+    DniField.lastName,
+    DniField.secondLastName,
+    DniField.dateOfBirth,
+    DniField.expirationDate,
+    DniField.emissionDate,
+    DniField.inscriptionDate,
+    DniField.sex,
+    DniField.nationality,
+    DniField.stateCivil,
+    DniField.cardNumber,
+  };
+
+  /// Fields printed on the back side of a Peruvian DNI.
+  static const Set<DniField> backSideFields = {
+    DniField.address,
+    DniField.department,
+    DniField.province,
+    DniField.district,
+    DniField.organDonor,
+    DniField.votingGroup,
+    DniField.birthUbigeoCode,
+  };
+
   Set<DniField> get fields => UnmodifiableSetView(_fields);
 
   bool contains(DniField field) => _fields.contains(field);
 
   int get length => _fields.length;
+
+  /// Number of selected fields that live on the front side.
+  int get frontCount => _fields.where(frontSideFields.contains).length;
+
+  /// Number of selected fields that live on the back side.
+  int get backCount => _fields.where(backSideFields.contains).length;
 
   @override
   bool operator ==(Object other) {

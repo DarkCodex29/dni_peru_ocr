@@ -29,7 +29,10 @@ import '../theme/kyc_theme.dart';
 /// - [manual]: the scanner keeps hunting OCR fields (consensus and RENIEC
 ///   lookup still work) but the picture is only taken when the user taps
 ///   the capture button.
-enum DniCaptureMode { auto, manual }
+/// - [hybrid]: auto-capture stays active AND the capture button is shown,
+///   so the user can shoot immediately when the auto trigger is slow
+///   (poor lighting, hard-to-read documents).
+enum DniCaptureMode { auto, manual, hybrid }
 
 class DniScanResult {
   const DniScanResult({
@@ -273,16 +276,16 @@ class _DniScannerState extends State<DniScanner>
 
     switch (signal) {
       case HuntSignal.frontCaptureReady:
-        if (widget.captureMode == DniCaptureMode.auto) {
-          await _captureFront();
-        } else {
+        if (widget.captureMode == DniCaptureMode.manual) {
           _markCaptureReady();
+        } else {
+          await _captureFront();
         }
       case HuntSignal.backCaptureReady:
-        if (widget.captureMode == DniCaptureMode.auto) {
-          await _captureBack();
-        } else {
+        if (widget.captureMode == DniCaptureMode.manual) {
           _markCaptureReady();
+        } else {
+          await _captureBack();
         }
       case HuntSignal.frontDetected:
       case HuntSignal.backDetected:
@@ -672,6 +675,8 @@ class _DniScannerState extends State<DniScanner>
               right: 24,
               child: _SideProgress(
                 fields: _hunter.snapshot.fields,
+                frontTotal: widget.fields?.frontCount,
+                backTotal: widget.fields?.backCount,
                 isFrontDone: _frontPhoto != null,
                 isBackDone: _backPhoto != null,
                 isFrontPhase: _isFrontPhase(),
@@ -688,7 +693,7 @@ class _DniScannerState extends State<DniScanner>
               bottom: MediaQuery.of(context).padding.bottom + 32,
               left: 0,
               right: 0,
-              child: widget.captureMode == DniCaptureMode.manual
+              child: widget.captureMode != DniCaptureMode.auto
                   ? Stack(
                       alignment: Alignment.center,
                       children: [
@@ -1136,6 +1141,8 @@ class _SideProgress extends StatelessWidget {
     required this.isBackDone,
     required this.isFrontPhase,
     required this.theme,
+    this.frontTotal,
+    this.backTotal,
   });
 
   final ExtractedFields fields;
@@ -1144,8 +1151,13 @@ class _SideProgress extends StatelessWidget {
   final bool isFrontPhase;
   final KycTheme theme;
 
-  static const int _frontTotal = 12;
-  static const int _backTotal = 7;
+  /// Totals derived from the consumer's [DniFields] selection. When null
+  /// (no explicit selection) the full-DNI totals apply.
+  final int? frontTotal;
+  final int? backTotal;
+
+  static const int _frontTotalDefault = 12;
+  static const int _backTotalDefault = 7;
 
   int _frontFilled() {
     final f = fields;
@@ -1182,10 +1194,16 @@ class _SideProgress extends StatelessWidget {
   Widget build(BuildContext context) {
     final frontFilled = _frontFilled();
     final backFilled = _backFilled();
-    final frontProgress =
-        isFrontDone ? 1.0 : (frontFilled / _frontTotal).clamp(0.0, 1.0);
-    final backProgress =
-        isBackDone ? 1.0 : (backFilled / _backTotal).clamp(0.0, 1.0);
+    final effectiveFrontTotal =
+        (frontTotal ?? _frontTotalDefault).clamp(1, _frontTotalDefault);
+    final effectiveBackTotal =
+        (backTotal ?? _backTotalDefault).clamp(1, _backTotalDefault);
+    final frontProgress = isFrontDone
+        ? 1.0
+        : (frontFilled / effectiveFrontTotal).clamp(0.0, 1.0);
+    final backProgress = isBackDone
+        ? 1.0
+        : (backFilled / effectiveBackTotal).clamp(0.0, 1.0);
 
     return Center(
       child: Container(

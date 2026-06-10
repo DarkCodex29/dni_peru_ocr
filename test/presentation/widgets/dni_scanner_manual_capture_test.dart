@@ -150,4 +150,55 @@ void main() {
       await _disposeWidget(tester);
     });
   });
+
+  group('DniCaptureMode.hybrid', () {
+    testWidgets('renders the manual capture button as override', (tester) async {
+      final cam = _idleMockCamera();
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, captureMode: DniCaptureMode.hybrid),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key('dni_scanner_manual_capture')), findsOneWidget);
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('tapping the button captures without waiting for auto',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, captureMode: DniCaptureMode.hybrid),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('dni_scanner_manual_capture')));
+      await tester.pump();
+
+      verify(() => cam.takePicture()).called(1);
+      await _disposeWidget(tester);
+    });
+  });
+
+  group('DniFields side counts', () {
+    test('kyc() selection: 6 front fields, 1 back field', () {
+      final fields = DniFields.kyc();
+      expect(fields.frontCount, 6);
+      expect(fields.backCount, 1);
+    });
+
+    test('full() selection matches legacy totals', () {
+      final fields = DniFields.full();
+      expect(fields.frontCount, 12);
+      expect(fields.backCount, 7);
+    });
+
+    test('minimal() selection is front-only', () {
+      final fields = DniFields.minimal();
+      expect(fields.frontCount, 4);
+      expect(fields.backCount, 0);
+    });
+  });
 }

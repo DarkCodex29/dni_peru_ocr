@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.18.0
+
+### Added
+- `DniCaptureMode.hybrid` — auto-capture stays active and the manual
+  capture button is rendered as an override, so users are never stuck
+  waiting for the auto trigger under poor lighting.
+- `DniFields.frontCount` / `DniFields.backCount` and the
+  `DniFields.frontSideFields` / `DniFields.backSideFields` constants.
+
+### Fixed
+- `DniScanner` side-progress percentages now derive their totals from the
+  consumer's `DniFields` selection instead of the hardcoded full-DNI
+  totals (12 front / 7 back). With `DniFields.kyc()` the front progress
+  previously capped at ~50% and the back at ~14%.
+
 ## 0.17.0
 
 ### Added
