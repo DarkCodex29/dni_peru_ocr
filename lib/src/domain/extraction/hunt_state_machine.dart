@@ -21,12 +21,17 @@ class HuntStateMachine {
     this.idleFramesThreshold = 18,
     this.fastAdvanceThreshold = 14,
     this.minFieldsForFastAdvance = 12,
+    this.completeFieldsCount,
     HuntPhase initialPhase = HuntPhase.waitingFront,
   }) : _phase = initialPhase;
 
   final int idleFramesThreshold;
   final int fastAdvanceThreshold;
   final int minFieldsForFastAdvance;
+
+  /// Total number of selected fields. When set and a frame reports this many
+  /// filled fields, capture fires immediately without waiting idle frames.
+  final int? completeFieldsCount;
 
   HuntPhase _phase;
   int _idleFrames = 0;
@@ -48,6 +53,9 @@ class HuntStateMachine {
         return HuntSignal.none;
 
       case HuntPhase.extractingFront:
+        if (_isSelectionComplete(filledFields)) {
+          return HuntSignal.frontCaptureReady;
+        }
         if (addedNewField) {
           _idleFrames = 0;
         } else {
@@ -67,6 +75,9 @@ class HuntStateMachine {
         return HuntSignal.none;
 
       case HuntPhase.extractingBack:
+        if (_isSelectionComplete(filledFields)) {
+          return HuntSignal.backCaptureReady;
+        }
         if (addedNewField) {
           _idleFrames = 0;
         } else {
@@ -86,6 +97,11 @@ class HuntStateMachine {
     return filledFields >= minFieldsForFastAdvance
         ? fastAdvanceThreshold
         : idleFramesThreshold;
+  }
+
+  bool _isSelectionComplete(int filledFields) {
+    final total = completeFieldsCount;
+    return total != null && total > 0 && filledFields >= total;
   }
 
   void advanceToWaitingBack() {

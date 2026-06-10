@@ -169,6 +169,7 @@ class _DniScannerState extends State<DniScanner>
           idleFramesThreshold: widget.idleFramesBeforeCapture,
           minFieldsForFastAdvance:
               (selectedCount * 0.66).round().clamp(2, selectedCount),
+          completeFieldsCount: widget.fields?.length,
           initialPhase: initialPhase,
         );
     _lastPhaseRendered = initialPhase;
@@ -458,6 +459,8 @@ class _DniScannerState extends State<DniScanner>
     unawaited(SystemSound.play(SystemSoundType.click));
   }
 
+  static const int _cropMaxDimension = 3000;
+
   Future<XFile?> _cropToHole(
     XFile source, {
     required String suffix,
@@ -466,8 +469,14 @@ class _DniScannerState extends State<DniScanner>
     try {
       if (preview == null) return null;
       final bytes = await File(source.path).readAsBytes();
-      final decoded = img.decodeImage(bytes);
+      var decoded = img.decodeImage(bytes);
       if (decoded == null) return null;
+      if (decoded.width > _cropMaxDimension ||
+          decoded.height > _cropMaxDimension) {
+        decoded = decoded.width >= decoded.height
+            ? img.copyResize(decoded, width: _cropMaxDimension)
+            : img.copyResize(decoded, height: _cropMaxDimension);
+      }
       final imgWidth = decoded.width;
       final imgHeight = decoded.height;
 
@@ -494,8 +503,8 @@ class _DniScannerState extends State<DniScanner>
       );
       final dir = await getTemporaryDirectory();
       final path =
-          '${dir.path}/dni_${suffix}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      await File(path).writeAsBytes(img.encodeJpg(crop, quality: 92));
+          '${dir.path}/dni_${suffix}_${DateTime.now().millisecondsSinceEpoch}.png';
+      await File(path).writeAsBytes(img.encodePng(crop));
       return XFile(path);
     } catch (e) {
       DniLogger.error('DniScanner', 'crop failed: $e');

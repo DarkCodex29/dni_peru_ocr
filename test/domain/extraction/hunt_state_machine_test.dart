@@ -155,6 +155,56 @@ void main() {
       machine.reset();
       expect(machine.phase, HuntPhase.waitingFront);
     });
+
+    group('completeness fast-path', () {
+      test('fires frontCaptureReady immediately when all selected fields '
+          'are filled, without waiting for idle frames', () {
+        final machine = HuntStateMachine(completeFieldsCount: 7);
+        _seedFrontPhaseComplete(machine);
+        final signal = machine.recordFrame(
+          detectedSide: DocumentSide.front,
+          addedNewField: true,
+          filledFields: 7,
+        );
+        expect(signal, HuntSignal.frontCaptureReady);
+      });
+
+      test('fires backCaptureReady immediately when all selected fields '
+          'are filled', () {
+        final machine = HuntStateMachine(completeFieldsCount: 7);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        _seedBackPhaseComplete(machine);
+        final signal = machine.recordFrame(
+          detectedSide: DocumentSide.back,
+          addedNewField: true,
+          filledFields: 7,
+        );
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('still waits for idle frames while fields are incomplete', () {
+        final machine = HuntStateMachine(completeFieldsCount: 7);
+        _seedFrontPhaseComplete(machine);
+        final signal = machine.recordFrame(
+          detectedSide: DocumentSide.front,
+          addedNewField: true,
+          filledFields: 6,
+        );
+        expect(signal, HuntSignal.none);
+      });
+
+      test('without completeFieldsCount the fast-path is disabled', () {
+        final machine = HuntStateMachine();
+        _seedFrontPhaseComplete(machine);
+        final signal = machine.recordFrame(
+          detectedSide: DocumentSide.front,
+          addedNewField: true,
+          filledFields: 19,
+        );
+        expect(signal, HuntSignal.none);
+      });
+    });
   });
 }
 

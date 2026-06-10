@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.18.1
+
+### Fixed
+- `DniScanner` cropped captures are now written as lossless PNG instead of
+  re-encoded JPEG (quality 92). The double JPEG compression visibly
+  degraded document text sent to backends; this restores parity with the
+  legacy `DniCameraMask` output. A 3000px max-dimension guard is applied
+  before cropping, also matching the legacy pipeline.
+
+### Added
+- `HuntStateMachine.completeFieldsCount` — when a frame reports all
+  selected fields as filled, capture fires immediately instead of waiting
+  for the idle-frames threshold. `DniScanner` wires it automatically from
+  its `fields` selection, restoring the instant-capture feel of the legacy
+  `CaptureDecider` for documents that complete the whole selection.
+
 ## 0.18.0
 
 ### Added
