@@ -156,22 +156,27 @@ void main() {
       expect(machine.phase, HuntPhase.waitingFront);
     });
 
-    group('completeness fast-path', () {
-      test('fires frontCaptureReady immediately when all selected fields '
-          'are filled, without waiting for idle frames', () {
-        final machine = HuntStateMachine(completeFieldsCount: 7);
+    group('completeness fast-path (per side)', () {
+      test('fires frontCaptureReady when all FRONT-side selected fields are '
+          'filled, even though the full selection is larger', () {
+        final machine = HuntStateMachine(
+          frontCompleteFieldsCount: 6,
+          backCompleteFieldsCount: 7,
+        );
         _seedFrontPhaseComplete(machine);
         final signal = machine.recordFrame(
           detectedSide: DocumentSide.front,
           addedNewField: true,
-          filledFields: 7,
+          filledFields: 6,
         );
         expect(signal, HuntSignal.frontCaptureReady);
       });
 
-      test('fires backCaptureReady immediately when all selected fields '
-          'are filled', () {
-        final machine = HuntStateMachine(completeFieldsCount: 7);
+      test('fires backCaptureReady when the back-phase threshold is met', () {
+        final machine = HuntStateMachine(
+          frontCompleteFieldsCount: 6,
+          backCompleteFieldsCount: 7,
+        );
         _seedFrontPhaseComplete(machine);
         machine.advanceToWaitingBack();
         _seedBackPhaseComplete(machine);
@@ -183,18 +188,22 @@ void main() {
         expect(signal, HuntSignal.backCaptureReady);
       });
 
-      test('still waits for idle frames while fields are incomplete', () {
-        final machine = HuntStateMachine(completeFieldsCount: 7);
+      test('still waits for idle frames while the front side is incomplete',
+          () {
+        final machine = HuntStateMachine(
+          frontCompleteFieldsCount: 6,
+          backCompleteFieldsCount: 7,
+        );
         _seedFrontPhaseComplete(machine);
         final signal = machine.recordFrame(
           detectedSide: DocumentSide.front,
           addedNewField: true,
-          filledFields: 6,
+          filledFields: 5,
         );
         expect(signal, HuntSignal.none);
       });
 
-      test('without completeFieldsCount the fast-path is disabled', () {
+      test('without per-side counts the fast-path is disabled', () {
         final machine = HuntStateMachine();
         _seedFrontPhaseComplete(machine);
         final signal = machine.recordFrame(

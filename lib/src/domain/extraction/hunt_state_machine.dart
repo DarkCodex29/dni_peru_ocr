@@ -21,7 +21,8 @@ class HuntStateMachine {
     this.idleFramesThreshold = 18,
     this.fastAdvanceThreshold = 14,
     this.minFieldsForFastAdvance = 12,
-    this.completeFieldsCount,
+    this.frontCompleteFieldsCount,
+    this.backCompleteFieldsCount,
     HuntPhase initialPhase = HuntPhase.waitingFront,
   }) : _phase = initialPhase;
 
@@ -29,9 +30,15 @@ class HuntStateMachine {
   final int fastAdvanceThreshold;
   final int minFieldsForFastAdvance;
 
-  /// Total number of selected fields. When set and a frame reports this many
-  /// filled fields, capture fires immediately without waiting idle frames.
-  final int? completeFieldsCount;
+  /// Filled-fields count that completes the FRONT phase. When a front frame
+  /// reports this many filled fields, capture fires immediately without
+  /// waiting idle frames. Typically `DniFields.frontCount`.
+  final int? frontCompleteFieldsCount;
+
+  /// Filled-fields count that completes the BACK phase. In two-sided mode
+  /// this is the full selection length (front fields accumulate); in
+  /// single-side back mode it is `DniFields.backCount`.
+  final int? backCompleteFieldsCount;
 
   HuntPhase _phase;
   int _idleFrames = 0;
@@ -53,7 +60,7 @@ class HuntStateMachine {
         return HuntSignal.none;
 
       case HuntPhase.extractingFront:
-        if (_isSelectionComplete(filledFields)) {
+        if (_isComplete(filledFields, frontCompleteFieldsCount)) {
           return HuntSignal.frontCaptureReady;
         }
         if (addedNewField) {
@@ -75,7 +82,7 @@ class HuntStateMachine {
         return HuntSignal.none;
 
       case HuntPhase.extractingBack:
-        if (_isSelectionComplete(filledFields)) {
+        if (_isComplete(filledFields, backCompleteFieldsCount)) {
           return HuntSignal.backCaptureReady;
         }
         if (addedNewField) {
@@ -99,8 +106,7 @@ class HuntStateMachine {
         : idleFramesThreshold;
   }
 
-  bool _isSelectionComplete(int filledFields) {
-    final total = completeFieldsCount;
+  bool _isComplete(int filledFields, int? total) {
     return total != null && total > 0 && filledFields >= total;
   }
 

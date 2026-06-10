@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.18.2
+
+### Fixed
+- Single-side mode (`isBackSide: true/false`) no longer depends on
+  `DocumentSideDetector` to enter the extracting phase. The host already
+  declares which side is being scanned; when the detector failed to
+  recognize the back side, the machine stayed in `waitingBack` forever —
+  no progress, no auto-capture.
+- Completeness fast-path is now per side
+  (`HuntStateMachine.frontCompleteFieldsCount` /
+  `backCompleteFieldsCount`, replacing `completeFieldsCount`). The
+  previous total-selection threshold could never be met during the front
+  phase (back-side fields cannot fill yet), so instant capture never
+  fired on the front side.
+
 ## 0.18.1
 
 ### Fixed

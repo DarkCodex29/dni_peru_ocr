@@ -169,7 +169,10 @@ class _DniScannerState extends State<DniScanner>
           idleFramesThreshold: widget.idleFramesBeforeCapture,
           minFieldsForFastAdvance:
               (selectedCount * 0.66).round().clamp(2, selectedCount),
-          completeFieldsCount: widget.fields?.length,
+          frontCompleteFieldsCount: widget.fields?.frontCount,
+          backCompleteFieldsCount: widget.isBackSide == true
+              ? widget.fields?.backCount
+              : widget.fields?.length,
           initialPhase: initialPhase,
         );
     _lastPhaseRendered = initialPhase;
@@ -253,7 +256,11 @@ class _DniScannerState extends State<DniScanner>
       'raw OCR (${text.length} chars, ${recognized.blocks.length} blocks):\n$text',
     );
 
-    final detectedSide = const DocumentSideDetector().detect(text);
+    final DocumentSide detectedSide = switch (widget.isBackSide) {
+      null => const DocumentSideDetector().detect(text),
+      true => DocumentSide.back,
+      false => DocumentSide.front,
+    };
     final addedNew = _hunter.process(text);
     final snapshot = _hunter.snapshot;
     final filled = _countFilled(snapshot.fields);
