@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.0
+
+### Added
+- `DniCaptureMode` enum (`auto` | `manual`) and `DniScanner.captureMode`
+  parameter. In `manual` mode the scanner keeps hunting OCR fields (field
+  consensus and RENIEC lookup still run) but the picture is only taken when
+  the user taps the new capture button. The button turns green when the
+  hunt state machine reports the frame is stable enough to capture, and
+  shows a progress indicator while capturing. The flash toggle moves to the
+  side of the capture button in manual mode. Default remains
+  `DniCaptureMode.auto` (no behavior change for existing consumers).
+
 ## 0.16.0
 
 ### Changed (BREAKING)

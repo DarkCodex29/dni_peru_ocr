@@ -22,6 +22,15 @@ import '../../lookup/models/dni_lookup_result.dart';
 import '../../lookup/services/dni_lookup_service.dart';
 import '../theme/kyc_theme.dart';
 
+/// How [DniScanner] decides when to take the picture.
+///
+/// - [auto]: the hunt state machine fires the capture when the OCR signal
+///   stabilizes (legacy behavior, default).
+/// - [manual]: the scanner keeps hunting OCR fields (consensus and RENIEC
+///   lookup still work) but the picture is only taken when the user taps
+///   the capture button.
+enum DniCaptureMode { auto, manual }
+
 class DniScanResult {
   const DniScanResult({
     required this.frontPhoto,
@@ -67,6 +76,7 @@ class DniScanner extends StatefulWidget {
     this.idleFramesBeforeCapture = 18,
     this.holeWidth = 300,
     this.holeHeight = 220,
+    this.captureMode = DniCaptureMode.auto,
   }) : assert(
           (isBackSide == null && onScanComplete != null) ||
               (isBackSide != null && onSideCaptured != null),
@@ -111,6 +121,9 @@ class DniScanner extends StatefulWidget {
   final double holeWidth;
   final double holeHeight;
 
+  /// Capture trigger strategy. Defaults to [DniCaptureMode.auto].
+  final DniCaptureMode captureMode;
+
   @override
   State<DniScanner> createState() => _DniScannerState();
 }
@@ -127,6 +140,7 @@ class _DniScannerState extends State<DniScanner>
   bool _disposed = false;
   bool _capturing = false;
   bool _torchOn = false;
+  bool _captureReady = false;
   XFile? _frontPhoto;
   XFile? _backPhoto;
   DniData? _reniecData;
@@ -259,13 +273,38 @@ class _DniScannerState extends State<DniScanner>
 
     switch (signal) {
       case HuntSignal.frontCaptureReady:
-        await _captureFront();
+        if (widget.captureMode == DniCaptureMode.auto) {
+          await _captureFront();
+        } else {
+          _markCaptureReady();
+        }
       case HuntSignal.backCaptureReady:
-        await _captureBack();
+        if (widget.captureMode == DniCaptureMode.auto) {
+          await _captureBack();
+        } else {
+          _markCaptureReady();
+        }
       case HuntSignal.frontDetected:
       case HuntSignal.backDetected:
       case HuntSignal.none:
         break;
+    }
+  }
+
+  void _markCaptureReady() {
+    if (_captureReady || !mounted) return;
+    setState(() => _captureReady = true);
+  }
+
+  Future<void> _onManualCapturePressed() async {
+    if (_capturing) return;
+    if (_isFrontPhase()) {
+      await _captureFront();
+    } else if (_stateMachine.phase != HuntPhase.done) {
+      await _captureBack();
+    }
+    if (mounted && _captureReady) {
+      setState(() => _captureReady = false);
     }
   }
 
@@ -649,13 +688,34 @@ class _DniScannerState extends State<DniScanner>
               bottom: MediaQuery.of(context).padding.bottom + 32,
               left: 0,
               right: 0,
-              child: Center(
-                child: _ScannerFlashToggle(
-                  isOn: _torchOn,
-                  onToggle: _toggleTorch,
-                  theme: theme,
-                ),
-              ),
+              child: widget.captureMode == DniCaptureMode.manual
+                  ? Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        _ManualCaptureButton(
+                          key: const Key('dni_scanner_manual_capture'),
+                          ready: _captureReady,
+                          capturing: _capturing,
+                          onPressed: _onManualCapturePressed,
+                          theme: theme,
+                        ),
+                        Positioned(
+                          right: 40,
+                          child: _ScannerFlashToggle(
+                            isOn: _torchOn,
+                            onToggle: _toggleTorch,
+                            theme: theme,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Center(
+                      child: _ScannerFlashToggle(
+                        isOn: _torchOn,
+                        onToggle: _toggleTorch,
+                        theme: theme,
+                      ),
+                    ),
             ),
             Positioned(
               top: 0,
@@ -668,6 +728,75 @@ class _DniScannerState extends State<DniScanner>
           ],
         );
       },
+    );
+  }
+}
+
+class _ManualCaptureButton extends StatelessWidget {
+  const _ManualCaptureButton({
+    super.key,
+    required this.ready,
+    required this.capturing,
+    required this.onPressed,
+    required this.theme,
+  });
+
+  final bool ready;
+  final bool capturing;
+  final Future<void> Function() onPressed;
+  final KycTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = ready ? theme.success : theme.white;
+    return GestureDetector(
+      onTap: capturing
+          ? null
+          : () {
+              HapticFeedback.selectionClick();
+              unawaited(onPressed());
+            },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: accent.withValues(alpha: capturing ? 0.05 : 0.15),
+              border: Border.all(color: accent, width: 3),
+            ),
+            child: Center(
+              child: capturing
+                  ? SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(accent),
+                      ),
+                    )
+                  : Icon(
+                      Icons.camera_alt_outlined,
+                      color: accent,
+                      size: 32,
+                    ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Capturar',
+            style: TextStyle(
+              color: accent,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              shadows: const [Shadow(blurRadius: 4)],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
