@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -343,12 +344,35 @@ class _DniScannerState extends State<DniScanner>
     return n;
   }
 
+  /// Locks focus and exposure before the shutter so the camera cannot
+  /// re-focus mid-capture (main cause of blurry document stills), then
+  /// restores continuous auto modes. Lock failures are ignored — some
+  /// devices do not support locking and the capture must proceed anyway.
+  Future<XFile> _takeLockedPicture() async {
+    try {
+      await widget.controller.setFocusMode(FocusMode.locked);
+      await widget.controller.setExposureMode(ExposureMode.locked);
+    } on CameraException {
+      // proceed without lock
+    }
+    try {
+      return await widget.controller.takePicture();
+    } finally {
+      try {
+        await widget.controller.setFocusMode(FocusMode.auto);
+        await widget.controller.setExposureMode(ExposureMode.auto);
+      } on CameraException {
+        // device already without lock support
+      }
+    }
+  }
+
   Future<void> _captureFront() async {
     if (_capturing || _frontPhoto != null) return;
     _capturing = true;
     final preview = context.size;
     try {
-      final raw = await widget.controller.takePicture();
+      final raw = await _takeLockedPicture();
       unawaited(_playStepFeedback());
       final cropped =
           await _cropToHole(raw, suffix: 'front', preview: preview) ?? raw;
@@ -407,7 +431,7 @@ class _DniScannerState extends State<DniScanner>
     _capturing = true;
     final preview = context.size;
     try {
-      final raw = await widget.controller.takePicture();
+      final raw = await _takeLockedPicture();
       unawaited(_playCompletionFeedback());
       final cropped =
           await _cropToHole(raw, suffix: 'back', preview: preview) ?? raw;
@@ -466,8 +490,6 @@ class _DniScannerState extends State<DniScanner>
     unawaited(SystemSound.play(SystemSoundType.click));
   }
 
-  static const int _cropMaxDimension = 3000;
-
   Future<XFile?> _cropToHole(
     XFile source, {
     required String suffix,
@@ -475,44 +497,19 @@ class _DniScannerState extends State<DniScanner>
   }) async {
     try {
       if (preview == null) return null;
-      final bytes = await File(source.path).readAsBytes();
-      var decoded = img.decodeImage(bytes);
-      if (decoded == null) return null;
-      if (decoded.width > _cropMaxDimension ||
-          decoded.height > _cropMaxDimension) {
-        decoded = decoded.width >= decoded.height
-            ? img.copyResize(decoded, width: _cropMaxDimension)
-            : img.copyResize(decoded, height: _cropMaxDimension);
-      }
-      final imgWidth = decoded.width;
-      final imgHeight = decoded.height;
-
-      final fitScale =
-          (imgWidth / preview.width).clamp(0.0, double.infinity);
-      final fitScaleH =
-          (imgHeight / preview.height).clamp(0.0, double.infinity);
-      final scale = fitScale > fitScaleH ? fitScaleH : fitScale;
-
-      final holeWPx = (widget.holeWidth * scale).round();
-      final holeHPx = (widget.holeHeight * scale).round();
-      final pad = (24 * scale).round();
-      final cropW = (holeWPx + pad * 2).clamp(1, imgWidth);
-      final cropH = (holeHPx + pad * 2).clamp(1, imgHeight);
-      final cropX = ((imgWidth - cropW) ~/ 2).clamp(0, imgWidth - cropW);
-      final cropY = ((imgHeight - cropH) ~/ 2).clamp(0, imgHeight - cropH);
-
-      final crop = img.copyCrop(
-        decoded,
-        x: cropX,
-        y: cropY,
-        width: cropW,
-        height: cropH,
-      );
       final dir = await getTemporaryDirectory();
-      final path =
-          '${dir.path}/dni_${suffix}_${DateTime.now().millisecondsSinceEpoch}.png';
-      await File(path).writeAsBytes(img.encodePng(crop));
-      return XFile(path);
+      final outPath =
+          '${dir.path}/dni_${suffix}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final request = _CropRequest(
+        sourcePath: source.path,
+        outPath: outPath,
+        previewWidth: preview.width,
+        previewHeight: preview.height,
+        holeWidth: widget.holeWidth,
+        holeHeight: widget.holeHeight,
+      );
+      final resultPath = await Isolate.run(() => _cropAndEncode(request));
+      return resultPath == null ? null : XFile(resultPath);
     } catch (e) {
       DniLogger.error('DniScanner', 'crop failed: $e');
       return null;
@@ -751,6 +748,70 @@ class _DniScannerState extends State<DniScanner>
       },
     );
   }
+}
+
+class _CropRequest {
+  const _CropRequest({
+    required this.sourcePath,
+    required this.outPath,
+    required this.previewWidth,
+    required this.previewHeight,
+    required this.holeWidth,
+    required this.holeHeight,
+  });
+
+  final String sourcePath;
+  final String outPath;
+  final double previewWidth;
+  final double previewHeight;
+  final double holeWidth;
+  final double holeHeight;
+}
+
+const int _cropMaxDimension = 3000;
+const int _cropJpegQuality = 97;
+
+/// Runs inside an isolate: decode → resize guard → crop → JPEG q97 encode.
+/// Heavy `package:image` work off the UI thread keeps the preview smooth
+/// right after the shutter. q97 is visually lossless for document text
+/// while encoding an order of magnitude faster than PNG.
+String? _cropAndEncode(_CropRequest request) {
+  final bytes = File(request.sourcePath).readAsBytesSync();
+  var decoded = img.decodeImage(bytes);
+  if (decoded == null) return null;
+  if (decoded.width > _cropMaxDimension ||
+      decoded.height > _cropMaxDimension) {
+    decoded = decoded.width >= decoded.height
+        ? img.copyResize(decoded, width: _cropMaxDimension)
+        : img.copyResize(decoded, height: _cropMaxDimension);
+  }
+  final imgWidth = decoded.width;
+  final imgHeight = decoded.height;
+
+  final fitScale =
+      (imgWidth / request.previewWidth).clamp(0.0, double.infinity);
+  final fitScaleH =
+      (imgHeight / request.previewHeight).clamp(0.0, double.infinity);
+  final scale = fitScale > fitScaleH ? fitScaleH : fitScale;
+
+  final holeWPx = (request.holeWidth * scale).round();
+  final holeHPx = (request.holeHeight * scale).round();
+  final pad = (24 * scale).round();
+  final cropW = (holeWPx + pad * 2).clamp(1, imgWidth);
+  final cropH = (holeHPx + pad * 2).clamp(1, imgHeight);
+  final cropX = ((imgWidth - cropW) ~/ 2).clamp(0, imgWidth - cropW);
+  final cropY = ((imgHeight - cropH) ~/ 2).clamp(0, imgHeight - cropH);
+
+  final crop = img.copyCrop(
+    decoded,
+    x: cropX,
+    y: cropY,
+    width: cropW,
+    height: cropH,
+  );
+  File(request.outPath)
+      .writeAsBytesSync(img.encodeJpg(crop, quality: _cropJpegQuality));
+  return request.outPath;
 }
 
 class _ManualCaptureButton extends StatelessWidget {

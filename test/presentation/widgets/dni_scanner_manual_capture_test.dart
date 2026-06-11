@@ -45,6 +45,8 @@ _MockCameraController _idleMockCamera() {
   when(() => mock.setFlashMode(any())).thenAnswer((_) async {});
   when(() => mock.setFocusPoint(any())).thenAnswer((_) async {});
   when(() => mock.setExposurePoint(any())).thenAnswer((_) async {});
+  when(() => mock.setFocusMode(any())).thenAnswer((_) async {});
+  when(() => mock.setExposureMode(any())).thenAnswer((_) async {});
   return mock;
 }
 
@@ -80,6 +82,8 @@ void main() {
   setUpAll(() {
     registerFallbackValue(FlashMode.off);
     registerFallbackValue(Offset.zero);
+    registerFallbackValue(FocusMode.auto);
+    registerFallbackValue(ExposureMode.auto);
   });
 
   group('DniCaptureMode.manual', () {
@@ -171,6 +175,57 @@ void main() {
 
       await tester.pumpWidget(
         _buildScanner(cam: cam, captureMode: DniCaptureMode.hybrid),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('dni_scanner_manual_capture')));
+      await tester.pump();
+
+      verify(() => cam.takePicture()).called(1);
+      await _disposeWidget(tester);
+    });
+  });
+
+  group('pre-shutter focus/exposure lock', () {
+    testWidgets(
+        'locks focus and exposure before takePicture and restores auto after',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.setFocusMode(any())).thenAnswer((_) async {});
+      when(() => cam.setExposureMode(any())).thenAnswer((_) async {});
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, captureMode: DniCaptureMode.manual),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('dni_scanner_manual_capture')));
+      await tester.pump();
+
+      verifyInOrder([
+        () => cam.setFocusMode(FocusMode.locked),
+        () => cam.setExposureMode(ExposureMode.locked),
+        () => cam.takePicture(),
+        () => cam.setFocusMode(FocusMode.auto),
+        () => cam.setExposureMode(ExposureMode.auto),
+      ]);
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('still captures when the device does not support locking',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.setFocusMode(any()))
+          .thenThrow(CameraException('unsupported', 'no focus lock'));
+      when(() => cam.setExposureMode(any()))
+          .thenThrow(CameraException('unsupported', 'no exposure lock'));
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, captureMode: DniCaptureMode.manual),
       );
       await tester.pump();
 

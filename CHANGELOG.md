@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.19.0
+
+### Changed
+- `DniScanner` crop pipeline now runs entirely inside an isolate
+  (`Isolate.run`): decode → resize guard → crop → JPEG **q97** encode.
+  Replaces the 0.18.1 main-isolate PNG encode, whose cost caused a
+  visible UI freeze right after the shutter. q97 is visually lossless
+  for document text while encoding an order of magnitude faster.
+
+### Added
+- Pre-shutter focus/exposure lock: `DniScanner` locks
+  `FocusMode.locked` + `ExposureMode.locked` before `takePicture()` and
+  restores continuous auto afterwards, preventing mid-capture refocus
+  blur. Devices without lock support degrade gracefully (capture
+  proceeds unlocked).
+
 ## 0.18.2
 
 ### Fixed
