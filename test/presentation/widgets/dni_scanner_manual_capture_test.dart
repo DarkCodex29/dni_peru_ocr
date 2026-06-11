@@ -214,6 +214,34 @@ void main() {
       await _disposeWidget(tester);
     });
 
+    testWidgets(
+        'still captures when the platform surfaces a raw PlatformException',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.setFocusMode(any())).thenThrow(
+        PlatformException(code: 'setFocusModeFailed', message: 'unsupported'),
+      );
+      when(() => cam.setExposureMode(any())).thenThrow(
+        PlatformException(
+          code: 'setExposureModeFailed',
+          message: 'unsupported',
+        ),
+      );
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, captureMode: DniCaptureMode.manual),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('dni_scanner_manual_capture')));
+      await tester.pump();
+
+      verify(() => cam.takePicture()).called(1);
+      await _disposeWidget(tester);
+    });
+
     testWidgets('still captures when the device does not support locking',
         (tester) async {
       final cam = _idleMockCamera();

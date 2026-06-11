@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.19.1
+
+### Fixed
+- Pre-shutter focus/exposure lock now tolerates raw `PlatformException`s.
+  `CameraController.setFocusMode`/`setExposureMode` do not normalize
+  platform errors to `CameraException` (iOS surfaces `FlutterError` as
+  `PlatformException`), so unsupported devices could break the capture
+  instead of degrading to an unlocked shot.
+
 ## 0.19.0
 
 ### Changed

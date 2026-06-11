@@ -349,10 +349,13 @@ class _DniScannerState extends State<DniScanner>
   /// restores continuous auto modes. Lock failures are ignored — some
   /// devices do not support locking and the capture must proceed anyway.
   Future<XFile> _takeLockedPicture() async {
+    // Lock failures must never block the capture. CameraController does not
+    // normalize platform errors for these calls: iOS surfaces FlutterError
+    // as PlatformException, so catching CameraException alone is not enough.
     try {
       await widget.controller.setFocusMode(FocusMode.locked);
       await widget.controller.setExposureMode(ExposureMode.locked);
-    } on CameraException {
+    } on Exception {
       // proceed without lock
     }
     try {
@@ -361,7 +364,7 @@ class _DniScannerState extends State<DniScanner>
       try {
         await widget.controller.setFocusMode(FocusMode.auto);
         await widget.controller.setExposureMode(ExposureMode.auto);
-      } on CameraException {
+      } on Exception {
         // device already without lock support
       }
     }
