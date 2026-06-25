@@ -14,6 +14,7 @@ DniLookupService? _lookupService;
 
 DniLookupService? _resolveLookupService() {
   if (_lookupService != null) return _lookupService;
+  if (!dotenv.isInitialized) return null;
   final token = dotenv.maybeGet('APISPERU_TOKEN')?.trim();
   if (token == null || token.isEmpty) {
     debugPrint(
