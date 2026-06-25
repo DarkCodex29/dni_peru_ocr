@@ -130,6 +130,29 @@ DniScanner(
 )
 ```
 
+### Host-callback safety
+
+`DniScanner` treats every callback it hands you — `onScanComplete`,
+`onSideCaptured`, and `onDniReady` — as an untrusted boundary. If your
+callback throws, the scanner catches the error, keeps the capture flow and
+camera alive, and never rethrows into the Flutter framework. A thrown host
+callback can no longer tear down the capture session.
+
+Provide the optional `onError` callback to observe these failures; when it is
+omitted, the error is logged through `DniLogger` and capture continues.
+
+```dart
+DniScanner(
+  controller: cameraController,
+  onScanComplete: (result) {
+    // Your code may throw here without crashing the scanner.
+  },
+  onError: (error, stack) {
+    // Optional. Surface or report the failure however you like.
+  },
+)
+```
+
 ## Integration requirements
 
 `DniScanner` reads the device IMU through `sensors_plus`, which raises the

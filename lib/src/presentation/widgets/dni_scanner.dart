@@ -76,6 +76,7 @@ class DniScanner extends StatefulWidget {
     this.lookupService,
     this.lookupTimeout = const Duration(milliseconds: 2500),
     this.onDniReady,
+    this.onError,
     this.idleFramesBeforeCapture = 18,
     this.holeWidth = 300,
     this.holeHeight = 220,
@@ -112,6 +113,8 @@ class DniScanner extends StatefulWidget {
   final Duration lookupTimeout;
 
   final void Function(DniData data)? onDniReady;
+
+  final void Function(Object error, StackTrace stack)? onError;
 
   final int idleFramesBeforeCapture;
   final double holeWidth;
@@ -461,6 +464,23 @@ class DniScannerState extends State<DniScanner>
         isBackSide: !_cameraController.isBackSide,
       );
 
+  void _safeInvoke(String label, void Function() invoke) {
+    try {
+      invoke();
+    } catch (error, stack) {
+      _reportCallbackError(label, error, stack);
+    }
+  }
+
+  void _reportCallbackError(String label, Object error, StackTrace stack) {
+    final onError = widget.onError;
+    if (onError != null) {
+      onError(error, stack);
+      return;
+    }
+    DniLogger.error('DniScanner', 'host callback $label threw', error, stack);
+  }
+
   void _resetCaptureToScanning() {
     _countdownTicker?.cancel();
     _countdownTicker = null;
@@ -591,12 +611,15 @@ class DniScannerState extends State<DniScanner>
       if (widget.isBackSide == false) {
         _stateMachine.advanceToDone();
         if (_reniecLookup != null) await _reniecLookup;
-        widget.onSideCaptured?.call(
-          DniSideScanResult(
-            photo: cropped,
-            isBackSide: false,
-            hunt: _hunter.snapshot,
-            reniecData: _reniecData,
+        _safeInvoke(
+          'onSideCaptured',
+          () => widget.onSideCaptured?.call(
+            DniSideScanResult(
+              photo: cropped,
+              isBackSide: false,
+              hunt: _hunter.snapshot,
+              reniecData: _reniecData,
+            ),
           ),
         );
         return;
@@ -628,7 +651,10 @@ class DniScannerState extends State<DniScanner>
       if (!mounted) return;
       if (result is DniLookupSuccess && result.data.dni == dni) {
         _reniecData = result.data;
-        widget.onDniReady?.call(result.data);
+        _safeInvoke(
+          'onDniReady',
+          () => widget.onDniReady?.call(result.data),
+        );
       }
     } catch (_) {
       // graceful: missing data is acceptable, OCR remains source of truth
@@ -657,24 +683,30 @@ class DniScannerState extends State<DniScanner>
         await _reniecLookup;
       }
       if (widget.isBackSide == true) {
-        widget.onSideCaptured?.call(
-          DniSideScanResult(
-            photo: cropped,
-            isBackSide: true,
-            hunt: _hunter.snapshot,
-            reniecData: _reniecData,
+        _safeInvoke(
+          'onSideCaptured',
+          () => widget.onSideCaptured?.call(
+            DniSideScanResult(
+              photo: cropped,
+              isBackSide: true,
+              hunt: _hunter.snapshot,
+              reniecData: _reniecData,
+            ),
           ),
         );
         return;
       }
       if (_frontPhoto != null) {
         final finalSnapshot = _hunter.snapshot;
-        widget.onScanComplete?.call(
-          DniScanResult(
-            frontPhoto: _frontPhoto!,
-            backPhoto: cropped,
-            hunt: finalSnapshot,
-            reniecData: _reniecData,
+        _safeInvoke(
+          'onScanComplete',
+          () => widget.onScanComplete?.call(
+            DniScanResult(
+              frontPhoto: _frontPhoto!,
+              backPhoto: cropped,
+              hunt: finalSnapshot,
+              reniecData: _reniecData,
+            ),
           ),
         );
       }

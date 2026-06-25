@@ -29,6 +29,11 @@
   `gracePeriodMs` (default `600`), `manualFallbackMs` (default `30000`), and
   `minStableFrames`. The IMU and lighting thresholds ship as device-tunable
   defaults (see README → Integration requirements).
+- Host-callback safety: `DniScanner` now invokes `onScanComplete`,
+  `onSideCaptured`, and `onDniReady` behind a guard. An exception thrown by a
+  host callback can no longer crash the capture flow or camera — it is caught
+  and forwarded to the new optional `onError` callback, or logged through
+  `DniLogger` when `onError` is not provided.
 
 ## 0.19.1
 
