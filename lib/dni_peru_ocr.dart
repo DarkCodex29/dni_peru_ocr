@@ -18,6 +18,7 @@ export 'src/data/strategies/ocr_field_strategy.dart';
 export 'src/data/strategies/text_ocr_field_strategy.dart';
 export 'src/domain/capture/capture_decider.dart';
 export 'src/domain/capture/capture_signal.dart';
+export 'src/domain/capture/stability_state.dart';
 export 'src/domain/entities/dni_format.dart';
 export 'src/domain/entities/document_side.dart';
 export 'src/domain/entities/user_verification_data.dart';

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -10,6 +9,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import '../../data/ocr_consensus.dart';
 import '../../data/ocr_field_extractor.dart';
 import '../../domain/capture/capture_decider.dart';
+import '../../domain/capture/stability_state.dart';
 import '../../domain/entities/user_verification_data.dart';
 import '../../domain/extraction/dni_fields.dart';
 import '../../domain/extraction/field_hunter.dart';
@@ -910,34 +910,5 @@ class _DniCameraMaskState extends State<DniCameraMask>
         );
       },
     );
-  }
-}
-
-/// Pure helper for the document stability counter.
-///
-/// Encapsulates the update logic for `_stableFrames` so it can be tested
-/// independently from the widget's camera image stream.
-///
-/// The `update` method receives the current counter value, the absolute
-/// block-count diff between frames, and an isEmpty flag. It returns the
-/// new counter value to assign to `_stableFrames`.
-@visibleForTesting
-class StabilityState {
-  const StabilityState._();
-
-  /// Returns the next value of the stability counter.
-  ///
-  /// A frame is "stable" when [blockDiff] ≤ 2 AND [isEmpty] is false.
-  /// Stable → increment by 1.
-  /// Unstable → decrement by 1, floored at 0.
-  static int update({
-    required int current,
-    required int blockDiff,
-    required bool isEmpty,
-  }) {
-    if (blockDiff <= 2 && !isEmpty) {
-      return current + 1;
-    }
-    return math.max(0, current - 1);
   }
 }
