@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,6 +20,12 @@ class _StillMotionGate implements MotionStillnessGate {
 
   @override
   void dispose() {}
+}
+
+class _PassQualityGate extends ImageQualityGate {
+  @override
+  Future<QualityCheckResult> validate(Uint8List bytes) async =>
+      QualityCheckResult.pass;
 }
 
 CameraValue _initializedCameraValue() => const CameraValue(
@@ -83,6 +91,7 @@ Widget _buildScanner({
           captureMode: captureMode,
           isBackSide: isBackSide,
           motionGate: _StillMotionGate(),
+          imageQualityGate: _PassQualityGate(),
           onScanComplete: isBackSide == null ? (_) {} : null,
           onSideCaptured: isBackSide != null ? (onSideCaptured ?? (_) {}) : null,
         ),
@@ -141,9 +150,15 @@ void main() {
     testWidgets(
         'single-side back mode: tap captures the back and emits onSideCaptured',
         (tester) async {
+      final file = File(
+        '${Directory.systemTemp.path}/dni_manual_${DateTime.now().microsecondsSinceEpoch}.jpg',
+      )..writeAsBytesSync(Uint8List.fromList(List<int>.filled(64, 7)));
+      addTearDown(() {
+        if (file.existsSync()) file.deleteSync();
+      });
       final cam = _idleMockCamera();
       when(() => cam.takePicture())
-          .thenAnswer((_) async => XFile('/nonexistent/fake_back.jpg'));
+          .thenAnswer((_) async => XFile(file.path));
       DniSideScanResult? captured;
 
       await tester.pumpWidget(

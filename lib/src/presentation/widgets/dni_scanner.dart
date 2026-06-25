@@ -25,12 +25,15 @@ import '../../lookup/services/dni_lookup_service.dart';
 import '../../infrastructure/sensors_motion_gate.dart';
 import '../controllers/dni_camera_controller.dart';
 import '../document_validator.dart';
+import '../image_quality_gate.dart';
 import '../lighting_gate.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
 import '../theme/kyc_theme.dart';
 
 enum DniCaptureMode { auto, manual, hybrid }
+
+enum _BlurGateOutcome { accept, retry, reject }
 
 class DniScanResult {
   const DniScanResult({
@@ -79,6 +82,7 @@ class DniScanner extends StatefulWidget {
     this.captureMode = DniCaptureMode.auto,
     this.orchestrator,
     this.motionGate,
+    this.imageQualityGate,
     this.autoCaptureMs = 1500,
     this.gracePeriodMs = 600,
     this.minStableFrames = 3,
@@ -119,6 +123,8 @@ class DniScanner extends StatefulWidget {
 
   final MotionStillnessGate? motionGate;
 
+  final ImageQualityGate? imageQualityGate;
+
   final int autoCaptureMs;
 
   final int gracePeriodMs;
@@ -141,6 +147,10 @@ class DniScannerState extends State<DniScanner>
   late final DniCaptureOrchestrator _orchestrator;
   late final DniCameraController _cameraController;
   late final MotionStillnessGate _motionGate;
+  late final ImageQualityGate _imageQualityGate;
+
+  static const int maxBlurRetries = 2;
+  int _blurRetries = 0;
 
   DniCaptureState _captureState = const DniCaptureScanning(
     guideText: '',
@@ -206,6 +216,7 @@ class DniScannerState extends State<DniScanner>
           minStableFrames: widget.minStableFrames,
         );
     _motionGate = widget.motionGate ?? SensorsMotionGate();
+    _imageQualityGate = widget.imageQualityGate ?? ImageQualityGate();
     _cameraController = DniCameraController(
       orchestrator: _orchestrator,
       isBackSide: widget.isBackSide ?? false,
@@ -529,12 +540,48 @@ class DniScannerState extends State<DniScanner>
     }
   }
 
+  Future<_BlurGateOutcome> _evaluateBlurGate(XFile raw) async {
+    Uint8List bytes;
+    try {
+      bytes = await raw.readAsBytes();
+    } on Object {
+      return _BlurGateOutcome.reject;
+    }
+    QualityCheckResult verdict;
+    try {
+      verdict = await _imageQualityGate.validate(bytes);
+    } on Object {
+      return _BlurGateOutcome.accept;
+    }
+    switch (verdict) {
+      case QualityCheckResult.pass:
+        _blurRetries = 0;
+        return _BlurGateOutcome.accept;
+      case QualityCheckResult.blurry:
+        if (_blurRetries >= maxBlurRetries) {
+          _blurRetries = 0;
+          return _BlurGateOutcome.accept;
+        }
+        _blurRetries++;
+        return _BlurGateOutcome.retry;
+      case QualityCheckResult.spoofed:
+      case QualityCheckResult.error:
+        return _BlurGateOutcome.reject;
+    }
+  }
+
   Future<void> _captureFront() async {
     if (_capturing || _frontPhoto != null) return;
     _capturing = true;
     final preview = context.size;
     try {
       final raw = await _takeLockedPicture();
+      final outcome = await _evaluateBlurGate(raw);
+      if (_disposed) return;
+      if (outcome != _BlurGateOutcome.accept) {
+        _resetCaptureToScanning();
+        return;
+      }
       unawaited(_playStepFeedback());
       final cropped =
           await _cropToHole(raw, suffix: 'front', preview: preview) ?? raw;
@@ -594,6 +641,12 @@ class DniScannerState extends State<DniScanner>
     final preview = context.size;
     try {
       final raw = await _takeLockedPicture();
+      final outcome = await _evaluateBlurGate(raw);
+      if (_disposed) return;
+      if (outcome != _BlurGateOutcome.accept) {
+        _resetCaptureToScanning();
+        return;
+      }
       unawaited(_playCompletionFeedback());
       final cropped =
           await _cropToHole(raw, suffix: 'back', preview: preview) ?? raw;
