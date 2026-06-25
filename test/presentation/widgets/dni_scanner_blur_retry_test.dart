@@ -8,7 +8,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
-import 'package:dni_peru_ocr/src/domain/capture/motion_stillness_gate.dart';
 
 class _MockCameraController extends Mock implements CameraController {}
 

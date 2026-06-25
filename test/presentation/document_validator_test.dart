@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
-import 'package:dni_peru_ocr/src/presentation/lighting_gate.dart';
 
 // Helper: maps a result's failingGate to a Color via ValidationGateColors,
 // mirroring what the presentation layer does after PR4.
