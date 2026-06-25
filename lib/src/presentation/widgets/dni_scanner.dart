@@ -21,6 +21,7 @@ import '../../infrastructure/input_image_converter.dart';
 import '../../lookup/models/dni_data.dart';
 import '../../lookup/models/dni_lookup_result.dart';
 import '../../lookup/services/dni_lookup_service.dart';
+import '../controllers/dni_camera_controller.dart';
 import '../document_validator.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
@@ -132,6 +133,7 @@ class DniScannerState extends State<DniScanner>
   late final DetectorLifecycle _lifecycle;
   late final AnimationController _pulse;
   late final DniCaptureOrchestrator _orchestrator;
+  late final DniCameraController _cameraController;
 
   DniCaptureState _captureState = const DniCaptureScanning(
     guideText: '',
@@ -191,6 +193,12 @@ class DniScannerState extends State<DniScanner>
           manualFallbackMs: widget.manualFallbackMs,
           minStableFrames: widget.minStableFrames,
         );
+    _cameraController = DniCameraController(
+      orchestrator: _orchestrator,
+      isBackSide: widget.isBackSide ?? false,
+      onValidCapture: (_, __) {},
+    );
+    _cameraController.captureState.addListener(_onControllerStateChanged);
     _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
     _lifecycle = DetectorLifecycle(
       stopStream: () => _safeStopStream(widget.controller),
@@ -210,7 +218,18 @@ class DniScannerState extends State<DniScanner>
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_startStream());
+      unawaited(_cameraController.start());
     });
+  }
+
+  void _onControllerStateChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  bool get _manualModeActive {
+    final state = _cameraController.captureState.value;
+    return state is DniCaptureScanning && state.manualModeActive;
   }
 
   Future<void> _startStream() async {
@@ -374,6 +393,33 @@ class DniScannerState extends State<DniScanner>
 
   @visibleForTesting
   DniCaptureState get debugCaptureState => _captureState;
+
+  @visibleForTesting
+  bool get debugManualModeActive => _manualModeActive;
+
+  @visibleForTesting
+  void debugResetToScanning() => _resetCaptureToScanning();
+
+  @visibleForTesting
+  void debugTriggerSideToggle() => _cameraController.onSideChanged(
+        isBackSide: !_cameraController.isBackSide,
+      );
+
+  void _resetCaptureToScanning() {
+    _countdownTicker?.cancel();
+    _countdownTicker = null;
+    _countdownAnchor = null;
+    _countdownElapsedMs = 0;
+    _captureState = const DniCaptureScanning(
+      guideText: '',
+      failingGate: null,
+      validationProgress: 0,
+      stableFrames: 0,
+      userDataMatch: null,
+      manualModeActive: false,
+    );
+    if (mounted) setState(() {});
+  }
 
   void _markCaptureReady() {
     if (_captureReady || !mounted) return;
@@ -603,6 +649,8 @@ class DniScannerState extends State<DniScanner>
     _countdownTicker?.cancel();
     _focusIndicatorTimer?.cancel();
     _hintRotationTimer?.cancel();
+    _cameraController.captureState.removeListener(_onControllerStateChanged);
+    unawaited(_cameraController.dispose());
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     WidgetsBinding.instance.removeObserver(this);
     _pulse.dispose();
@@ -778,7 +826,8 @@ class DniScannerState extends State<DniScanner>
               bottom: MediaQuery.of(context).padding.bottom + 32,
               left: 0,
               right: 0,
-              child: widget.captureMode != DniCaptureMode.auto
+              child: widget.captureMode != DniCaptureMode.auto ||
+                      _manualModeActive
                   ? Stack(
                       alignment: Alignment.center,
                       children: [
@@ -842,6 +891,37 @@ class _CropRequest {
 
 const int _cropMaxDimension = 3000;
 const int _cropJpegQuality = 97;
+
+@visibleForTesting
+class CropRequestForTest {
+  const CropRequestForTest({
+    required this.sourcePath,
+    required this.outPath,
+    required this.previewWidth,
+    required this.previewHeight,
+    required this.holeWidth,
+    required this.holeHeight,
+  });
+
+  final String sourcePath;
+  final String outPath;
+  final double previewWidth;
+  final double previewHeight;
+  final double holeWidth;
+  final double holeHeight;
+}
+
+@visibleForTesting
+String? cropAndEncodeForTest(CropRequestForTest request) => _cropAndEncode(
+      _CropRequest(
+        sourcePath: request.sourcePath,
+        outPath: request.outPath,
+        previewWidth: request.previewWidth,
+        previewHeight: request.previewHeight,
+        holeWidth: request.holeWidth,
+        holeHeight: request.holeHeight,
+      ),
+    );
 
 String? _cropAndEncode(_CropRequest request) {
   final bytes = File(request.sourcePath).readAsBytesSync();

@@ -187,6 +187,8 @@ class _ScanScreenState extends State<ScanScreen> {
       body: DniScanner(
         controller: controller,
         fields: widget.fields ?? DniFields.full(),
+        autoCaptureMs: 1500,
+        manualFallbackMs: 30000,
         onScanComplete: _onScanComplete,
       ),
     );
