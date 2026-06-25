@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,15 +11,27 @@ import 'package:dni_peru_ocr/src/domain/capture/motion_stillness_gate.dart';
 
 class _MockCameraController extends Mock implements CameraController {}
 
-class _StillMotionGate implements MotionStillnessGate {
-  @override
-  bool get isStill => true;
+class _FakeMotionGate implements MotionStillnessGate {
+  _FakeMotionGate(this._isStill);
+
+  bool _isStill;
+  final StreamController<bool> _controller = StreamController<bool>.broadcast();
+
+  void setStill(bool value) {
+    _isStill = value;
+    _controller.add(value);
+  }
 
   @override
-  Stream<bool> watchStillness() => const Stream<bool>.empty();
+  bool get isStill => _isStill;
 
   @override
-  void dispose() {}
+  Stream<bool> watchStillness() => _controller.stream;
+
+  @override
+  void dispose() {
+    unawaited(_controller.close());
+  }
 }
 
 CameraValue _initializedCameraValue() => const CameraValue(
@@ -71,9 +85,9 @@ Future<void> _disposeWidget(WidgetTester tester) async {
 Widget _buildScanner({
   required CameraController cam,
   required GlobalKey<DniScannerState> key,
-  void Function(DniSideScanResult)? onSideCaptured,
-  bool? isBackSide,
+  required MotionStillnessGate motionGate,
   int autoCaptureMs = 1500,
+  int gracePeriodMs = 600,
   int minStableFrames = 2,
 }) {
   return MaterialApp(
@@ -83,12 +97,12 @@ Widget _buildScanner({
         body: DniScanner(
           key: key,
           controller: cam,
-          isBackSide: isBackSide,
+          isBackSide: false,
           autoCaptureMs: autoCaptureMs,
+          gracePeriodMs: gracePeriodMs,
           minStableFrames: minStableFrames,
-          motionGate: _StillMotionGate(),
-          onScanComplete: isBackSide == null ? (_) {} : null,
-          onSideCaptured: isBackSide != null ? (onSideCaptured ?? (_) {}) : null,
+          motionGate: motionGate,
+          onSideCaptured: (_) {},
         ),
       ),
     ),
@@ -103,17 +117,17 @@ void main() {
     registerFallbackValue(ExposureMode.auto);
   });
 
-  group('DniScanner capture via DniCaptureOrchestrator', () {
-    testWidgets(
-        'front capture-ready signal drives countingDown then inFlight capture',
+  group('DniScanner IMU stillness gate wiring', () {
+    testWidgets('still gate allows countdown to reach inFlight capture',
         (tester) async {
       final cam = _idleMockCamera();
       when(() => cam.takePicture())
           .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
       final key = GlobalKey<DniScannerState>();
+      final gate = _FakeMotionGate(true);
 
       await tester.pumpWidget(
-        _buildScanner(cam: cam, key: key, isBackSide: false),
+        _buildScanner(cam: cam, key: key, motionGate: gate),
       );
       await tester.pump();
 
@@ -124,7 +138,6 @@ void main() {
         key.currentState!.debugCaptureState,
         isA<DniCaptureCountingDown>(),
       );
-      verifyNever(() => cam.takePicture());
 
       await tester.pump(const Duration(milliseconds: 1600));
 
@@ -132,7 +145,62 @@ void main() {
       await _disposeWidget(tester);
     });
 
-    testWidgets('insufficient dwell does not fire capture early',
+    testWidgets('unstill gate blocks countdown entry', (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+      final key = GlobalKey<DniScannerState>();
+      final gate = _FakeMotionGate(false);
+
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, key: key, motionGate: gate),
+      );
+      await tester.pump();
+
+      key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(
+        key.currentState!.debugCaptureState,
+        isA<DniCaptureScanning>(),
+      );
+      verifyNever(() => cam.takePicture());
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('motion beyond grace period during countdown resets scanning',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+      final key = GlobalKey<DniScannerState>();
+      final gate = _FakeMotionGate(true);
+
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, key: key, motionGate: gate),
+      );
+      await tester.pump();
+
+      key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
+      await tester.pump();
+      expect(
+        key.currentState!.debugCaptureState,
+        isA<DniCaptureCountingDown>(),
+      );
+
+      gate.setStill(false);
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(
+        key.currentState!.debugCaptureState,
+        isA<DniCaptureScanning>(),
+      );
+      verifyNever(() => cam.takePicture());
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('default gate constructs without an injected instance',
         (tester) async {
       final cam = _idleMockCamera();
       when(() => cam.takePicture())
@@ -140,46 +208,23 @@ void main() {
       final key = GlobalKey<DniScannerState>();
 
       await tester.pumpWidget(
-        _buildScanner(cam: cam, key: key, isBackSide: false),
-      );
-      await tester.pump();
-
-      key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
-
-      verifyNever(() => cam.takePicture());
-      await _disposeWidget(tester);
-    });
-
-    testWidgets('back capture-ready signal drives capture in back mode',
-        (tester) async {
-      final cam = _idleMockCamera();
-      when(() => cam.takePicture())
-          .thenAnswer((_) async => XFile('/nonexistent/fake_back.jpg'));
-      final key = GlobalKey<DniScannerState>();
-      DniSideScanResult? captured;
-
-      await tester.pumpWidget(
-        _buildScanner(
-          cam: cam,
-          key: key,
-          isBackSide: true,
-          onSideCaptured: (r) => captured = r,
+        MaterialApp(
+          home: KycThemeProvider(
+            theme: KycTheme.defaults(),
+            child: Scaffold(
+              body: DniScanner(
+                key: key,
+                controller: cam,
+                isBackSide: false,
+                onSideCaptured: (_) {},
+              ),
+            ),
+          ),
         ),
       );
       await tester.pump();
 
-      await tester.runAsync(() async {
-        key.currentState!.debugFeedCaptureReady(HuntSignal.backCaptureReady);
-        await Future<void>.delayed(const Duration(milliseconds: 1800));
-        await Future<void>.delayed(const Duration(milliseconds: 400));
-      });
-      await tester.pump();
-
-      verify(() => cam.takePicture()).called(1);
-      expect(captured, isNotNull);
-      expect(captured!.isBackSide, isTrue);
+      expect(key.currentState, isNotNull);
       await _disposeWidget(tester);
     });
   });

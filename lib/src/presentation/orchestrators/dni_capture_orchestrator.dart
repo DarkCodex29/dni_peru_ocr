@@ -1,7 +1,6 @@
 import '../document_validator.dart';
 import 'dni_capture_state.dart';
 
-/// Stateless state machine for the DNI auto-capture flow.
 final class DniCaptureOrchestrator {
   DniCaptureOrchestrator({
     required this.autoCaptureMs,
@@ -15,13 +14,13 @@ final class DniCaptureOrchestrator {
   final int manualFallbackMs;
   final int minStableFrames;
 
-  /// Pure state transition for one camera frame.
   DniCaptureState onFrame({
     required DniCaptureState current,
     required DocumentValidationResult validation,
     required int stableFrames,
     required bool? userDataMatch,
     required DateTime now,
+    bool imuStill = true,
   }) {
     if (current is DniCaptureInFlight ||
         current is DniCaptureExpired ||
@@ -29,7 +28,7 @@ final class DniCaptureOrchestrator {
       return current;
     }
 
-    final isCaptureable = validation.isCaptureable;
+    final isCaptureable = validation.isCaptureable && imuStill;
 
     if (current is CountingDownWithAnchor) {
       final elapsedMs =
@@ -93,7 +92,6 @@ final class DniCaptureOrchestrator {
     return current;
   }
 
-  /// Manual-fallback timer expired — activates manual-capture mode.
   DniCaptureState onManualFallbackTimeout(DniCaptureState current) {
     if (current is DniCaptureScanning) {
       return DniCaptureScanning(
@@ -108,7 +106,6 @@ final class DniCaptureOrchestrator {
     return current;
   }
 
-  /// Side toggle — resets countdown and manual mode.
   DniCaptureState onSideToggle(DniCaptureState current) =>
       const DniCaptureScanning(
         guideText: '',

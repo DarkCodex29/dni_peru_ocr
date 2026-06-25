@@ -9,6 +9,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
+import '../../domain/capture/motion_stillness_gate.dart';
 import '../../domain/entities/document_side.dart';
 import '../../domain/extraction/dni_fields.dart';
 import '../../domain/extraction/extracted_fields.dart';
@@ -21,6 +22,7 @@ import '../../infrastructure/input_image_converter.dart';
 import '../../lookup/models/dni_data.dart';
 import '../../lookup/models/dni_lookup_result.dart';
 import '../../lookup/services/dni_lookup_service.dart';
+import '../../infrastructure/sensors_motion_gate.dart';
 import '../controllers/dni_camera_controller.dart';
 import '../document_validator.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
@@ -75,6 +77,7 @@ class DniScanner extends StatefulWidget {
     this.holeHeight = 220,
     this.captureMode = DniCaptureMode.auto,
     this.orchestrator,
+    this.motionGate,
     this.autoCaptureMs = 1500,
     this.gracePeriodMs = 600,
     this.minStableFrames = 3,
@@ -113,6 +116,8 @@ class DniScanner extends StatefulWidget {
 
   final DniCaptureOrchestrator? orchestrator;
 
+  final MotionStillnessGate? motionGate;
+
   final int autoCaptureMs;
 
   final int gracePeriodMs;
@@ -134,6 +139,7 @@ class DniScannerState extends State<DniScanner>
   late final AnimationController _pulse;
   late final DniCaptureOrchestrator _orchestrator;
   late final DniCameraController _cameraController;
+  late final MotionStillnessGate _motionGate;
 
   DniCaptureState _captureState = const DniCaptureScanning(
     guideText: '',
@@ -193,6 +199,7 @@ class DniScannerState extends State<DniScanner>
           manualFallbackMs: widget.manualFallbackMs,
           minStableFrames: widget.minStableFrames,
         );
+    _motionGate = widget.motionGate ?? SensorsMotionGate();
     _cameraController = DniCameraController(
       orchestrator: _orchestrator,
       isBackSide: widget.isBackSide ?? false,
@@ -382,6 +389,7 @@ class DniScannerState extends State<DniScanner>
       stableFrames: widget.minStableFrames,
       userDataMatch: null,
       now: now,
+      imuStill: _motionGate.isStill,
     );
     if (!identical(next, _captureState)) {
       _captureState = next;
@@ -651,6 +659,7 @@ class DniScannerState extends State<DniScanner>
     _hintRotationTimer?.cancel();
     _cameraController.captureState.removeListener(_onControllerStateChanged);
     unawaited(_cameraController.dispose());
+    _motionGate.dispose();
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     WidgetsBinding.instance.removeObserver(this);
     _pulse.dispose();

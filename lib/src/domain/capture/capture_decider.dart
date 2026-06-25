@@ -4,15 +4,15 @@ import 'capture_signal.dart';
 class CaptureDecider {
   const CaptureDecider();
 
-  /// Decides whether to fire auto-capture for the currently active side.
   CaptureSignal decide({
     required HuntResult hunt,
     required bool framingStable,
     bool isBackSide = false,
+    bool imuStill = true,
   }) {
     final phase = _resolvePhase(hunt, isBackSide: isBackSide);
     final shouldCapture =
-        phase == CapturePhase.fieldsComplete && framingStable;
+        phase == CapturePhase.fieldsComplete && framingStable && imuStill;
     return CaptureSignal(
       phase: shouldCapture ? CapturePhase.readyToCapture : phase,
       shouldCapture: shouldCapture,
