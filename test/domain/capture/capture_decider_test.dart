@@ -123,5 +123,33 @@ void main() {
       );
       expect(signal.shouldCapture, isTrue);
     });
+
+    test('imuStill false does NOT block capture (no longer an entry gate)', () {
+      const decider = CaptureDecider();
+      final signal = decider.decide(
+        hunt: completeResult(),
+        framingStable: true,
+        imuStill: false,
+      );
+      expect(signal.shouldCapture, isTrue);
+      expect(signal.phase, CapturePhase.readyToCapture);
+    });
+
+    test('imuStill false still gated by framing and lighting', () {
+      const decider = CaptureDecider();
+      final blockedByFraming = decider.decide(
+        hunt: completeResult(),
+        framingStable: false,
+        imuStill: false,
+      );
+      final blockedByLighting = decider.decide(
+        hunt: completeResult(),
+        framingStable: true,
+        imuStill: false,
+        lightingValid: false,
+      );
+      expect(blockedByFraming.shouldCapture, isFalse);
+      expect(blockedByLighting.shouldCapture, isFalse);
+    });
   });
 }

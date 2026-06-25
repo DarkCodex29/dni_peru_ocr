@@ -433,7 +433,7 @@ void main() {
 
   // ── IMU stillness gate ────────────────────────────────────────────────────
 
-  group('IMU stillness gate', () {
+  group('IMU jolt-reset (not an entry gate)', () {
     late DniCaptureOrchestrator orc;
 
     setUp(() => orc = _orchestrator(
@@ -442,7 +442,7 @@ void main() {
           minStableFrames: 2,
         ));
 
-    test('imuStill false blocks countdown entry even when captureable', () {
+    test('imuStill false does NOT block countdown entry when captureable', () {
       const initial = DniCaptureScanning(
         guideText: '',
         failingGate: null,
@@ -461,10 +461,11 @@ void main() {
         imuStill: false,
       );
 
-      expect(next, isA<DniCaptureScanning>());
+      expect(next, isA<DniCaptureCountingDown>());
     });
 
-    test('imuStill true allows countdown entry when captureable', () {
+    test('countdown enters regardless of imuStill when framing and frames met',
+        () {
       const initial = DniCaptureScanning(
         guideText: '',
         failingGate: null,
@@ -474,7 +475,7 @@ void main() {
         manualModeActive: false,
       );
 
-      final next = orc.onFrame(
+      final stillEntry = orc.onFrame(
         current: initial,
         validation: _fakeResult(isCaptureable: true),
         stableFrames: 2,
@@ -482,8 +483,17 @@ void main() {
         userDataMatch: null,
         imuStill: true,
       );
+      final joltEntry = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        imuStill: false,
+      );
 
-      expect(next, isA<DniCaptureCountingDown>());
+      expect(stillEntry, isA<DniCaptureCountingDown>());
+      expect(joltEntry, isA<DniCaptureCountingDown>());
     });
 
     test('imuStill defaults to true so legacy call sites keep counting down',
@@ -527,7 +537,7 @@ void main() {
       ) as CountingDownWithAnchor;
     }
 
-    test('imuStill jitter within grace period keeps the countdown anchor', () {
+    test('a jolt within grace period keeps the countdown anchor', () {
       final counting = startCounting();
 
       final tGrace = t0.add(const Duration(milliseconds: 300));
@@ -550,7 +560,7 @@ void main() {
       );
     });
 
-    test('imuStill motion beyond grace period resets to scanning', () {
+    test('a strong jolt beyond grace period resets to scanning', () {
       final counting = startCounting();
 
       final tBeyond = t0.add(const Duration(milliseconds: 700));
@@ -564,6 +574,23 @@ void main() {
       );
 
       expect(next, isA<DniCaptureScanning>());
+    });
+
+    test('steady hand reaches inFlight even though entry never needed imuStill',
+        () {
+      final counting = startCounting();
+
+      final tCapture = t0.add(const Duration(milliseconds: 1500));
+      final result = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tCapture,
+        userDataMatch: null,
+        imuStill: true,
+      );
+
+      expect(result, isA<DniCaptureInFlight>());
     });
   });
 
@@ -703,7 +730,7 @@ void main() {
       expect(next, isA<DniCaptureScanning>());
     });
 
-    test('imuStill and lightingValid both required to enter countdown', () {
+    test('lighting gates entry but a jolt at entry does not', () {
       const initial = DniCaptureScanning(
         guideText: '',
         failingGate: null,
@@ -713,17 +740,27 @@ void main() {
         manualModeActive: false,
       );
 
-      final next = orc.onFrame(
+      final blockedByLighting = orc.onFrame(
         current: initial,
         validation: _fakeResult(isCaptureable: true),
         stableFrames: 2,
         now: t0,
         userDataMatch: null,
-        imuStill: true,
+        imuStill: false,
         lightingValid: false,
       );
+      final entersDespiteJolt = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        imuStill: false,
+        lightingValid: true,
+      );
 
-      expect(next, isA<DniCaptureScanning>());
+      expect(blockedByLighting, isA<DniCaptureScanning>());
+      expect(entersDespiteJolt, isA<DniCaptureCountingDown>());
     });
   });
 

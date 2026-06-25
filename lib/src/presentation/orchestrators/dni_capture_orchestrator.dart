@@ -29,14 +29,15 @@ final class DniCaptureOrchestrator {
       return current;
     }
 
-    final isCaptureable = validation.isCaptureable && imuStill && lightingValid;
+    final entryCaptureable = validation.isCaptureable && lightingValid;
+    final holdCaptureable = entryCaptureable && imuStill;
 
     if (current is CountingDownWithAnchor) {
       final elapsedMs =
           (now.millisecondsSinceEpoch - current.perfectSinceEpochMs)
               .clamp(0, autoCaptureMs * 10);
 
-      if (isCaptureable) {
+      if (holdCaptureable) {
         if (elapsedMs >= autoCaptureMs) {
           return const DniCaptureInFlight(showFlash: true);
         }
@@ -60,7 +61,7 @@ final class DniCaptureOrchestrator {
     }
 
     if (current is DniCaptureCountingDown) {
-      if (isCaptureable && stableFrames >= minStableFrames) {
+      if (entryCaptureable && stableFrames >= minStableFrames) {
         return CountingDownWithAnchor(
           guideText: _countdownGuideText(userDataMatch),
           elapsedMs: 0,
@@ -72,7 +73,7 @@ final class DniCaptureOrchestrator {
     }
 
     if (current is DniCaptureScanning) {
-      if (isCaptureable && stableFrames >= minStableFrames) {
+      if (entryCaptureable && stableFrames >= minStableFrames) {
         return CountingDownWithAnchor(
           guideText: _countdownGuideText(userDataMatch),
           elapsedMs: 0,

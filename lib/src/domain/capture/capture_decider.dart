@@ -14,7 +14,6 @@ class CaptureDecider {
     final phase = _resolvePhase(hunt, isBackSide: isBackSide);
     final shouldCapture = phase == CapturePhase.fieldsComplete &&
         framingStable &&
-        imuStill &&
         lightingValid;
     return CaptureSignal(
       phase: shouldCapture ? CapturePhase.readyToCapture : phase,

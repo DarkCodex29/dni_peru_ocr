@@ -144,7 +144,8 @@ void main() {
       await _disposeWidget(tester);
     });
 
-    testWidgets('unstill gate blocks countdown entry', (tester) async {
+    testWidgets('a jolt at entry does NOT block countdown, then steady captures',
+        (tester) async {
       final cam = _idleMockCamera();
       when(() => cam.takePicture())
           .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
@@ -158,17 +159,20 @@ void main() {
 
       key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1600));
 
       expect(
         key.currentState!.debugCaptureState,
-        isA<DniCaptureScanning>(),
+        isA<DniCaptureCountingDown>(),
       );
-      verifyNever(() => cam.takePicture());
+
+      gate.setStill(true);
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      verify(() => cam.takePicture()).called(1);
       await _disposeWidget(tester);
     });
 
-    testWidgets('motion beyond grace period during countdown resets scanning',
+    testWidgets('a sustained jolt during countdown prevents capture',
         (tester) async {
       final cam = _idleMockCamera();
       when(() => cam.takePicture())
@@ -189,12 +193,8 @@ void main() {
       );
 
       gate.setStill(false);
-      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pump(const Duration(milliseconds: 3000));
 
-      expect(
-        key.currentState!.debugCaptureState,
-        isA<DniCaptureScanning>(),
-      );
       verifyNever(() => cam.takePicture());
       await _disposeWidget(tester);
     });
