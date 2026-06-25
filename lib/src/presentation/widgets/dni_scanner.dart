@@ -25,6 +25,7 @@ import '../../lookup/services/dni_lookup_service.dart';
 import '../../infrastructure/sensors_motion_gate.dart';
 import '../controllers/dni_camera_controller.dart';
 import '../document_validator.dart';
+import '../lighting_gate.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
 import '../theme/kyc_theme.dart';
@@ -158,6 +159,11 @@ class DniScannerState extends State<DniScanner>
   bool _processing = false;
   bool _disposed = false;
   bool _capturing = false;
+  bool _lightingValid = true;
+  bool _analyzingLighting = false;
+  int _lastLightingMs = 0;
+
+  static const int _lightingIntervalMs = 350;
   bool _torchOn = false;
   bool _captureReady = false;
   XFile? _frontPhoto;
@@ -267,11 +273,38 @@ class DniScannerState extends State<DniScanner>
   }
 
   void _onCameraImage(CameraImage image) {
-    if (_disposed || _processing || _capturing) return;
+    if (_disposed || _capturing) return;
+    _maybeAnalyzeLighting(image);
+    if (_processing) return;
     _processing = true;
     unawaited(
       _lifecycle.trackInflight(() => _processImage(image)).whenComplete(() {
         _processing = false;
+      }),
+    );
+  }
+
+  void _maybeAnalyzeLighting(CameraImage image) {
+    if (_analyzingLighting) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (nowMs - _lastLightingMs < _lightingIntervalMs) return;
+    _lastLightingMs = nowMs;
+    final request = _LightingRequest(
+      luminancePlane: image.planes.first.bytes,
+      bytesPerRow: image.planes.first.bytesPerRow,
+      width: image.width,
+      height: image.height,
+    );
+    _analyzingLighting = true;
+    unawaited(
+      Isolate.run(() => _analyzeLighting(request)).then((result) {
+        if (_disposed) return;
+        _lightingValid = result.isValid;
+      }).catchError((_) {
+        if (_disposed) return;
+        _lightingValid = true;
+      }).whenComplete(() {
+        _analyzingLighting = false;
       }),
     );
   }
@@ -390,6 +423,7 @@ class DniScannerState extends State<DniScanner>
       userDataMatch: null,
       now: now,
       imuStill: _motionGate.isStill,
+      lightingValid: _lightingValid,
     );
     if (!identical(next, _captureState)) {
       _captureState = next;
@@ -401,6 +435,9 @@ class DniScannerState extends State<DniScanner>
 
   @visibleForTesting
   DniCaptureState get debugCaptureState => _captureState;
+
+  @visibleForTesting
+  void debugSetLightingValid(bool value) => _lightingValid = value;
 
   @visibleForTesting
   bool get debugManualModeActive => _manualModeActive;
@@ -900,6 +937,63 @@ class _CropRequest {
 
 const int _cropMaxDimension = 3000;
 const int _cropJpegQuality = 97;
+
+const int _lightingTargetSamples = 64;
+
+class _LightingRequest {
+  const _LightingRequest({
+    required this.luminancePlane,
+    required this.bytesPerRow,
+    required this.width,
+    required this.height,
+  });
+
+  final List<int> luminancePlane;
+  final int bytesPerRow;
+  final int width;
+  final int height;
+}
+
+LightingResult _analyzeLighting(_LightingRequest request) {
+  return LightingGate.evaluate(_downscaleLuminance(request));
+}
+
+List<int> _downscaleLuminance(_LightingRequest request) {
+  final width = request.width;
+  final height = request.height;
+  if (width <= 0 || height <= 0 || request.luminancePlane.isEmpty) {
+    return const <int>[];
+  }
+  final stepX = (width / _lightingTargetSamples).floor().clamp(1, width);
+  final stepY = (height / _lightingTargetSamples).floor().clamp(1, height);
+  final samples = <int>[];
+  for (var y = 0; y < height; y += stepY) {
+    final rowStart = y * request.bytesPerRow;
+    for (var x = 0; x < width; x += stepX) {
+      final index = rowStart + x;
+      if (index < request.luminancePlane.length) {
+        samples.add(request.luminancePlane[index]);
+      }
+    }
+  }
+  return samples;
+}
+
+@visibleForTesting
+LightingResult analyzeLuminancePlaneForTest({
+  required List<int> luminancePlane,
+  required int bytesPerRow,
+  required int width,
+  required int height,
+}) =>
+    _analyzeLighting(
+      _LightingRequest(
+        luminancePlane: luminancePlane,
+        bytesPerRow: bytesPerRow,
+        width: width,
+        height: height,
+      ),
+    );
 
 @visibleForTesting
 class CropRequestForTest {

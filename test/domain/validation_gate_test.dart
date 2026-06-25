@@ -77,8 +77,8 @@ void main() {
 
     // ── Exactly 6 cases (exhaustiveness guarantee) ─────────────────────────
 
-    test('ValidationGate has exactly 6 values', () {
-      expect(ValidationGate.values.length, 7);
+    test('ValidationGate has exactly 9 values', () {
+      expect(ValidationGate.values.length, 9);
     });
 
     // ── Sentry-stable codes (no translation) ───────────────────────────────
@@ -105,6 +105,14 @@ void main() {
 
     test('tilt has stable Sentry code "tilt"', () {
       expect(ValidationGate.tilt.sentryCode, 'tilt');
+    });
+
+    test('lighting has stable code "lighting"', () {
+      expect(ValidationGate.lighting.sentryCode, 'lighting');
+    });
+
+    test('glare has stable code "glare"', () {
+      expect(ValidationGate.glare.sentryCode, 'glare');
     });
   });
 
@@ -186,6 +194,8 @@ void main() {
         ValidationGate.lineCount => 'line_count',
         ValidationGate.tilt => 'tilt',
         ValidationGate.sideMismatch => 'side_mismatch',
+        ValidationGate.lighting => 'lighting',
+        ValidationGate.glare => 'glare',
         null => 'ok',
       };
       expect(code, isNotNull);

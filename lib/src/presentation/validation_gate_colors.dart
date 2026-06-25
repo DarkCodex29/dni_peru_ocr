@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../domain/entities/validation_gate.dart';
 import 'theme/kyc_theme.dart';
 
-/// Maps a [ValidationGate] to its border [Color].
 abstract final class ValidationGateColors {
   static Color colorFor(ValidationGate? gate, KycTheme theme) => switch (gate) {
         null => theme.success,
@@ -14,5 +13,7 @@ abstract final class ValidationGateColors {
         ValidationGate.lineCount => theme.white,
         ValidationGate.tilt => theme.accentOrange,
         ValidationGate.sideMismatch => theme.accentOrange,
+        ValidationGate.lighting => theme.accentOrange,
+        ValidationGate.glare => theme.accentOrange,
       };
 }

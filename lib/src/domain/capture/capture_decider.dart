@@ -9,10 +9,13 @@ class CaptureDecider {
     required bool framingStable,
     bool isBackSide = false,
     bool imuStill = true,
+    bool lightingValid = true,
   }) {
     final phase = _resolvePhase(hunt, isBackSide: isBackSide);
-    final shouldCapture =
-        phase == CapturePhase.fieldsComplete && framingStable && imuStill;
+    final shouldCapture = phase == CapturePhase.fieldsComplete &&
+        framingStable &&
+        imuStill &&
+        lightingValid;
     return CaptureSignal(
       phase: shouldCapture ? CapturePhase.readyToCapture : phase,
       shouldCapture: shouldCapture,

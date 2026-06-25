@@ -21,6 +21,7 @@ final class DniCaptureOrchestrator {
     required bool? userDataMatch,
     required DateTime now,
     bool imuStill = true,
+    bool lightingValid = true,
   }) {
     if (current is DniCaptureInFlight ||
         current is DniCaptureExpired ||
@@ -28,7 +29,7 @@ final class DniCaptureOrchestrator {
       return current;
     }
 
-    final isCaptureable = validation.isCaptureable && imuStill;
+    final isCaptureable = validation.isCaptureable && imuStill && lightingValid;
 
     if (current is CountingDownWithAnchor) {
       final elapsedMs =

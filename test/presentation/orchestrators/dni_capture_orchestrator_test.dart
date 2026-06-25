@@ -567,6 +567,166 @@ void main() {
     });
   });
 
+  // ── Lighting gate ─────────────────────────────────────────────────────────
+
+  group('Lighting gate', () {
+    late DniCaptureOrchestrator orc;
+
+    setUp(() => orc = _orchestrator(
+          autoCaptureMs: 1500,
+          gracePeriodMs: 600,
+          minStableFrames: 2,
+        ));
+
+    test('lightingValid false blocks countdown entry even when captureable',
+        () {
+      const initial = DniCaptureScanning(
+        guideText: '',
+        failingGate: null,
+        validationProgress: 0,
+        stableFrames: 0,
+        userDataMatch: null,
+        manualModeActive: false,
+      );
+
+      final next = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        lightingValid: false,
+      );
+
+      expect(next, isA<DniCaptureScanning>());
+    });
+
+    test('lightingValid true allows countdown entry when captureable', () {
+      const initial = DniCaptureScanning(
+        guideText: '',
+        failingGate: null,
+        validationProgress: 0,
+        stableFrames: 0,
+        userDataMatch: null,
+        manualModeActive: false,
+      );
+
+      final next = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        lightingValid: true,
+      );
+
+      expect(next, isA<DniCaptureCountingDown>());
+    });
+
+    test('lightingValid defaults to true so legacy call sites keep counting',
+        () {
+      const initial = DniCaptureScanning(
+        guideText: '',
+        failingGate: null,
+        validationProgress: 0,
+        stableFrames: 0,
+        userDataMatch: null,
+        manualModeActive: false,
+      );
+
+      final next = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+      );
+
+      expect(next, isA<DniCaptureCountingDown>());
+    });
+
+    CountingDownWithAnchor startCounting() {
+      const initial = DniCaptureScanning(
+        guideText: '',
+        failingGate: null,
+        validationProgress: 0,
+        stableFrames: 0,
+        userDataMatch: null,
+        manualModeActive: false,
+      );
+      return orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        lightingValid: true,
+      ) as CountingDownWithAnchor;
+    }
+
+    test('glare within grace period keeps the countdown anchor', () {
+      final counting = startCounting();
+
+      final tGrace = t0.add(const Duration(milliseconds: 300));
+      final next = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tGrace,
+        userDataMatch: null,
+        lightingValid: false,
+      );
+
+      expect(
+        next,
+        isA<CountingDownWithAnchor>().having(
+          (c) => c.perfectSinceEpochMs,
+          'perfectSinceEpochMs',
+          equals(counting.perfectSinceEpochMs),
+        ),
+      );
+    });
+
+    test('sustained bad lighting beyond grace period resets to scanning', () {
+      final counting = startCounting();
+
+      final tBeyond = t0.add(const Duration(milliseconds: 700));
+      final next = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tBeyond,
+        userDataMatch: null,
+        lightingValid: false,
+      );
+
+      expect(next, isA<DniCaptureScanning>());
+    });
+
+    test('imuStill and lightingValid both required to enter countdown', () {
+      const initial = DniCaptureScanning(
+        guideText: '',
+        failingGate: null,
+        validationProgress: 0,
+        stableFrames: 0,
+        userDataMatch: null,
+        manualModeActive: false,
+      );
+
+      final next = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        imuStill: true,
+        lightingValid: false,
+      );
+
+      expect(next, isA<DniCaptureScanning>());
+    });
+  });
+
   // ── Clock-skew edge cases ─────────────────────────────────────────────────
 
   group('Clock-skew edge cases', () {

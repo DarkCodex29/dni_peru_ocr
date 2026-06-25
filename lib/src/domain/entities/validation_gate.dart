@@ -1,4 +1,3 @@
-/// Identifies which document quality gate rejected a capture frame.
 enum ValidationGate {
   minBlocks,
   centering,
@@ -6,7 +5,9 @@ enum ValidationGate {
   fillLow,
   lineCount,
   tilt,
-  sideMismatch;
+  sideMismatch,
+  lighting,
+  glare;
 
   String get sentryCode => switch (this) {
         ValidationGate.minBlocks => 'min_blocks',
@@ -16,5 +17,7 @@ enum ValidationGate {
         ValidationGate.lineCount => 'line_count',
         ValidationGate.tilt => 'tilt',
         ValidationGate.sideMismatch => 'side_mismatch',
+        ValidationGate.lighting => 'lighting',
+        ValidationGate.glare => 'glare',
       };
 }

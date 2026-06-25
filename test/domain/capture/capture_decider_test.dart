@@ -101,5 +101,27 @@ void main() {
       );
       expect(signal.shouldCapture, isFalse);
     });
+
+    test('lightingValid false blocks capture even when fields and framing ok',
+        () {
+      const decider = CaptureDecider();
+      final signal = decider.decide(
+        hunt: completeResult(),
+        framingStable: true,
+        lightingValid: false,
+      );
+      expect(signal.shouldCapture, isFalse);
+      expect(signal.phase, CapturePhase.fieldsComplete);
+    });
+
+    test('lightingValid defaults to true so existing call sites still capture',
+        () {
+      const decider = CaptureDecider();
+      final signal = decider.decide(
+        hunt: completeResult(),
+        framingStable: true,
+      );
+      expect(signal.shouldCapture, isTrue);
+    });
   });
 }
