@@ -33,7 +33,7 @@ temporal accumulator** — no manual cleanup required at the consumer.
 - **Pluggable observability** — inject your own `OcrLogger` (Sentry,
   Crashlytics, Datadog, custom) at the extractor constructor.
 - **Capture widget** — `DniScanner` is the single production capture
-  widget. It ships auto-capture with an IMU stillness gate, a live
+  widget. It ships auto-capture with an IMU jolt-reset guard, a live
   lighting/glare gate, post-shutter blur reject-and-retry, a manual
   fallback after a configurable timeout, tilt detection, side-toggle
   seeding, and a dispose-safe lifecycle. Pure-Dart `DniCameraController`
@@ -184,16 +184,20 @@ barometer (`CMAltimeter`), which is the only sensor that would require
 
 | Parameter | Default | Purpose |
 |---|---|---|
-| `autoCaptureMs` | `1500` | Dwell time the document must stay valid + still before auto-capture fires. |
-| `gracePeriodMs` | `600` | Tolerated transient quality/stillness dip mid-countdown before the anchor resets. |
+| `autoCaptureMs` | `1500` | Dwell time the document must stay aligned and well-lit before auto-capture fires. |
+| `gracePeriodMs` | `600` | Tolerated transient quality dip or jolt mid-countdown before the anchor resets. |
 | `manualFallbackMs` | `30000` | Idle time before the manual capture button is surfaced. |
 | `minStableFrames` | `3` | Consecutive stable frames required to arm the countdown. |
 
-The IMU thresholds (accelerometer ≈ `0.6 m/s²`, gyroscope ≈ `0.4 rad/s`, EMA
-window ≈ 5 samples) and the lighting thresholds (`minLuminance = 40`,
-`maxLuminance = 235`, `maxSaturatedFraction = 0.10`) ship as device-tunable
-defaults. They are calibrated for typical mid-range phones; adjust them per
-device class if your fleet skews very low- or high-end.
+The phone does **not** need to be held perfectly still. Auto-capture arms once
+the document is aligned in frame and well-lit; the dwell countdown is the
+"hold steady for a moment" step. The IMU is only a jolt guard — it tolerates
+normal hand tremor and resets the countdown solely on a deliberate shake. Its
+permissive jolt thresholds (accelerometer ≈ `2.5 m/s²`, gyroscope ≈
+`1.5 rad/s`, EMA window ≈ 5 samples) and the lighting thresholds
+(`minLuminance = 40`, `maxLuminance = 235`, `maxSaturatedFraction = 0.10`) ship
+as device-tunable defaults. They are calibrated for typical mid-range phones;
+adjust them per device class if your fleet skews very low- or high-end.
 
 ## DNI Lookup
 
@@ -300,7 +304,7 @@ Or define a custom set: `DniFields.required({DniField.documentNumber, DniField.f
 | `DniCameraController` | Pure-Dart capture state machine. |
 | `DniCaptureOrchestrator` | Auto-capture countdown logic. |
 | `DniCaptureState` (sealed) | Capture state hierarchy. |
-| `MotionStillnessGate` | IMU stillness contract (default `SensorsMotionGate`). |
+| `MotionStillnessGate` | IMU jolt-guard contract (default `SensorsMotionGate`). |
 | `LightingGate` | Mean-luminance + glare scorer for live frames. |
 | `ImageQualityGate` | Post-shutter blur (Laplacian) sharpness gate. |
 | `DocumentValidationResult` | Geometric + OCR validation gate. |

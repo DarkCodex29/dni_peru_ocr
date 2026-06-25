@@ -12,9 +12,15 @@
   crops inside its own isolate.
 
 ### Added
-- IMU stillness gate (`MotionStillnessGate` + `SensorsMotionGate`, backed by
-  `sensors_plus`): capture waits until the device is physically still, using
-  accelerometer + gyroscope only. The gate is now part of the public API.
+- IMU jolt-reset refinement (`MotionStillnessGate` + `SensorsMotionGate`,
+  backed by `sensors_plus`): the IMU is **not** an entry gate. Auto-capture
+  enters the dwell countdown once the document is aligned and well-lit; the
+  IMU only watches for a **strong jolt** (deliberate shake) and resets an
+  in-progress countdown so motion-blurred frames are never captured. Normal
+  hand tremor is tolerated. Thresholds are permissive jolt defaults
+  (`accelJoltThreshold` 2.5 m/s², `gyroJoltThreshold` 1.5 rad/s) and the gate
+  reports still on cold start so the first capture is never blocked. The gate
+  is part of the public API.
 - Live lighting/glare gate (`LightingGate`): a per-frame analysis isolate
   scores mean luminance and saturated-pixel fraction, blocking capture under
   dark, blown-out, or glaring conditions. Exposed publicly and surfaced as the
