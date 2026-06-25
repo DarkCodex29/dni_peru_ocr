@@ -136,21 +136,14 @@ class DniScanner extends StatefulWidget {
   /// Capture trigger strategy. Defaults to [DniCaptureMode.auto].
   final DniCaptureMode captureMode;
 
-  /// Optional injected orchestrator. When null, one is built from
-  /// [autoCaptureMs], [gracePeriodMs], [minStableFrames] and
-  /// [manualFallbackMs].
   final DniCaptureOrchestrator? orchestrator;
 
-  /// Dwell time the document must stay captureable before the shutter fires.
   final int autoCaptureMs;
 
-  /// Grace window that tolerates a brief quality regression mid-countdown.
   final int gracePeriodMs;
 
-  /// Minimum consecutive stable frames required to enter the countdown.
   final int minStableFrames;
 
-  /// Idle time before the manual-capture fallback is offered.
   final int manualFallbackMs;
 
   @override
@@ -345,10 +338,6 @@ class DniScannerState extends State<DniScanner>
     }
   }
 
-  /// Maps a hunt capture-ready signal onto the [DniCaptureOrchestrator]
-  /// trigger model: a captureable frame opens the dwell countdown, and the
-  /// orchestrator transition to [DniCaptureInFlight] is what fires the
-  /// shutter.
   void _onCaptureReady(HuntSignal signal) {
     if (_capturing || _disposed) return;
     if (_captureState is DniCaptureInFlight ||
@@ -361,8 +350,6 @@ class DniScannerState extends State<DniScanner>
     _startCountdownTicker(signal);
   }
 
-  /// Re-evaluates the orchestrator on a fixed cadence so the dwell can elapse
-  /// even without new camera frames, then fires capture on [DniCaptureInFlight].
   void _startCountdownTicker(HuntSignal signal) {
     _countdownTicker?.cancel();
     _countdownTicker = Timer.periodic(
@@ -408,11 +395,9 @@ class DniScannerState extends State<DniScanner>
     }
   }
 
-  /// Feeds a hunt capture-ready signal through the orchestrator path.
   @visibleForTesting
   void debugFeedCaptureReady(HuntSignal signal) => _onCaptureReady(signal);
 
-  /// Current orchestrator capture state, for tests.
   @visibleForTesting
   DniCaptureState get debugCaptureState => _captureState;
 
