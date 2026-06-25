@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.20.0
+
+### Breaking
+- **`DniCameraMask` is removed.** The capture brain (orchestrator, state
+  machine, stability, IMU, lighting, and blur gates) now lives entirely in
+  `DniScanner`, which is the single production capture widget. Replace every
+  `DniCameraMask(...)` usage with `DniScanner(...)`; the constructor surface
+  and `onValidCapture`/`onSideCaptured` callbacks carry over. The mask-only
+  helper `KycImageUtils.cropToDocumentArea` is also removed — `DniScanner`
+  crops inside its own isolate.
+
+### Added
+- IMU stillness gate (`MotionStillnessGate` + `SensorsMotionGate`, backed by
+  `sensors_plus`): capture waits until the device is physically still, using
+  accelerometer + gyroscope only. The gate is now part of the public API.
+- Live lighting/glare gate (`LightingGate`): a per-frame analysis isolate
+  scores mean luminance and saturated-pixel fraction, blocking capture under
+  dark, blown-out, or glaring conditions. Exposed publicly and surfaced as the
+  `ValidationGate.lighting` / `ValidationGate.glare` cases.
+- Post-shutter blur reject-and-retry: after the shutter, `ImageQualityGate`
+  validates sharpness; blurry frames are rejected and the scanner re-arms,
+  bounded by a retry cap so the flow never loops forever.
+- Manual fallback: after `manualFallbackMs` (default `30000`) of unsuccessful
+  auto-capture, `DniScanner` surfaces a manual capture button so the user is
+  never stuck.
+- Tuning parameters on `DniScanner`: `autoCaptureMs` (default `1500`),
+  `gracePeriodMs` (default `600`), `manualFallbackMs` (default `30000`), and
+  `minStableFrames`. The IMU and lighting thresholds ship as device-tunable
+  defaults (see README → Integration requirements).
+
 ## 0.19.1
 
 ### Fixed

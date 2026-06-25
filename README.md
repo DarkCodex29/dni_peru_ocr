@@ -32,10 +32,12 @@ temporal accumulator** — no manual cleanup required at the consumer.
   CHIMBOTE`, `/CALLAO/VENTANILLA`, `LIMA/LIMA/VILLA MARIA DEL TRIUNFO`).
 - **Pluggable observability** — inject your own `OcrLogger` (Sentry,
   Crashlytics, Datadog, custom) at the extractor constructor.
-- **Production-ready capture widget** — `DniCameraMask` ships with
-  auto-capture, manual fallback, tilt detection, side-toggle seeding,
-  and dispose-safe lifecycle. Pure-Dart `DniCameraController` is exposed
-  for headless use.
+- **Capture widget** — `DniScanner` is the single production capture
+  widget. It ships auto-capture with an IMU stillness gate, a live
+  lighting/glare gate, post-shutter blur reject-and-retry, a manual
+  fallback after a configurable timeout, tilt detection, side-toggle
+  seeding, and a dispose-safe lifecycle. Pure-Dart `DniCameraController`
+  is exposed for headless use.
 
 ## Installation
 
@@ -96,41 +98,79 @@ final fields = extractor.extractWith(recognizedText);
 
 ## Quick start — capture widget
 
-`DniCameraMask` is a Flutter widget that owns the full capture flow.
-The host provides a `camera` plugin `CameraController` and listens for
-the final capture via the `onValidCapture` callback.
+`DniScanner` is a Flutter widget that owns the full capture flow. The
+host provides a `camera` plugin `CameraController` and listens for the
+final capture. Use `onScanComplete` for the two-sided flow, or
+`onSideCaptured` for single-side capture.
 
 ```dart
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
 
-DniCameraMask(
+DniScanner(
   controller: cameraController,
-  isBackSide: false,
-  onValidCapture: (file, consensus) {
-    // consensus is null on the front side, populated on the back.
-    if (consensus != null) {
-      print(consensus.firstName.value);
-      print(consensus.address.value);
-    }
+  fields: DniFields.kyc(),
+  onScanComplete: (result) {
+    print(result.hunt.firstName);
+    print(result.hunt.address);
   },
-  // Required for two-sided scans: persist front OCR into your state
-  // holder and feed it back as the back-side seed.
-  onFrontSideOcrUpdated: (fields) => myStateHolder.frontSideOcr = fields,
-)
-
-// ...later, when mounting the back-side step:
-DniCameraMask(
-  controller: cameraController,
-  isBackSide: true,
-  frontSideFields: myStateHolder.frontSideOcr, // ← seed
-  onValidCapture: (file, consensus) { /* ... */ },
 )
 ```
 
-> **Why the state-holder dance?** Flutter destroys widget `State` when
-> the host swaps from front to back via a `switch` over an enum step,
-> so the front side's accumulated OCR is lost unless the host persists
-> it. The `frontSideFields` parameter restores it.
+Tuning is optional — every parameter has a sensible default:
+
+```dart
+DniScanner(
+  controller: cameraController,
+  captureMode: DniCaptureMode.auto,   // auto | manual | hybrid
+  autoCaptureMs: 1500,                // dwell before auto-capture
+  gracePeriodMs: 600,                 // tolerated quality dip mid-countdown
+  manualFallbackMs: 30000,            // show manual button after this
+  minStableFrames: 3,                 // stable frames required to arm
+  onScanComplete: (result) { /* ... */ },
+)
+```
+
+## Integration requirements
+
+`DniScanner` reads the device IMU through `sensors_plus`, which raises the
+host build floor. The capture pipeline also uses isolates and the `camera`
+plugin, but the only new platform constraints come from `sensors_plus`.
+
+### Android
+
+`sensors_plus` requires a modern Android toolchain. Configure your app
+module with:
+
+- **Java 17** (`compileOptions` / `kotlinOptions.jvmTarget = "17"`)
+- **Android Gradle Plugin ≥ 8.12.1** (recommended minimum)
+- **Gradle ≥ 8.13**
+
+The example app in this repository currently pins **AGP 8.11.1**; bump it to
+**8.12.1** or newer in your own project to satisfy `sensors_plus`. No runtime
+permission is needed for the accelerometer or gyroscope.
+
+### iOS
+
+No `Info.plist` entry is required. `DniScanner` reads **only** the
+accelerometer and gyroscope via `sensors_plus`. It never initializes the
+barometer (`CMAltimeter`), which is the only sensor that would require
+`NSMotionUsageDescription`. Standard `camera` plugin keys
+(`NSCameraUsageDescription`) still apply for the preview itself.
+
+### Tuning parameters and defaults
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `autoCaptureMs` | `1500` | Dwell time the document must stay valid + still before auto-capture fires. |
+| `gracePeriodMs` | `600` | Tolerated transient quality/stillness dip mid-countdown before the anchor resets. |
+| `manualFallbackMs` | `30000` | Idle time before the manual capture button is surfaced. |
+| `minStableFrames` | `3` | Consecutive stable frames required to arm the countdown. |
+
+The IMU thresholds (accelerometer ≈ `0.6 m/s²`, gyroscope ≈ `0.4 rad/s`, EMA
+window ≈ 5 samples) and the lighting thresholds (`minLuminance = 40`,
+`maxLuminance = 235`, `maxSaturatedFraction = 0.10`) ship as device-tunable
+defaults. They are calibrated for typical mid-range phones; adjust them per
+device class if your fleet skews very low- or high-end.
 
 ## DNI Lookup
 
@@ -233,12 +273,15 @@ Or define a custom set: `DniFields.required({DniField.documentNumber, DniField.f
 | `AddressNoiseFilter` | Peruvian address vocabulary + noise-token filter. |
 | `StringSimilarity` | Levenshtein utilities. |
 | `OcrLogger` / `NoOpOcrLogger` | Observability hook (default no-op). |
-| `DniCameraMask` | Production capture widget. |
+| `DniScanner` | Production capture widget. |
 | `DniCameraController` | Pure-Dart capture state machine. |
 | `DniCaptureOrchestrator` | Auto-capture countdown logic. |
 | `DniCaptureState` (sealed) | Capture state hierarchy. |
+| `MotionStillnessGate` | IMU stillness contract (default `SensorsMotionGate`). |
+| `LightingGate` | Mean-luminance + glare scorer for live frames. |
+| `ImageQualityGate` | Post-shutter blur (Laplacian) sharpness gate. |
 | `DocumentValidationResult` | Geometric + OCR validation gate. |
-| `ValidationGate` (enum) | Exhaustive failing-gate cases. |
+| `ValidationGate` (enum) | Exhaustive failing-gate cases (incl. `lighting`, `glare`). |
 | `ValidationGateColors` | Presentation-side gate → color mapping. |
 | `KycTheme` / `KycThemeProvider` | Inject visual identity into the capture widget. |
 | `UserVerificationData` | Pre-scan user context for OCR-vs-user matching. |
@@ -284,7 +327,7 @@ lib/src/
 └── presentation/     — Flutter widgets + controllers
     ├── controllers/  (DniCameraController)
     ├── orchestrators/(DniCaptureOrchestrator + sealed state)
-    ├── widgets/      (DniCameraMask + sub-widgets)
+    ├── widgets/      (DniScanner + sub-widgets)
     └── theme/        (KycTheme + provider)
 ```
 
@@ -321,7 +364,7 @@ lives in the consumer app.
 ## Testing
 
 ```bash
-flutter test                # 529 tests
+flutter test                # 1069 tests
 flutter analyze             # 0 issues on a clean checkout
 ```
 
