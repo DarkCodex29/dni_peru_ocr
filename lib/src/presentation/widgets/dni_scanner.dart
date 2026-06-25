@@ -26,16 +26,6 @@ import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
 import '../theme/kyc_theme.dart';
 
-/// How [DniScanner] decides when to take the picture.
-///
-/// - [auto]: the hunt state machine fires the capture when the OCR signal
-///   stabilizes (legacy behavior, default).
-/// - [manual]: the scanner keeps hunting OCR fields (consensus and RENIEC
-///   lookup still work) but the picture is only taken when the user taps
-///   the capture button.
-/// - [hybrid]: auto-capture stays active AND the capture button is shown,
-///   so the user can shoot immediately when the auto trigger is slow
-///   (poor lighting, hard-to-read documents).
 enum DniCaptureMode { auto, manual, hybrid }
 
 class DniScanResult {
@@ -52,7 +42,6 @@ class DniScanResult {
   final DniData? reniecData;
 }
 
-/// Result emitted by [DniScanner] in single-side mode.
 class DniSideScanResult {
   const DniSideScanResult({
     required this.photo,
@@ -98,19 +87,10 @@ class DniScanner extends StatefulWidget {
 
   final CameraController controller;
 
-  /// Fires when both sides have been captured. Used in two-sided mode
-  /// (when [isBackSide] is null).
   final void Function(DniScanResult result)? onScanComplete;
 
-  /// Fires when the active single-side capture completes. Used in
-  /// single-side mode (when [isBackSide] is set).
   final void Function(DniSideScanResult result)? onSideCaptured;
 
-  /// Single-side mode selector.
-  /// - `null` (default): two-sided mode — scanner orchestrates front then back
-  ///   and emits a single [onScanComplete].
-  /// - `false`: scan only the front side, emit [onSideCaptured].
-  /// - `true`: scan only the back side, emit [onSideCaptured].
   final bool? isBackSide;
 
   final FieldHunter? hunter;
@@ -118,22 +98,16 @@ class DniScanner extends StatefulWidget {
 
   final DniFields? fields;
 
-  /// When provided, fires a RENIEC lookup against [lookupService] as soon
-  /// as the active capture exposes a `documentNumber`. The resolved data
-  /// is delivered via [onDniReady] and bundled into the appropriate result.
   final DniLookupService? lookupService;
 
-  /// Timeout for the RENIEC lookup. Defaults to 2500ms.
   final Duration lookupTimeout;
 
-  /// Fires once when the RENIEC lookup resolves with a successful payload.
   final void Function(DniData data)? onDniReady;
 
   final int idleFramesBeforeCapture;
   final double holeWidth;
   final double holeHeight;
 
-  /// Capture trigger strategy. Defaults to [DniCaptureMode.auto].
   final DniCaptureMode captureMode;
 
   final DniCaptureOrchestrator? orchestrator;
@@ -442,10 +416,6 @@ class DniScannerState extends State<DniScanner>
     return n;
   }
 
-  /// Locks focus and exposure before the shutter so the camera cannot
-  /// re-focus mid-capture (main cause of blurry document stills), then
-  /// restores continuous auto modes. Lock failures are ignored — some
-  /// devices do not support locking and the capture must proceed anyway.
   Future<XFile> _takeLockedPicture() async {
     // Lock failures must never block the capture. CameraController does not
     // normalize platform errors for these calls: iOS surfaces FlutterError
@@ -873,10 +843,6 @@ class _CropRequest {
 const int _cropMaxDimension = 3000;
 const int _cropJpegQuality = 97;
 
-/// Runs inside an isolate: decode → resize guard → crop → JPEG q97 encode.
-/// Heavy `package:image` work off the UI thread keeps the preview smooth
-/// right after the shutter. q97 is visually lossless for document text
-/// while encoding an order of magnitude faster than PNG.
 String? _cropAndEncode(_CropRequest request) {
   final bytes = File(request.sourcePath).readAsBytesSync();
   var decoded = img.decodeImage(bytes);
@@ -1330,8 +1296,6 @@ class _SideProgress extends StatelessWidget {
   final bool isFrontPhase;
   final KycTheme theme;
 
-  /// Totals derived from the consumer's [DniFields] selection. When null
-  /// (no explicit selection) the full-DNI totals apply.
   final int? frontTotal;
   final int? backTotal;
 
