@@ -24,8 +24,7 @@ class SensorsMotionGate implements MotionStillnessGate {
 
   double? _accelEma;
   double? _gyroEma;
-  int _samples = 0;
-  bool _isStill = false;
+  bool _isStill = true;
   bool _disposed = false;
 
   @override
@@ -56,13 +55,10 @@ class SensorsMotionGate implements MotionStillnessGate {
 
   void _evaluate() {
     if (_disposed) return;
-    _samples++;
-    final warmedUp = _samples >= MotionStillnessGate.emaWindow;
-    final accelStill = (_accelEma ?? double.infinity) <
-        MotionStillnessGate.accelStillnessThreshold;
-    final gyroStill = (_gyroEma ?? double.infinity) <
-        MotionStillnessGate.gyroStillnessThreshold;
-    final next = warmedUp && accelStill && gyroStill;
+    final accelJolt =
+        (_accelEma ?? 0) >= MotionStillnessGate.accelJoltThreshold;
+    final gyroJolt = (_gyroEma ?? 0) >= MotionStillnessGate.gyroJoltThreshold;
+    final next = !(accelJolt || gyroJolt);
     if (next != _isStill) {
       _isStill = next;
       _controller.add(next);

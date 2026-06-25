@@ -69,13 +69,21 @@ void main() {
     });
   });
 
-  group('MotionStillnessGate thresholds', () {
-    test('accelStillnessThreshold is the documented still-hand bound', () {
-      expect(MotionStillnessGate.accelStillnessThreshold, closeTo(0.6, 1e-9));
+  group('MotionStillnessGate jolt thresholds', () {
+    test('accelJoltThreshold tolerates hand tremor and only trips on a jolt',
+        () {
+      expect(MotionStillnessGate.accelJoltThreshold, closeTo(2.5, 1e-9));
     });
 
-    test('gyroStillnessThreshold is the documented still-hand bound', () {
-      expect(MotionStillnessGate.gyroStillnessThreshold, closeTo(0.4, 1e-9));
+    test('gyroJoltThreshold tolerates hand rotation and only trips on a jolt',
+        () {
+      expect(MotionStillnessGate.gyroJoltThreshold, closeTo(1.5, 1e-9));
+    });
+
+    test('jolt thresholds are far more permissive than laboratory stillness',
+        () {
+      expect(MotionStillnessGate.accelJoltThreshold, greaterThan(0.6));
+      expect(MotionStillnessGate.gyroJoltThreshold, greaterThan(0.4));
     });
 
     test('emaWindow smooths over the documented sample count', () {

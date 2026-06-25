@@ -29,7 +29,8 @@ void main() {
       unawaited(gyro.close());
     });
 
-    test('starts unstable until enough still samples accumulate', () {
+    test('starts still on cold start so the first capture is never blocked',
+        () {
       final accel = StreamController<UserAccelerometerEvent>();
       final gyro = StreamController<GyroscopeEvent>();
       final gate = SensorsMotionGate(
@@ -37,14 +38,35 @@ void main() {
         gyroscopeStream: gyro.stream,
       );
 
-      expect(gate.isStill, isFalse);
+      expect(gate.isStill, isTrue);
 
       gate.dispose();
       unawaited(accel.close());
       unawaited(gyro.close());
     });
 
-    test('sustained low motion below thresholds becomes still', () async {
+    test('normal hand tremor below jolt thresholds stays still', () async {
+      final accel = StreamController<UserAccelerometerEvent>();
+      final gyro = StreamController<GyroscopeEvent>();
+      final gate = SensorsMotionGate(
+        accelerometerStream: accel.stream,
+        gyroscopeStream: gyro.stream,
+      );
+
+      for (var i = 0; i < MotionStillnessGate.emaWindow + 2; i++) {
+        accel.add(_accel(0.9));
+        gyro.add(_gyro(0.5));
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(gate.isStill, isTrue);
+
+      gate.dispose();
+      unawaited(accel.close());
+      unawaited(gyro.close());
+    });
+
+    test('a strong accel jolt flips the gate to not-still', () async {
       final accel = StreamController<UserAccelerometerEvent>();
       final gyro = StreamController<GyroscopeEvent>();
       final gate = SensorsMotionGate(
@@ -55,14 +77,14 @@ void main() {
       final emitted = <bool>[];
       final watch = gate.watchStillness().listen(emitted.add);
 
-      for (var i = 0; i < MotionStillnessGate.emaWindow + 2; i++) {
-        accel.add(_accel(0.05));
+      for (var i = 0; i < MotionStillnessGate.emaWindow + 4; i++) {
+        accel.add(_accel(6.0));
         gyro.add(_gyro(0.05));
         await Future<void>.delayed(Duration.zero);
       }
 
-      expect(gate.isStill, isTrue);
-      expect(emitted.last, isTrue);
+      expect(gate.isStill, isFalse);
+      expect(emitted.last, isFalse);
 
       await watch.cancel();
       gate.dispose();
@@ -70,7 +92,7 @@ void main() {
       unawaited(gyro.close());
     });
 
-    test('jitter above accel threshold keeps the gate unstable', () async {
+    test('a strong rotation jolt flips the gate to not-still', () async {
       final accel = StreamController<UserAccelerometerEvent>();
       final gyro = StreamController<GyroscopeEvent>();
       final gate = SensorsMotionGate(
@@ -78,30 +100,9 @@ void main() {
         gyroscopeStream: gyro.stream,
       );
 
-      for (var i = 0; i < MotionStillnessGate.emaWindow + 2; i++) {
-        accel.add(_accel(3.0));
-        gyro.add(_gyro(0.05));
-        await Future<void>.delayed(Duration.zero);
-      }
-
-      expect(gate.isStill, isFalse);
-
-      gate.dispose();
-      unawaited(accel.close());
-      unawaited(gyro.close());
-    });
-
-    test('rotation above gyro threshold keeps the gate unstable', () async {
-      final accel = StreamController<UserAccelerometerEvent>();
-      final gyro = StreamController<GyroscopeEvent>();
-      final gate = SensorsMotionGate(
-        accelerometerStream: accel.stream,
-        gyroscopeStream: gyro.stream,
-      );
-
-      for (var i = 0; i < MotionStillnessGate.emaWindow + 2; i++) {
+      for (var i = 0; i < MotionStillnessGate.emaWindow + 4; i++) {
         accel.add(_accel(0.05));
-        gyro.add(_gyro(2.0));
+        gyro.add(_gyro(4.0));
         await Future<void>.delayed(Duration.zero);
       }
 
@@ -112,7 +113,7 @@ void main() {
       unawaited(gyro.close());
     });
 
-    test('transition from jitter to stillness flips isStill via EMA decay',
+    test('a jolt then a return to calm flips isStill back to still via decay',
         () async {
       final accel = StreamController<UserAccelerometerEvent>();
       final gyro = StreamController<GyroscopeEvent>();
@@ -121,15 +122,15 @@ void main() {
         gyroscopeStream: gyro.stream,
       );
 
-      for (var i = 0; i < MotionStillnessGate.emaWindow; i++) {
-        accel.add(_accel(4.0));
+      for (var i = 0; i < MotionStillnessGate.emaWindow + 4; i++) {
+        accel.add(_accel(8.0));
         gyro.add(_gyro(0.05));
         await Future<void>.delayed(Duration.zero);
       }
       expect(gate.isStill, isFalse);
 
-      for (var i = 0; i < MotionStillnessGate.emaWindow * 3; i++) {
-        accel.add(_accel(0.02));
+      for (var i = 0; i < MotionStillnessGate.emaWindow * 4; i++) {
+        accel.add(_accel(0.2));
         gyro.add(_gyro(0.02));
         await Future<void>.delayed(Duration.zero);
       }
