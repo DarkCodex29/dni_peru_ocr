@@ -23,6 +23,13 @@ class DocumentValidationResult {
           isCaptureable: isCaptureable,
         );
 
+  /// A captureable result with no framing feedback. Used by widgets that
+  /// reconcile an upstream readiness signal into the capture orchestrator.
+  const DocumentValidationResult.captureable()
+      : message = '',
+        isCaptureable = true,
+        failingGate = null;
+
   final String message;
   final bool isCaptureable;
 

@@ -21,6 +21,9 @@ import '../../infrastructure/input_image_converter.dart';
 import '../../lookup/models/dni_data.dart';
 import '../../lookup/models/dni_lookup_result.dart';
 import '../../lookup/services/dni_lookup_service.dart';
+import '../document_validator.dart';
+import '../orchestrators/dni_capture_orchestrator.dart';
+import '../orchestrators/dni_capture_state.dart';
 import '../theme/kyc_theme.dart';
 
 /// How [DniScanner] decides when to take the picture.
@@ -81,6 +84,11 @@ class DniScanner extends StatefulWidget {
     this.holeWidth = 300,
     this.holeHeight = 220,
     this.captureMode = DniCaptureMode.auto,
+    this.orchestrator,
+    this.autoCaptureMs = 1500,
+    this.gracePeriodMs = 600,
+    this.minStableFrames = 3,
+    this.manualFallbackMs = 30000,
   }) : assert(
           (isBackSide == null && onScanComplete != null) ||
               (isBackSide != null && onSideCaptured != null),
@@ -128,17 +136,49 @@ class DniScanner extends StatefulWidget {
   /// Capture trigger strategy. Defaults to [DniCaptureMode.auto].
   final DniCaptureMode captureMode;
 
+  /// Optional injected orchestrator. When null, one is built from
+  /// [autoCaptureMs], [gracePeriodMs], [minStableFrames] and
+  /// [manualFallbackMs].
+  final DniCaptureOrchestrator? orchestrator;
+
+  /// Dwell time the document must stay captureable before the shutter fires.
+  final int autoCaptureMs;
+
+  /// Grace window that tolerates a brief quality regression mid-countdown.
+  final int gracePeriodMs;
+
+  /// Minimum consecutive stable frames required to enter the countdown.
+  final int minStableFrames;
+
+  /// Idle time before the manual-capture fallback is offered.
+  final int manualFallbackMs;
+
   @override
-  State<DniScanner> createState() => _DniScannerState();
+  State<DniScanner> createState() => DniScannerState();
 }
 
-class _DniScannerState extends State<DniScanner>
+class DniScannerState extends State<DniScanner>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late final FieldHunter _hunter;
   late final HuntStateMachine _stateMachine;
   late final TextRecognizer _recognizer;
   late final DetectorLifecycle _lifecycle;
   late final AnimationController _pulse;
+  late final DniCaptureOrchestrator _orchestrator;
+
+  DniCaptureState _captureState = const DniCaptureScanning(
+    guideText: '',
+    failingGate: null,
+    validationProgress: 0,
+    stableFrames: 0,
+    userDataMatch: null,
+    manualModeActive: false,
+  );
+  Timer? _countdownTicker;
+  DateTime? _countdownAnchor;
+  int _countdownElapsedMs = 0;
+
+  static const int _countdownTickMs = 100;
 
   bool _processing = false;
   bool _disposed = false;
@@ -177,6 +217,13 @@ class _DniScannerState extends State<DniScanner>
           initialPhase: initialPhase,
         );
     _lastPhaseRendered = initialPhase;
+    _orchestrator = widget.orchestrator ??
+        DniCaptureOrchestrator(
+          autoCaptureMs: widget.autoCaptureMs,
+          gracePeriodMs: widget.gracePeriodMs,
+          manualFallbackMs: widget.manualFallbackMs,
+          minStableFrames: widget.minStableFrames,
+        );
     _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
     _lifecycle = DetectorLifecycle(
       stopStream: () => _safeStopStream(widget.controller),
@@ -285,16 +332,11 @@ class _DniScannerState extends State<DniScanner>
 
     switch (signal) {
       case HuntSignal.frontCaptureReady:
-        if (widget.captureMode == DniCaptureMode.manual) {
-          _markCaptureReady();
-        } else {
-          await _captureFront();
-        }
       case HuntSignal.backCaptureReady:
         if (widget.captureMode == DniCaptureMode.manual) {
           _markCaptureReady();
         } else {
-          await _captureBack();
+          _onCaptureReady(signal);
         }
       case HuntSignal.frontDetected:
       case HuntSignal.backDetected:
@@ -302,6 +344,77 @@ class _DniScannerState extends State<DniScanner>
         break;
     }
   }
+
+  /// Maps a hunt capture-ready signal onto the [DniCaptureOrchestrator]
+  /// trigger model: a captureable frame opens the dwell countdown, and the
+  /// orchestrator transition to [DniCaptureInFlight] is what fires the
+  /// shutter.
+  void _onCaptureReady(HuntSignal signal) {
+    if (_capturing || _disposed) return;
+    if (_captureState is DniCaptureInFlight ||
+        _captureState is DniCaptureDone) {
+      return;
+    }
+    _countdownAnchor = DateTime.now();
+    _countdownElapsedMs = 0;
+    _advanceCapture();
+    _startCountdownTicker(signal);
+  }
+
+  /// Re-evaluates the orchestrator on a fixed cadence so the dwell can elapse
+  /// even without new camera frames, then fires capture on [DniCaptureInFlight].
+  void _startCountdownTicker(HuntSignal signal) {
+    _countdownTicker?.cancel();
+    _countdownTicker = Timer.periodic(
+      const Duration(milliseconds: _countdownTickMs),
+      (_) => _tickCountdown(signal),
+    );
+  }
+
+  void _tickCountdown(HuntSignal signal) {
+    if (_disposed) {
+      _countdownTicker?.cancel();
+      return;
+    }
+    _countdownElapsedMs += _countdownTickMs;
+    _advanceCapture();
+    if (_captureState is DniCaptureInFlight) {
+      _countdownTicker?.cancel();
+      _countdownTicker = null;
+      unawaited(_fireCapture(signal));
+    }
+  }
+
+  Future<void> _fireCapture(HuntSignal signal) async {
+    if (signal == HuntSignal.frontCaptureReady) {
+      await _captureFront();
+    } else if (signal == HuntSignal.backCaptureReady) {
+      await _captureBack();
+    }
+  }
+
+  void _advanceCapture() {
+    final anchor = _countdownAnchor ?? DateTime.now();
+    final now = anchor.add(Duration(milliseconds: _countdownElapsedMs));
+    final next = _orchestrator.onFrame(
+      current: _captureState,
+      validation: const DocumentValidationResult.captureable(),
+      stableFrames: widget.minStableFrames,
+      userDataMatch: null,
+      now: now,
+    );
+    if (!identical(next, _captureState)) {
+      _captureState = next;
+    }
+  }
+
+  /// Feeds a hunt capture-ready signal through the orchestrator path.
+  @visibleForTesting
+  void debugFeedCaptureReady(HuntSignal signal) => _onCaptureReady(signal);
+
+  /// Current orchestrator capture state, for tests.
+  @visibleForTesting
+  DniCaptureState get debugCaptureState => _captureState;
 
   void _markCaptureReady() {
     if (_captureReady || !mounted) return;
@@ -532,6 +645,7 @@ class _DniScannerState extends State<DniScanner>
   @override
   void dispose() {
     _disposed = true;
+    _countdownTicker?.cancel();
     _focusIndicatorTimer?.cancel();
     _hintRotationTimer?.cancel();
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
