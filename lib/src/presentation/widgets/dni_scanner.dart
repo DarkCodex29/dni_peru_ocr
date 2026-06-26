@@ -1390,6 +1390,33 @@ int countdownDigitFromProgress(double progress, int totalMs) {
   return digit.clamp(1, 3);
 }
 
+/// Honest side-progress ratio for the front/back indicator (#5494).
+///
+/// The raw field-count ratio (`filled / total`) is DECOUPLED from the capture
+/// state machine: the back can reach `7/7 = 100%` while the auto-capture
+/// trigger — governed by data STABILITY and the wrong-side SAFETY invariant,
+/// not by the raw field count — has not fired. Showing that "100%" implies an
+/// imminent or completed capture that the field count cannot promise, which is
+/// the misleading indicator the owner saw.
+///
+/// This keeps the indicator useful (it grows with data so the user sees real
+/// progress) but makes it HONEST: the only way to reach a full 100% ring is for
+/// the side to actually be captured ([done] == true). A not-done side is capped
+/// strictly below 1.0 by [scanningCeiling] so it never claims completion before
+/// the capture trigger fires. A non-positive [total] degrades gracefully.
+@visibleForTesting
+double sideProgressRatio({
+  required int filled,
+  required int total,
+  required bool done,
+  double scanningCeiling = 0.95,
+}) {
+  if (done) return 1.0;
+  if (total <= 0) return 0.0;
+  final raw = (filled / total).clamp(0.0, 1.0);
+  return raw < scanningCeiling ? raw : scanningCeiling;
+}
+
 /// Centered 3-2-1 auto-capture counter rendered in smoke white over the dark
 /// overlay. Each digit change plays a short scale-in + fade so the countdown
 /// feels intentional without being flashy.
@@ -1821,12 +1848,20 @@ class _SideProgress extends StatelessWidget {
         (frontTotal ?? _frontTotalDefault).clamp(1, _frontTotalDefault);
     final effectiveBackTotal =
         (backTotal ?? _backTotalDefault).clamp(1, _backTotalDefault);
-    final frontProgress = isFrontDone
-        ? 1.0
-        : (frontFilled / effectiveFrontTotal).clamp(0.0, 1.0);
-    final backProgress = isBackDone
-        ? 1.0
-        : (backFilled / effectiveBackTotal).clamp(0.0, 1.0);
+    // Honest readiness-aware progress: a side that has not actually captured
+    // can never display 100%, because the auto-capture trigger is governed by
+    // data stability and the wrong-side invariant — not by this raw field
+    // count (#5494).
+    final frontProgress = sideProgressRatio(
+      filled: frontFilled,
+      total: effectiveFrontTotal,
+      done: isFrontDone,
+    );
+    final backProgress = sideProgressRatio(
+      filled: backFilled,
+      total: effectiveBackTotal,
+      done: isBackDone,
+    );
 
     return Center(
       child: Container(
