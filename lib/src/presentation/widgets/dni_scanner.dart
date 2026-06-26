@@ -148,6 +148,7 @@ class DniScannerState extends State<DniScanner>
   late final TextRecognizer _recognizer;
   late final DetectorLifecycle _lifecycle;
   late final AnimationController _pulse;
+  late final AnimationController _captureFlash;
   late final DniCaptureOrchestrator _orchestrator;
   late final DniCameraController _cameraController;
   late final MotionStillnessGate _motionGate;
@@ -169,6 +170,8 @@ class DniScannerState extends State<DniScanner>
   int _countdownElapsedMs = 0;
 
   static const int _countdownTickMs = 100;
+
+  static const int _captureFlashMs = 180;
 
   bool _processing = false;
   bool _disposed = false;
@@ -250,6 +253,10 @@ class DniScannerState extends State<DniScanner>
       duration: const Duration(milliseconds: 1100),
     );
     unawaited(_pulse.repeat(reverse: true));
+    _captureFlash = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: _captureFlashMs),
+    );
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
@@ -496,8 +503,19 @@ class DniScannerState extends State<DniScanner>
       lightingValid: _lightingValid,
     );
     if (!identical(next, _captureState)) {
+      final firedNow =
+          next is DniCaptureInFlight && _captureState is! DniCaptureInFlight;
       _captureState = next;
+      if (firedNow) _triggerCaptureFlash();
     }
+  }
+
+  void _triggerCaptureFlash() {
+    if (_disposed || !mounted) return;
+    _captureFlash.forward(from: 0).whenComplete(() {
+      if (_disposed) return;
+      _captureFlash.reset();
+    });
   }
 
   @visibleForTesting
@@ -863,6 +881,7 @@ class DniScannerState extends State<DniScanner>
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     WidgetsBinding.instance.removeObserver(this);
     _pulse.dispose();
+    _captureFlash.dispose();
     unawaited(_lifecycle.safeDispose());
     super.dispose();
   }
@@ -998,6 +1017,7 @@ class DniScannerState extends State<DniScanner>
                   ),
                 ),
               ),
+            _CaptureFlash(animation: _captureFlash),
             if (_focusIndicator != null)
               Positioned(
                 left: _focusIndicator!.dx - 36,
@@ -1415,6 +1435,42 @@ class _CountdownCounter extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Brief full-screen white flash fired the moment a photo is captured (the
+/// dwell countdown completed and the shutter triggered). The opacity ramps up
+/// then fades out over a short duration so the user gets an unmistakable but
+/// snappy "photo taken" cue. Rendered for both the front and back capture.
+class _CaptureFlash extends StatelessWidget {
+  const _CaptureFlash({required this.animation});
+
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) {
+        if (animation.status == AnimationStatus.dismissed) {
+          return const SizedBox.shrink();
+        }
+        // Ramp opacity up over the first third of the animation, then fade out
+        // over the rest, peaking just below opaque so the preview is never
+        // fully hidden.
+        final t = animation.value;
+        final opacity = t < 0.33 ? (t / 0.33) * 0.85 : (1 - t) / 0.67 * 0.85;
+        return Positioned.fill(
+          key: const Key('dni_scanner_capture_flash'),
+          child: IgnorePointer(
+            child: Opacity(
+              opacity: opacity.clamp(0.0, 1.0),
+              child: const ColoredBox(color: Color(0xFFFFFFFF)),
+            ),
+          ),
+        );
+      },
     );
   }
 }
