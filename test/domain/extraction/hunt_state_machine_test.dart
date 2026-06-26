@@ -72,13 +72,26 @@ void main() {
       expect(machine.phase, HuntPhase.extractingFront);
     });
 
-    test('stays in extractingFront while frames keep adding new fields', () {
+    test('stays in extractingFront while frames keep revealing NEW distinct '
+        'fields (filled count rises every frame)', () {
       final machine = HuntStateMachine(idleFramesThreshold: 5);
-      machine.recordFrame(detectedSide: frontAnchor, addedNewField: false);
-      for (var i = 0; i < 10; i++) {
-        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+      machine.recordFrame(
+        detectedSide: frontAnchor,
+        addedNewField: false,
+        filledFields: 0,
+      );
+      // Each frame reveals a brand-new distinct field, so idle keeps resetting
+      // and capture never fires while the document is still revealing data.
+      var signal = HuntSignal.none;
+      for (var i = 1; i <= 10; i++) {
+        signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: i,
+        );
       }
       expect(machine.phase, HuntPhase.extractingFront);
+      expect(signal, HuntSignal.none);
     });
 
     test('signals frontCaptureReady after N idle frames', () {
@@ -92,14 +105,37 @@ void main() {
       expect(signal, HuntSignal.frontCaptureReady);
     });
 
-    test('resets idle counter when a frame adds new field', () {
+    test('resets idle counter when a frame reveals a NEW distinct field '
+        '(filled count increases)', () {
       final machine = HuntStateMachine(idleFramesThreshold: 3);
-      machine.recordFrame(detectedSide: frontAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+      machine.recordFrame(
+        detectedSide: frontAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      // A genuinely new field (5 -> 6) resets the idle counter.
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: true,
+        filledFields: 6,
+      );
+      final signal = machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 6,
+      );
       expect(machine.phase, HuntPhase.extractingFront);
+      expect(signal, HuntSignal.none);
     });
 
     test('advanceToWaitingBack moves out of extractingFront', () {
@@ -250,6 +286,119 @@ void main() {
         machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
         final signal =
             machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+    });
+
+    group('extractingFront re-vote dwell (#5461 front 92% stall)', () {
+      test('re-votes of already-filled fields (addedNewField=true but the '
+          'distinct filled count is flat) do NOT reset idle, so the front '
+          'dwell still reaches frontCaptureReady', () {
+        // Device repro (S22): the text-dense FRONT plateaus at 11/19 filled,
+        // yet the FieldHunter keeps reading NEW normalized variants of fields
+        // it ALREADY filled, flipping addedNewField=true intermittently. The
+        // old policy reset idle on every such re-vote, so the 3-2-1 dwell
+        // stalled near ~92% and only the timeout fired. A re-vote that does
+        // not raise the distinct filled count is NOT new data — it must not
+        // reset the dwell.
+        final machine = HuntStateMachine(idleFramesThreshold: 4);
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        // filled stays clamped at 11/19; addedNewField flips true on re-votes.
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 11,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 11,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        expect(signal, HuntSignal.frontCaptureReady);
+      });
+
+      test('REGRESSION: a genuinely new distinct field (filled count '
+          'increases) DOES reset the idle dwell so a still-revealing '
+          'document is not cut short', () {
+        // The legitimate case: while the document keeps revealing NEW fields
+        // the distinct filled count rises, which still means productive
+        // progress and must reset idle.
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 8,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 8,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 8,
+        );
+        // A genuinely new field appears (8 -> 9): idle must reset here.
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 9,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 9,
+        );
+        expect(signal, HuntSignal.none);
+      });
+
+      test('extractingBack re-votes of already-filled fields also stop '
+          'resetting the dwell so backCaptureReady is reached', () {
+        // filledFields stays below minFieldsForFastAdvance (12) so the slow
+        // idleFramesThreshold (4) applies and the dwell is deterministic.
+        final machine = HuntStateMachine(idleFramesThreshold: 4);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: backAnchor,
+          addedNewField: false,
+          filledFields: 6,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 6,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 6,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 6,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 6,
+        );
         expect(signal, HuntSignal.backCaptureReady);
       });
     });

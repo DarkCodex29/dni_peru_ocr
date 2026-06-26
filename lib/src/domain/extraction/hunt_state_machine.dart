@@ -47,6 +47,7 @@ class HuntStateMachine {
 
   HuntPhase _phase;
   int _idleFrames = 0;
+  int _lastFilledFields = 0;
 
   HuntPhase get phase => _phase;
 
@@ -64,6 +65,7 @@ class HuntStateMachine {
         if (detectedSide == DocumentSide.front) {
           _phase = HuntPhase.extractingFront;
           _idleFrames = 0;
+          _lastFilledFields = filledFields;
           return HuntSignal.frontDetected;
         }
         return _advanceWaitingIdle(resetsIdleOnNewField: addedNewField);
@@ -72,12 +74,8 @@ class HuntStateMachine {
         if (_isComplete(filledFields, frontCompleteFieldsCount)) {
           return HuntSignal.frontCaptureReady;
         }
-        if (addedNewField) {
-          _idleFrames = 0;
-        } else {
-          _idleFrames++;
-        }
-        if (_idleFrames >= _effectiveThreshold(filledFields)) {
+        if (_advanceExtractingIdle(filledFields) >=
+            _effectiveThreshold(filledFields)) {
           return HuntSignal.frontCaptureReady;
         }
         return HuntSignal.none;
@@ -86,6 +84,7 @@ class HuntStateMachine {
         if (detectedSide == DocumentSide.back) {
           _phase = HuntPhase.extractingBack;
           _idleFrames = 0;
+          _lastFilledFields = filledFields;
           return HuntSignal.backDetected;
         }
         // In waitingBack a genuine BACK field would already have advanced the
@@ -99,12 +98,8 @@ class HuntStateMachine {
         if (_isComplete(filledFields, backCompleteFieldsCount)) {
           return HuntSignal.backCaptureReady;
         }
-        if (addedNewField) {
-          _idleFrames = 0;
-        } else {
-          _idleFrames++;
-        }
-        if (_idleFrames >= _effectiveThreshold(filledFields)) {
+        if (_advanceExtractingIdle(filledFields) >=
+            _effectiveThreshold(filledFields)) {
           return HuntSignal.backCaptureReady;
         }
         return HuntSignal.none;
@@ -112,6 +107,23 @@ class HuntStateMachine {
       case HuntPhase.done:
         return HuntSignal.none;
     }
+  }
+
+  /// Advances the idle counter for an extracting phase and returns its new
+  /// value. The dwell only resets when a genuinely NEW distinct field is
+  /// recorded — i.e. the distinct filled-field count rises. A text-dense
+  /// front keeps re-voting NEW normalized variants of fields it ALREADY
+  /// filled (addedNewField=true with a flat filled count); those re-votes are
+  /// not new data and must NOT reset the dwell, otherwise the 3-2-1 countdown
+  /// stalls near completion and only the timeout fires (#5461).
+  int _advanceExtractingIdle(int filledFields) {
+    if (filledFields > _lastFilledFields) {
+      _idleFrames = 0;
+    } else {
+      _idleFrames++;
+    }
+    _lastFilledFields = filledFields;
+    return _idleFrames;
   }
 
   HuntSignal _advanceWaitingIdle({required bool resetsIdleOnNewField}) {
@@ -140,15 +152,18 @@ class HuntStateMachine {
   void advanceToWaitingBack() {
     _phase = HuntPhase.waitingBack;
     _idleFrames = 0;
+    _lastFilledFields = 0;
   }
 
   void advanceToDone() {
     _phase = HuntPhase.done;
     _idleFrames = 0;
+    _lastFilledFields = 0;
   }
 
   void reset() {
     _phase = HuntPhase.waitingFront;
     _idleFrames = 0;
+    _lastFilledFields = 0;
   }
 }
