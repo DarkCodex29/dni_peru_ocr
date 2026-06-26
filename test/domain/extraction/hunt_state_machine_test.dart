@@ -188,17 +188,69 @@ void main() {
         expect(signal, HuntSignal.backCaptureReady);
       });
 
-      test('REGRESSION: an added field resets the waiting idle counter so a '
-          'productive wait is not cut short', () {
+      test('REGRESSION: in waitingFront an added field resets the idle counter '
+          'so a productive wait is not cut short', () {
+        // waitingFront still benefits from idle reset on new fields: a fresh
+        // field means OCR is making progress toward the front anchor.
         final machine = HuntStateMachine(idleFramesThreshold: 3);
-        _seedFrontPhaseComplete(machine);
-        machine.advanceToWaitingBack();
         machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
         machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
         machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
         final signal =
             machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
         expect(signal, HuntSignal.none);
+      });
+    });
+
+    group('waitingBack stale-reread escape (#5461 reverso latch)', () {
+      test('stale FRONT re-reads (unknown side + addedNewField) do NOT reset '
+          'idle, so the manual escape still fires', () {
+        // Device repro: in waitingBack the FieldHunter keeps re-reading STALE
+        // front fields, flipping addedNewField=true intermittently. The old
+        // policy reset idle on every such re-read, so idle never reached the
+        // threshold and recoverManual never fired. A genuine BACK field would
+        // have advanced the phase to extractingBack before reaching here, so
+        // any addedNewField in waitingBack is by definition a non-back read.
+        final machine = HuntStateMachine(idleFramesThreshold: 4);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Interleave stale re-reads (addedNewField=true) with idle frames.
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.recoverManual);
+      });
+
+      test('SAFETY: the stale-reread escape emits recoverManual and NEVER '
+          'backCaptureReady (no wrong-side auto-capture)', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 8; i++)
+            machine.recordFrame(
+              detectedSide: noOpAnchor,
+              addedNewField: i.isEven,
+            ),
+        ];
+        expect(signals, contains(HuntSignal.recoverManual));
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+      });
+
+      test('HAPPY PATH: a confirmed back anchor still advances to '
+          'extractingBack and reaches backCaptureReady', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 2);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(detectedSide: backAnchor, addedNewField: false);
+        expect(machine.phase, HuntPhase.extractingBack);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.backCaptureReady);
       });
     });
 

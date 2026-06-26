@@ -66,7 +66,7 @@ class HuntStateMachine {
           _idleFrames = 0;
           return HuntSignal.frontDetected;
         }
-        return _advanceWaitingIdle(addedNewField);
+        return _advanceWaitingIdle(resetsIdleOnNewField: addedNewField);
 
       case HuntPhase.extractingFront:
         if (_isComplete(filledFields, frontCompleteFieldsCount)) {
@@ -88,7 +88,12 @@ class HuntStateMachine {
           _idleFrames = 0;
           return HuntSignal.backDetected;
         }
-        return _advanceWaitingIdle(addedNewField);
+        // In waitingBack a genuine BACK field would already have advanced the
+        // phase above, so any addedNewField here is a STALE non-back re-read
+        // (typically front fields). It must NOT reset idle, otherwise the
+        // machine never reaches the threshold and the manual escape never
+        // fires — the reverso latch observed on device (#5461).
+        return _advanceWaitingIdle(resetsIdleOnNewField: false);
 
       case HuntPhase.extractingBack:
         if (_isComplete(filledFields, backCompleteFieldsCount)) {
@@ -109,8 +114,8 @@ class HuntStateMachine {
     }
   }
 
-  HuntSignal _advanceWaitingIdle(bool addedNewField) {
-    if (addedNewField) {
+  HuntSignal _advanceWaitingIdle({required bool resetsIdleOnNewField}) {
+    if (resetsIdleOnNewField) {
       _idleFrames = 0;
       return HuntSignal.none;
     }
