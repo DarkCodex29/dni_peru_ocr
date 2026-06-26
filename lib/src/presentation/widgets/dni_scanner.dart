@@ -172,6 +172,7 @@ class DniScannerState extends State<DniScanner>
   bool _processing = false;
   bool _disposed = false;
   bool _capturing = false;
+  bool _frameCaptureable = false;
   bool _lightingValid = true;
   bool _analyzingLighting = false;
   int _lastLightingMs = 0;
@@ -335,6 +336,7 @@ class DniScannerState extends State<DniScanner>
 
     final text = recognized.blocks.map((b) => b.text).join('\n');
     if (text.isEmpty) {
+      _frameCaptureable = false;
       DniLogger.debug('DniScanner', 'frame skipped — empty OCR');
       return;
     }
@@ -373,6 +375,7 @@ class DniScannerState extends State<DniScanner>
     switch (signal) {
       case HuntSignal.frontCaptureReady:
       case HuntSignal.backCaptureReady:
+        _frameCaptureable = true;
         if (widget.captureMode == DniCaptureMode.manual) {
           _markCaptureReady();
         } else {
@@ -381,6 +384,7 @@ class DniScannerState extends State<DniScanner>
       case HuntSignal.frontDetected:
       case HuntSignal.backDetected:
       case HuntSignal.none:
+        _frameCaptureable = false;
         break;
     }
   }
@@ -391,6 +395,7 @@ class DniScannerState extends State<DniScanner>
         _captureState is DniCaptureDone) {
       return;
     }
+    _frameCaptureable = true;
     _countdownAnchor = DateTime.now();
     _countdownElapsedMs = 0;
     _advanceCapture();
@@ -416,6 +421,10 @@ class DniScannerState extends State<DniScanner>
       _countdownTicker?.cancel();
       _countdownTicker = null;
       unawaited(_fireCapture(signal));
+      return;
+    }
+    if (_captureState is DniCaptureScanning) {
+      _resetCaptureToScanning();
     }
   }
 
@@ -432,8 +441,10 @@ class DniScannerState extends State<DniScanner>
     final now = anchor.add(Duration(milliseconds: _countdownElapsedMs));
     final next = _orchestrator.onFrame(
       current: _captureState,
-      validation: const DocumentValidationResult.captureable(),
-      stableFrames: widget.minStableFrames,
+      validation: _frameCaptureable
+          ? const DocumentValidationResult.captureable()
+          : const DocumentValidationResult.notCaptureable(),
+      stableFrames: _frameCaptureable ? widget.minStableFrames : 0,
       userDataMatch: null,
       now: now,
       imuStill: _motionGate.isStill,
@@ -452,6 +463,9 @@ class DniScannerState extends State<DniScanner>
 
   @visibleForTesting
   void debugSetLightingValid(bool value) => _lightingValid = value;
+
+  @visibleForTesting
+  void debugSetFrameCaptureable(bool value) => _frameCaptureable = value;
 
   @visibleForTesting
   bool get debugManualModeActive => _manualModeActive;

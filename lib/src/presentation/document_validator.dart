@@ -28,6 +28,11 @@ class DocumentValidationResult {
         isCaptureable = true,
         failingGate = null;
 
+  const DocumentValidationResult.notCaptureable()
+      : message = '',
+        isCaptureable = false,
+        failingGate = ValidationGate.minBlocks;
+
   final String message;
   final bool isCaptureable;
 
