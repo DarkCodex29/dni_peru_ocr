@@ -26,6 +26,7 @@ class HuntStateMachine {
     this.idleFramesThreshold = 18,
     this.fastAdvanceThreshold = 14,
     this.minFieldsForFastAdvance = 12,
+    this.minFieldsForStableCapture = 4,
     this.frontCompleteFieldsCount,
     this.backCompleteFieldsCount,
     HuntPhase initialPhase = HuntPhase.waitingFront,
@@ -34,6 +35,17 @@ class HuntStateMachine {
   final int idleFramesThreshold;
   final int fastAdvanceThreshold;
   final int minFieldsForFastAdvance;
+
+  /// Minimum distinct filled fields required before a stabilized plateau may
+  /// auto-capture. Capture fires on DATA STABILITY (no new distinct field for
+  /// the effective idle threshold) rather than on extracting every selected
+  /// field, because some printed fields are physically absent or illegible on
+  /// a given DNI and can never be reached (#5471). This floor stops a plateau
+  /// of near-empty frames (e.g. a blank or garbage view) from auto-capturing.
+  /// Defaults to 4 — the size of `DniFields.minimal()` (document number plus
+  /// the three name fields), the smallest set the library treats as a valid
+  /// extraction.
+  final int minFieldsForStableCapture;
 
   /// Filled-fields count that completes the FRONT phase. When a front frame
   /// reports this many filled fields, capture fires immediately without
@@ -74,8 +86,7 @@ class HuntStateMachine {
         if (_isComplete(filledFields, frontCompleteFieldsCount)) {
           return HuntSignal.frontCaptureReady;
         }
-        if (_advanceExtractingIdle(filledFields) >=
-            _effectiveThreshold(filledFields)) {
+        if (_isStableCaptureReady(filledFields)) {
           return HuntSignal.frontCaptureReady;
         }
         return HuntSignal.none;
@@ -98,8 +109,7 @@ class HuntStateMachine {
         if (_isComplete(filledFields, backCompleteFieldsCount)) {
           return HuntSignal.backCaptureReady;
         }
-        if (_advanceExtractingIdle(filledFields) >=
-            _effectiveThreshold(filledFields)) {
+        if (_isStableCaptureReady(filledFields)) {
           return HuntSignal.backCaptureReady;
         }
         return HuntSignal.none;
@@ -116,6 +126,21 @@ class HuntStateMachine {
   /// filled (addedNewField=true with a flat filled count); those re-votes are
   /// not new data and must NOT reset the dwell, otherwise the 3-2-1 countdown
   /// stalls near completion and only the timeout fires (#5461).
+  /// Whether a stabilized extracting plateau should auto-capture this frame.
+  /// Capture fires on DATA STABILITY — the distinct filled count has not risen
+  /// for the effective idle threshold — instead of waiting to extract every
+  /// selected field, which is impossible when a printed field is physically
+  /// absent or illegible (#5471). The idle counter always advances so a real
+  /// plateau accrues, but the ready signal is gated behind
+  /// [minFieldsForStableCapture] so a near-empty view never auto-captures.
+  bool _isStableCaptureReady(int filledFields) {
+    final idle = _advanceExtractingIdle(filledFields);
+    if (filledFields < minFieldsForStableCapture) {
+      return false;
+    }
+    return idle >= _effectiveThreshold(filledFields);
+  }
+
   int _advanceExtractingIdle(int filledFields) {
     if (filledFields > _lastFilledFields) {
       _idleFrames = 0;

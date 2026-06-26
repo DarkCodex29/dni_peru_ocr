@@ -205,11 +205,19 @@ class DniScannerState extends State<DniScanner>
         ? HuntPhase.waitingBack
         : HuntPhase.waitingFront;
     final selectedCount = widget.fields?.length ?? 19;
+    // Auto-capture fires on DATA STABILITY rather than on extracting every
+    // selected field, because some printed fields are physically absent or
+    // illegible on a given DNI and can never be reached (#5471). The stable
+    // floor is the smallest meaningful identity set (4, the size of
+    // DniFields.minimal), clamped so tiny custom selections still work. Fast
+    // advance keys off the same floor so any stabilized plateau above it uses
+    // the fast path instead of dropping onto the slow idle path at e.g. 11/19.
+    final stableFloor = 4.clamp(2, selectedCount);
     _stateMachine = widget.stateMachine ??
         HuntStateMachine(
           idleFramesThreshold: widget.idleFramesBeforeCapture,
-          minFieldsForFastAdvance:
-              (selectedCount * 0.66).round().clamp(2, selectedCount),
+          minFieldsForFastAdvance: stableFloor,
+          minFieldsForStableCapture: stableFloor,
           frontCompleteFieldsCount: widget.fields?.frontCount,
           backCompleteFieldsCount: widget.isBackSide == true
               ? widget.fields?.backCount

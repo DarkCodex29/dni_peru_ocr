@@ -95,13 +95,34 @@ void main() {
     });
 
     test('signals frontCaptureReady after N idle frames', () {
+      // filledFields stays above the stable-capture floor (4) so the test
+      // exercises the idle-threshold mechanism, not the floor guard.
       final machine = HuntStateMachine(idleFramesThreshold: 3);
-      machine.recordFrame(detectedSide: frontAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      final signal =
-          machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+      machine.recordFrame(
+        detectedSide: frontAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: true,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      final signal = machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
       expect(signal, HuntSignal.frontCaptureReady);
     });
 
@@ -164,14 +185,31 @@ void main() {
     });
 
     test('signals backCaptureReady after N idle frames in extractingBack', () {
+      // filledFields stays above the stable-capture floor (4) so the test
+      // exercises the idle-threshold mechanism, not the floor guard.
       final machine = HuntStateMachine(idleFramesThreshold: 2);
       _seedFrontPhaseComplete(machine);
       machine.advanceToWaitingBack();
-      machine.recordFrame(detectedSide: backAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      final signal =
-          machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+      machine.recordFrame(
+        detectedSide: backAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: true,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      final signal = machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
       expect(signal, HuntSignal.backCaptureReady);
     });
 
@@ -215,12 +253,27 @@ void main() {
         final machine = HuntStateMachine(idleFramesThreshold: 2);
         _seedFrontPhaseComplete(machine);
         machine.advanceToWaitingBack();
-        machine.recordFrame(detectedSide: backAnchor, addedNewField: false);
+        machine.recordFrame(
+          detectedSide: backAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
         expect(machine.phase, HuntPhase.extractingBack);
-        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
-        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-        final signal =
-            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 5,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
         expect(signal, HuntSignal.backCaptureReady);
       });
 
@@ -280,12 +333,27 @@ void main() {
         final machine = HuntStateMachine(idleFramesThreshold: 2);
         _seedFrontPhaseComplete(machine);
         machine.advanceToWaitingBack();
-        machine.recordFrame(detectedSide: backAnchor, addedNewField: false);
+        machine.recordFrame(
+          detectedSide: backAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
         expect(machine.phase, HuntPhase.extractingBack);
-        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
-        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-        final signal =
-            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 5,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
         expect(signal, HuntSignal.backCaptureReady);
       });
     });
@@ -400,6 +468,147 @@ void main() {
           filledFields: 6,
         );
         expect(signal, HuntSignal.backCaptureReady);
+      });
+    });
+
+    group('capture on data stability, not all-fields completeness (#5471)', () {
+      test('FRONT plateaus at 11/19 with no new fields and never reaches the '
+          'complete count, yet stability still fires frontCaptureReady', () {
+        // Device truth (S22): a real DNI fills 11/19 because one printed field
+        // (e.g. "Fecha de inscripción") does not exist on that document, so
+        // the complete count is physically unreachable. Capture must fire on
+        // STABILITY (no new distinct field for N frames) regardless.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          // Mirror the live widget wiring: fast-advance kicks in at the small
+          // stability floor, so a plateau above it uses the fast path.
+          minFieldsForFastAdvance: 4,
+          // The full selection completes at 19, which this DNI can never reach.
+          frontCompleteFieldsCount: 19,
+        );
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        // Filled stays clamped at 11/19; no new distinct field arrives.
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 4; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 11,
+          );
+        }
+        expect(signal, HuntSignal.frontCaptureReady);
+      });
+
+      test('FRONT plateaus at 18/19 (one physically-absent field) and still '
+          'reaches frontCaptureReady via stability', () {
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          frontCompleteFieldsCount: 19,
+        );
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 18,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 4; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 18,
+          );
+        }
+        expect(signal, HuntSignal.frontCaptureReady);
+      });
+
+      test('BACK plateaus below the complete count and still reaches '
+          'backCaptureReady via stability', () {
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: backAnchor,
+          addedNewField: false,
+          filledFields: 13,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 4; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 13,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('FLOOR GUARD: below the minimum-fields floor stability does NOT '
+          'auto-capture (no premature garbage capture)', () {
+        // With almost no real data (filled below the floor) a long plateau is
+        // garbage, not a stabilized document. Capture must NOT fire.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          fastAdvanceThreshold: 2,
+          minFieldsForStableCapture: 4,
+          frontCompleteFieldsCount: 19,
+        );
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 10; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 2,
+          );
+        }
+        expect(signal, HuntSignal.none);
+        expect(machine.phase, HuntPhase.extractingFront);
+      });
+
+      test('FLOOR GUARD: once filled reaches the floor, a stable plateau '
+          'fires frontCaptureReady', () {
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          fastAdvanceThreshold: 2,
+          minFieldsForStableCapture: 4,
+          frontCompleteFieldsCount: 19,
+        );
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 4,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 4; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 4,
+          );
+        }
+        expect(signal, HuntSignal.frontCaptureReady);
+      });
+
+      test('default minFieldsForStableCapture is 4 (DniFields.minimal size)',
+          () {
+        final machine = HuntStateMachine();
+        expect(machine.minFieldsForStableCapture, 4);
       });
     });
 
