@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -399,6 +400,7 @@ class DniScannerState extends State<DniScanner>
     _countdownAnchor = DateTime.now();
     _countdownElapsedMs = 0;
     _advanceCapture();
+    if (mounted) setState(() {});
     _startCountdownTicker(signal);
   }
 
@@ -425,7 +427,9 @@ class DniScannerState extends State<DniScanner>
     }
     if (_captureState is DniCaptureScanning) {
       _resetCaptureToScanning();
+      return;
     }
+    if (mounted) setState(() {});
   }
 
   Future<void> _fireCapture(HuntSignal signal) async {
@@ -460,6 +464,26 @@ class DniScannerState extends State<DniScanner>
 
   @visibleForTesting
   DniCaptureState get debugCaptureState => _captureState;
+
+  /// Auto-capture countdown progress (0 → 1) currently fed to the hole
+  /// overlay. Zero whenever no countdown is running, so the ring is hidden.
+  double get _countdownProgress {
+    final state = _captureState;
+    return state is DniCaptureCountingDown ? state.progress : 0;
+  }
+
+  @visibleForTesting
+  double get debugCountdownProgress => _countdownProgress;
+
+  @visibleForTesting
+  CustomPainter debugBuildHolePainter() => _HolePainter(
+        holeSize: Size(widget.holeWidth, widget.holeHeight),
+        pulse: _pulse,
+        borderColor: Colors.white,
+        accentColor: Colors.white,
+        overlayColor: const Color(0x99000000),
+        countdownProgress: _countdownProgress,
+      );
 
   @visibleForTesting
   void debugSetLightingValid(bool value) => _lightingValid = value;
@@ -917,6 +941,7 @@ class DniScannerState extends State<DniScanner>
                     borderColor: theme.white,
                     accentColor: _isExtracting() ? theme.success : theme.white,
                     overlayColor: theme.overlayDark,
+                    countdownProgress: _countdownProgress,
                   ),
                 ),
               ),
@@ -1280,6 +1305,63 @@ class _ScannerFlashToggle extends StatelessWidget {
   }
 }
 
+/// Strokes a clockwise-filling rounded border around [rect] as the
+/// auto-capture countdown progresses ([progress] 0 → 1). Draws nothing when
+/// [progress] is zero so the ring stays hidden while scanning. Ported from the
+/// overlay removed with `DniCameraMask` in PR5 so the countdown is visible
+/// again in the live `_HolePainter`.
+@visibleForTesting
+void paintDniCountdownRing(
+  Canvas canvas, {
+  required Rect rect,
+  required double progress,
+  required Color color,
+}) {
+  final clamped = progress.clamp(0.0, 1.0);
+  if (clamped <= 0) return;
+
+  final l = rect.left;
+  final t = rect.top;
+  final r = rect.right;
+  final b = rect.bottom;
+  final w = rect.width;
+  final h = rect.height;
+
+  final perimeter = 2 * (w + h);
+  var remaining = perimeter * clamped;
+
+  final path = Path()..moveTo(l, t);
+
+  final seg1 = math.min(remaining, w);
+  path.lineTo(l + seg1, t);
+  remaining -= seg1;
+
+  if (remaining > 0) {
+    final seg2 = math.min(remaining, h);
+    path.lineTo(r, t + seg2);
+    remaining -= seg2;
+  }
+  if (remaining > 0) {
+    final seg3 = math.min(remaining, w);
+    path.lineTo(r - seg3, b);
+    remaining -= seg3;
+  }
+  if (remaining > 0) {
+    final seg4 = math.min(remaining, h);
+    path.lineTo(l, b - seg4);
+  }
+
+  canvas.drawPath(
+    path,
+    Paint()
+      ..color = color
+      ..strokeWidth = 3.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round,
+  );
+}
+
 class _HolePainter extends CustomPainter {
   _HolePainter({
     required this.holeSize,
@@ -1287,6 +1369,7 @@ class _HolePainter extends CustomPainter {
     required this.borderColor,
     required this.accentColor,
     required this.overlayColor,
+    this.countdownProgress = 0,
   }) : super(repaint: pulse);
 
   final Size holeSize;
@@ -1294,6 +1377,7 @@ class _HolePainter extends CustomPainter {
   final Color borderColor;
   final Color accentColor;
   final Color overlayColor;
+  final double countdownProgress;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1380,6 +1464,13 @@ class _HolePainter extends CustomPainter {
       Offset(hole.right - 20, scanY),
       scanLine,
     );
+
+    paintDniCountdownRing(
+      canvas,
+      rect: hole,
+      progress: countdownProgress,
+      color: accentColor,
+    );
   }
 
   @override
@@ -1387,7 +1478,8 @@ class _HolePainter extends CustomPainter {
     return old.holeSize != holeSize ||
         old.borderColor != borderColor ||
         old.accentColor != accentColor ||
-        old.overlayColor != overlayColor;
+        old.overlayColor != overlayColor ||
+        old.countdownProgress != countdownProgress;
   }
 }
 
