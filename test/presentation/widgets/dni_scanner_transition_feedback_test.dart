@@ -106,8 +106,8 @@ void main() {
 
   group('DniScanner front-to-back transition feedback', () {
     testWidgets(
-        'shows the success check AND the default Spanish flip guidance while '
-        'waiting for the back side', (tester) async {
+        'shows the default Spanish flip guidance WITHOUT any success check '
+        'while waiting for the back side', (tester) async {
       final cam = _idleMock();
       await tester.pumpWidget(
         _buildScanner(cam, phase: HuntPhase.waitingBack),
@@ -115,15 +115,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 350));
 
       expect(
-        find.byKey(successKey),
-        findsOneWidget,
-        reason: 'a success indicator must confirm the front was captured '
-            'during the front-to-back transition',
-      );
-      expect(
         find.text('Voltea tu DNI'),
         findsWidgets,
         reason: 'the default flip guidance must be the neutral Spanish copy',
+      );
+      expect(
+        find.byKey(successKey),
+        findsNothing,
+        reason: 'the green success check was removed; the flip guidance must '
+            'stand alone so the front-to-back transition feels continuous',
       );
 
       await _dispose(tester);
@@ -159,7 +159,7 @@ void main() {
     });
 
     testWidgets(
-        'does NOT show the transition feedback before any capture '
+        'the removed success check never reappears before any capture '
         '(front waiting phase)', (tester) async {
       final cam = _idleMock();
       await tester.pumpWidget(
@@ -170,15 +170,15 @@ void main() {
       expect(
         find.byKey(successKey),
         findsNothing,
-        reason: 'the success/flip overlay is a front-to-back affordance only; '
-            'it must not appear on the front waiting phase',
+        reason: 'the success check was removed and must not reappear on the '
+            'front waiting phase',
       );
 
       await _dispose(tester);
     });
 
     testWidgets(
-        'does NOT show the transition feedback once the back is actively '
+        'the removed success check never reappears once the back is actively '
         'scanning (extractingBack phase)', (tester) async {
       final cam = _idleMock();
       await tester.pumpWidget(
@@ -189,8 +189,8 @@ void main() {
       expect(
         find.byKey(successKey),
         findsNothing,
-        reason: 'the overlay dismisses when back scanning is active; it is a '
-            'transition affordance, not a back-capture overlay',
+        reason: 'the success check was removed and must not reappear when back '
+            'scanning is active',
       );
 
       await _dispose(tester);

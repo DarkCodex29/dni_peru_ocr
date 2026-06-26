@@ -484,6 +484,7 @@ class DniScannerState extends State<DniScanner>
     if (_captureState is DniCaptureInFlight) {
       _countdownTicker?.cancel();
       _countdownTicker = null;
+      if (mounted) setState(() {});
       unawaited(_fireCapture(signal));
       return;
     }
@@ -1001,6 +1002,7 @@ class DniScannerState extends State<DniScanner>
             ),
             if (_captureState is DniCaptureCountingDown)
               Positioned.fill(
+                key: const Key('dni_scanner_countdown_counter'),
                 child: IgnorePointer(
                   child: Center(
                     child: _CountdownCounter(
@@ -1726,12 +1728,6 @@ class _FlipDocumentBannerState extends State<_FlipDocumentBanner>
                 mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  if (widget.visible) ...const [
-                    _TransitionSuccessCheck(
-                      key: Key('dni_scanner_transition_success_check'),
-                    ),
-                    SizedBox(width: 10),
-                  ],
                   RotationTransition(
                     turns: _rotate,
                     child: const Icon(
@@ -1757,57 +1753,6 @@ class _FlipDocumentBannerState extends State<_FlipDocumentBanner>
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Small green success mark shown in the front-to-back transition banner to
-/// confirm the front photo was captured before the user flips the document.
-/// Plays a brief scale-in so the confirmation feels intentional.
-class _TransitionSuccessCheck extends StatefulWidget {
-  const _TransitionSuccessCheck({super.key});
-
-  @override
-  State<_TransitionSuccessCheck> createState() =>
-      _TransitionSuccessCheckState();
-}
-
-class _TransitionSuccessCheckState extends State<_TransitionSuccessCheck>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pop;
-
-  @override
-  void initState() {
-    super.initState();
-    _pop = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 360),
-    )..forward();
-  }
-
-  @override
-  void dispose() {
-    _pop.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: CurvedAnimation(parent: _pop, curve: Curves.easeOutBack),
-      child: Container(
-        width: 26,
-        height: 26,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          shape: BoxShape.circle,
-        ),
-        child: const Icon(
-          Icons.check_rounded,
-          color: Color(0xFF2E7D32),
-          size: 18,
         ),
       ),
     );
