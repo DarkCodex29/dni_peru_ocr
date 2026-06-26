@@ -5,8 +5,10 @@ import 'package:dni_peru_ocr/dni_peru_ocr.dart';
 
 void main() {
   group('CameraOverlayTuning — invariants', () {
-    test('autoCaptureMs is the canonical 1.5s countdown', () {
-      expect(CameraOverlayTuning.autoCaptureMs, 1500);
+    test('autoCaptureMs is the canonical 3s countdown', () {
+      // Raised from 1.5s to 3s so the centered 3-2-1 counter maps to real
+      // seconds and gives the user more time to stabilize for a sharper photo.
+      expect(CameraOverlayTuning.autoCaptureMs, 3000);
     });
 
     test('gracePeriodMs is shorter than autoCaptureMs', () {

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +23,7 @@ import '../../lookup/models/dni_data.dart';
 import '../../lookup/models/dni_lookup_result.dart';
 import '../../lookup/services/dni_lookup_service.dart';
 import '../../infrastructure/sensors_motion_gate.dart';
+import '../camera_overlay_logic.dart';
 import '../controllers/dni_camera_controller.dart';
 import '../document_validator.dart';
 import '../image_quality_gate.dart';
@@ -85,7 +85,7 @@ class DniScanner extends StatefulWidget {
     this.orchestrator,
     this.motionGate,
     this.imageQualityGate,
-    this.autoCaptureMs = 1500,
+    this.autoCaptureMs = CameraOverlayTuning.autoCaptureMs,
     this.gracePeriodMs = 600,
     this.minStableFrames = 3,
     this.manualFallbackMs = 30000,
@@ -515,7 +515,6 @@ class DniScannerState extends State<DniScanner>
         borderColor: Colors.white,
         accentColor: Colors.white,
         overlayColor: const Color(0x99000000),
-        countdownProgress: _countdownProgress,
       );
 
   @visibleForTesting
@@ -974,11 +973,23 @@ class DniScannerState extends State<DniScanner>
                     borderColor: theme.white,
                     accentColor: _isExtracting() ? theme.success : theme.white,
                     overlayColor: theme.overlayDark,
-                    countdownProgress: _countdownProgress,
                   ),
                 ),
               ),
             ),
+            if (_captureState is DniCaptureCountingDown)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Center(
+                    child: _CountdownCounter(
+                      digit: countdownDigitFromProgress(
+                        _countdownProgress,
+                        widget.autoCaptureMs,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (_focusIndicator != null)
               Positioned(
                 left: _focusIndicator!.dx - 36,
@@ -1338,61 +1349,66 @@ class _ScannerFlashToggle extends StatelessWidget {
   }
 }
 
-/// Strokes a clockwise-filling rounded border around [rect] as the
-/// auto-capture countdown progresses ([progress] 0 → 1). Draws nothing when
-/// [progress] is zero so the ring stays hidden while scanning. Ported from the
-/// overlay removed with `DniCameraMask` in PR5 so the countdown is visible
-/// again in the live `_HolePainter`.
+/// Maps the auto-capture countdown [progress] (0 → 1) to the digit shown in
+/// the centered 3-2-1 counter. [totalMs] is the dwell duration, so the
+/// remaining time is `totalMs * (1 - progress)` and the digit is the ceiling
+/// of the remaining whole seconds, clamped to 1..3 so the user always sees a
+/// digit through the final tick before the shutter fires.
 @visibleForTesting
-void paintDniCountdownRing(
-  Canvas canvas, {
-  required Rect rect,
-  required double progress,
-  required Color color,
-}) {
+int countdownDigitFromProgress(double progress, int totalMs) {
   final clamped = progress.clamp(0.0, 1.0);
-  if (clamped <= 0) return;
+  // Round to whole ms first so exact-second boundaries (e.g. 2000ms remaining)
+  // are not pushed up a digit by floating-point dust from the progress ratio.
+  final remainingMs = (totalMs * (1 - clamped)).round();
+  final digit = (remainingMs / 1000).ceil();
+  return digit.clamp(1, 3);
+}
 
-  final l = rect.left;
-  final t = rect.top;
-  final r = rect.right;
-  final b = rect.bottom;
-  final w = rect.width;
-  final h = rect.height;
+/// Centered 3-2-1 auto-capture counter rendered in smoke white over the dark
+/// overlay. Each digit change plays a short scale-in + fade so the countdown
+/// feels intentional without being flashy.
+class _CountdownCounter extends StatelessWidget {
+  const _CountdownCounter({required this.digit});
 
-  final perimeter = 2 * (w + h);
-  var remaining = perimeter * clamped;
+  /// Smoke white, kept slightly off pure white for a softer premium feel while
+  /// staying high-contrast against the dark overlay.
+  static const Color _smokeWhite = Color(0xFFF5F5F5);
 
-  final path = Path()..moveTo(l, t);
+  final int digit;
 
-  final seg1 = math.min(remaining, w);
-  path.lineTo(l + seg1, t);
-  remaining -= seg1;
-
-  if (remaining > 0) {
-    final seg2 = math.min(remaining, h);
-    path.lineTo(r, t + seg2);
-    remaining -= seg2;
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutBack,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.7, end: 1.0).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: Text(
+        '$digit',
+        key: ValueKey<int>(digit),
+        style: const TextStyle(
+          color: _smokeWhite,
+          fontSize: 96,
+          fontWeight: FontWeight.w700,
+          height: 1,
+          shadows: [
+            Shadow(
+              color: Color(0x99000000),
+              blurRadius: 16,
+            ),
+          ],
+        ),
+      ),
+    );
   }
-  if (remaining > 0) {
-    final seg3 = math.min(remaining, w);
-    path.lineTo(r - seg3, b);
-    remaining -= seg3;
-  }
-  if (remaining > 0) {
-    final seg4 = math.min(remaining, h);
-    path.lineTo(l, b - seg4);
-  }
-
-  canvas.drawPath(
-    path,
-    Paint()
-      ..color = color
-      ..strokeWidth = 3.5
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round,
-  );
 }
 
 class _HolePainter extends CustomPainter {
@@ -1402,7 +1418,6 @@ class _HolePainter extends CustomPainter {
     required this.borderColor,
     required this.accentColor,
     required this.overlayColor,
-    this.countdownProgress = 0,
   }) : super(repaint: pulse);
 
   final Size holeSize;
@@ -1410,7 +1425,6 @@ class _HolePainter extends CustomPainter {
   final Color borderColor;
   final Color accentColor;
   final Color overlayColor;
-  final double countdownProgress;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1497,13 +1511,6 @@ class _HolePainter extends CustomPainter {
       Offset(hole.right - 20, scanY),
       scanLine,
     );
-
-    paintDniCountdownRing(
-      canvas,
-      rect: hole,
-      progress: countdownProgress,
-      color: accentColor,
-    );
   }
 
   @override
@@ -1511,8 +1518,7 @@ class _HolePainter extends CustomPainter {
     return old.holeSize != holeSize ||
         old.borderColor != borderColor ||
         old.accentColor != accentColor ||
-        old.overlayColor != overlayColor ||
-        old.countdownProgress != countdownProgress;
+        old.overlayColor != overlayColor;
   }
 }
 
