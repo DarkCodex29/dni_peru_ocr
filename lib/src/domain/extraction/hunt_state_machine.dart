@@ -45,6 +45,10 @@ class HuntStateMachine {
 
   HuntPhase get phase => _phase;
 
+  // TEMP DIAG (#5453): expose the idle-frame counter so the live frame path
+  // can log gate progress on device. Remove with the diagnostics below.
+  int get debugIdleFrames => _idleFrames;
+
   HuntSignal recordFrame({
     required DocumentSide detectedSide,
     required bool addedNewField,
