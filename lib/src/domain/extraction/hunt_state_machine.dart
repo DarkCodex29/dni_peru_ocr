@@ -98,11 +98,34 @@ class HuntStateMachine {
           _lastFilledFields = filledFields;
           return HuntSignal.backDetected;
         }
-        // In waitingBack a genuine BACK field would already have advanced the
-        // phase above, so any addedNewField here is a STALE non-back re-read
-        // (typically front fields). It must NOT reset idle, otherwise the
-        // machine never reaches the threshold and the manual escape never
-        // fires — the reverso latch observed on device (#5461).
+        // The Peru DNI back carries almost no OCR-able text, so the back
+        // anchor (DONACIÓN DE ÓRGANOS / CONSTANCIA DE SUFRAGIO) is frequently
+        // never confirmed and detectedSide stays `unknown`. The owner decision
+        // (#5482) is that the back must AUTO-CAPTURE on data stability like the
+        // front, without depending on confirming back-side OCR text. The
+        // wrong-side risk (capturing the front again when the user has NOT
+        // flipped) is gated behind the FLIPPED signal: detectedSide is no
+        // longer `front`. While the front is in view its strong anchors
+        // (REPÚBLICA DEL PERÚ, DNI+8, DOCUMENTO NACIONAL…) keep matching, so
+        // `front` here means "still showing the front" — never auto-capture.
+        // Only once the front anchors leave the frame (detectedSide != front)
+        // AND the carried-over data plateau stabilizes above the floor does a
+        // genuine flip auto-capture. A near-empty plateau stays below the
+        // floor and falls through to the manual escape below.
+        if (detectedSide != DocumentSide.front &&
+            filledFields >= minFieldsForStableCapture) {
+          if (_isStableCaptureReady(filledFields)) {
+            _phase = HuntPhase.extractingBack;
+            return HuntSignal.backCaptureReady;
+          }
+          return HuntSignal.none;
+        }
+        // Either the front is still in view (wrong side — never auto-capture)
+        // or the flipped view is still below the data floor (near-empty
+        // frames — not a stabilized document). Any addedNewField here is a
+        // STALE non-back re-read (front fields). It must NOT reset idle,
+        // otherwise the machine never reaches the threshold and the manual
+        // escape never fires — the reverso latch observed on device (#5461).
         return _advanceWaitingIdle(resetsIdleOnNewField: false);
 
       case HuntPhase.extractingBack:

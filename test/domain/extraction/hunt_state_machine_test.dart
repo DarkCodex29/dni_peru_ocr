@@ -612,6 +612,96 @@ void main() {
       });
     });
 
+    group('back auto-capture on stability when flipped (#5482)', () {
+      test('flipped back (side != front) with a stable data plateau above the '
+          'floor auto-captures via backCaptureReady, NOT recoverManual', () {
+        // Device truth (S22): the Peru DNI back carries almost no OCR-able
+        // text, so the side detector never confirms the back anchor and
+        // detectedSide stays `unknown`. The user HAS flipped (the front
+        // anchors left the frame, so detectedSide is no longer `front`) and
+        // the carried-over front fields plateau (e.g. 11/19) stays stable.
+        // This genuine flip must AUTO-CAPTURE, not fall to the manual escape.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Flipped to the back: detectedSide is `unknown` (sparse back, the
+        // front anchors are gone) and the front's fields are carried over and
+        // stable at 11.
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 5; i++) {
+          signal = machine.recordFrame(
+            detectedSide: DocumentSide.unknown,
+            addedNewField: false,
+            filledFields: 11,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('SAFETY: NOT flipped (side == front, user still showing the front) '
+          'does NOT emit backCaptureReady even with a stable plateau', () {
+        // The wrong-side risk: the user has not flipped, so the front anchors
+        // keep matching and detectedSide stays `front`. Auto-capturing here
+        // would photograph the front again. The machine must NOT emit
+        // backCaptureReady; it falls back to the manual/idle path as before.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Still showing the FRONT: detectedSide == front, fields stable at 11.
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 8; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.front,
+              addedNewField: false,
+              filledFields: 11,
+            ),
+        ];
+        // Never auto-captures the wrong side, and still falls back to the
+        // manual escape so the user is never stranded.
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(signals, contains(HuntSignal.recoverManual));
+      });
+
+      test('SAFETY: flipped but data still below the floor (near-empty frames) '
+          'does NOT auto-capture and still escapes to recoverManual', () {
+        // A genuinely flipped but data-starved view (filled below the floor)
+        // must not auto-capture garbage; the existing idle escape to manual
+        // still fires. This is the case the older escape tests exercise
+        // (filled defaults to 0).
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        expect(signal, HuntSignal.recoverManual);
+      });
+    });
+
     test('advanceToDone moves to done phase', () {
       final machine = HuntStateMachine();
       _seedFrontPhaseComplete(machine);
