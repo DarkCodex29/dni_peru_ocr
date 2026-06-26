@@ -108,17 +108,26 @@ class HuntStateMachine {
         // longer `front`. While the front is in view its strong anchors
         // (REPÚBLICA DEL PERÚ, DNI+8, DOCUMENTO NACIONAL…) keep matching, so
         // `front` here means "still showing the front" — never auto-capture.
-        // Only once the front anchors leave the frame (detectedSide != front)
-        // AND the carried-over data plateau stabilizes above the floor does a
-        // genuine flip auto-capture. A near-empty plateau stays below the
-        // floor and falls through to the manual escape below.
+        //
+        // UNIFIED LATCH (#5494): a single genuine flipped frame
+        // (detectedSide != front AND filled >= floor) COMMITS the back to
+        // extractingBack, exactly like the front commits on the first
+        // front-detected frame in waitingFront. After this one-time latch the
+        // machine fires on PURE STABILITY through the extractingBack branch
+        // with no per-frame side re-check, so a subsequent ambiguous frame
+        // that momentarily re-reads `front` (a stale carried-over front field)
+        // can NO LONGER drop the machine back to the manual escape — the
+        // drop-back failure observed on device. The WRONG-SIDE INVARIANT is
+        // preserved because the latch ENTRY still requires detectedSide !=
+        // front: while the strong front anchors keep matching the back never
+        // latches. A near-empty plateau stays below the floor and falls
+        // through to the manual escape below.
         if (detectedSide != DocumentSide.front &&
             filledFields >= minFieldsForStableCapture) {
-          if (_isStableCaptureReady(filledFields)) {
-            _phase = HuntPhase.extractingBack;
-            return HuntSignal.backCaptureReady;
-          }
-          return HuntSignal.none;
+          _phase = HuntPhase.extractingBack;
+          _idleFrames = 0;
+          _lastFilledFields = filledFields;
+          return HuntSignal.backDetected;
         }
         // Either the front is still in view (wrong side — never auto-capture)
         // or the flipped view is still below the data floor (near-empty

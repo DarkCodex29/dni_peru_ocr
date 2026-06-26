@@ -702,6 +702,134 @@ void main() {
       });
     });
 
+    group('back latches once like front (#5494 unified trigger)', () {
+      test('ONE genuine flipped frame latches into extractingBack; later '
+          'ambiguous (front) frames do NOT drop it back to recoverManual and '
+          'stability still fires backCaptureReady', () {
+        // Device truth: a single genuine flipped frame (front anchors gone,
+        // data above the floor) should COMMIT the back to the stability path,
+        // exactly like the front latches into extractingFront on the first
+        // front-detected frame. Subsequent ambiguous frames that momentarily
+        // read `front` (stale re-reads) must NOT pull the machine back to the
+        // waiting/idle escape. The old per-frame re-check fell to
+        // recoverManual on the first ambiguous frame after the flip.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // ONE genuine flipped frame above the floor.
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        expect(
+          machine.phase,
+          HuntPhase.extractingBack,
+          reason: 'a single genuine flipped frame must latch into '
+              'extractingBack like the front does',
+        );
+        // Now ambiguous frames arrive: some momentarily read `front` (stale
+        // re-reads of carried-over front fields). These must NOT drop the
+        // latch back to a waiting phase or emit recoverManual.
+        final signals = <HuntSignal>[];
+        for (var i = 0; i < 6; i++) {
+          signals.add(
+            machine.recordFrame(
+              detectedSide:
+                  i.isEven ? DocumentSide.front : DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 11,
+            ),
+          );
+        }
+        expect(
+          signals,
+          isNot(contains(HuntSignal.recoverManual)),
+          reason: 'once latched, ambiguous frames must not surface the manual '
+              'escape',
+        );
+        expect(
+          signals,
+          contains(HuntSignal.backCaptureReady),
+          reason: 'the latched back fires on pure stability via the same path '
+              'as the front',
+        );
+        expect(machine.phase, HuntPhase.extractingBack);
+      });
+
+      test('SAFETY: while every frame still reads FRONT (never flipped) the '
+          'back NEVER latches and NEVER emits backCaptureReady', () {
+        // The wrong-side invariant (#5457/#5484): if the user has NOT flipped,
+        // the front anchors keep matching and detectedSide stays `front`. The
+        // latch entry must require detectedSide != front, so the back never
+        // commits and never auto-captures the front again.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 10; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.front,
+              addedNewField: false,
+              filledFields: 11,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(
+          machine.phase,
+          isNot(HuntPhase.extractingBack),
+          reason: 'showing the front must never latch the back',
+        );
+        // Still surfaces the manual fallback so the user is never stranded.
+        expect(signals, contains(HuntSignal.recoverManual));
+      });
+
+      test('SAFETY: a flipped frame still BELOW the floor does NOT latch '
+          '(near-empty view is not a stabilized document)', () {
+        // The latch entry requires floorMet as well as side-safe. A flipped
+        // but data-starved view must not commit the back.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 3,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        expect(
+          machine.phase,
+          HuntPhase.waitingBack,
+          reason: 'below the floor the back must stay waiting, not latch',
+        );
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        expect(signal, HuntSignal.recoverManual);
+      });
+    });
+
     test('advanceToDone moves to done phase', () {
       final machine = HuntStateMachine();
       _seedFrontPhaseComplete(machine);
