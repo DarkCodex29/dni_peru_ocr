@@ -61,6 +61,7 @@ export 'src/presentation/controllers/dni_camera_controller.dart';
 export 'src/presentation/orchestrators/dni_capture_orchestrator.dart';
 export 'src/presentation/orchestrators/dni_capture_state.dart';
 export 'src/presentation/theme/kyc_theme.dart';
+export 'src/presentation/widgets/dni_scan_hints.dart';
 export 'src/presentation/widgets/dni_scanner.dart';
 export 'src/lookup/models/dni_data.dart';
 export 'src/lookup/models/dni_lookup_result.dart';

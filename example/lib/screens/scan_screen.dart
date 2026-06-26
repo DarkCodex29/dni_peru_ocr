@@ -190,6 +190,7 @@ class _ScanScreenState extends State<ScanScreen> {
         fields: widget.fields ?? DniFields.full(),
         manualFallbackMs: 30000,
         flipDocumentText: 'Voltea tu DNI',
+        scanHints: const DniScanHints(),
         onScanComplete: _onScanComplete,
       ),
     );

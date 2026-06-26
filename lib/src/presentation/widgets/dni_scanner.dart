@@ -31,6 +31,7 @@ import '../lighting_gate.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
 import '../theme/kyc_theme.dart';
+import 'dni_scan_hints.dart';
 
 enum DniCaptureMode { auto, manual, hybrid }
 
@@ -90,6 +91,7 @@ class DniScanner extends StatefulWidget {
     this.minStableFrames = 3,
     this.manualFallbackMs = 30000,
     this.flipDocumentText = 'Voltea tu DNI',
+    this.scanHints = const DniScanHints(),
   }) : assert(
           (isBackSide == null && onScanComplete != null) ||
               (isBackSide != null && onSideCaptured != null),
@@ -142,6 +144,12 @@ class DniScanner extends StatefulWidget {
   /// them to flip the document. Configurable so a published-library consumer
   /// can localize or reword it. Defaults to neutral Spanish.
   final String flipDocumentText;
+
+  /// Rotating bottom-of-screen guidance hints per scanning phase. The copy is
+  /// generic action guidance only (focus, hold still, flip) and never names a
+  /// specific DNI field. Configurable so a published-library consumer can
+  /// localize or reword it. Defaults to neutral Spanish.
+  final DniScanHints scanHints;
 
   @override
   State<DniScanner> createState() => DniScannerState();
@@ -926,35 +934,16 @@ class DniScannerState extends State<DniScanner>
     }
   }
 
-  static const List<String> _waitingFrontHints = [
-    'Coloque el frente del DNI dentro del marco',
-    'Verifique que los nombres y las fechas sean visibles',
-    'Use buena iluminación y evite reflejos',
-  ];
-  static const List<String> _extractingFrontHints = [
-    'Mantenga el documento quieto',
-    'Acerque el documento si los datos pequeños no se ven',
-    'No cubra la zona inferior con los dedos',
-  ];
-  static const List<String> _waitingBackHints = [
-    'Voltee el documento',
-    'Centre la dirección y los datos del reverso',
-    'La cuadrícula de sufragio debe verse completa',
-  ];
-  static const List<String> _extractingBackHints = [
-    'Mantenga el documento quieto',
-    'Muestre el grupo de votación y la donación',
-    'Si demora, acerque un poco más el documento',
-  ];
-
   String _sideHint() {
+    final hints = widget.scanHints;
     final list = switch (_stateMachine.phase) {
-      HuntPhase.waitingFront => _waitingFrontHints,
-      HuntPhase.extractingFront => _extractingFrontHints,
-      HuntPhase.waitingBack => _waitingBackHints,
-      HuntPhase.extractingBack => _extractingBackHints,
-      HuntPhase.done => const ['Procesando…'],
+      HuntPhase.waitingFront => hints.waitingFront,
+      HuntPhase.extractingFront => hints.extractingFront,
+      HuntPhase.waitingBack => hints.waitingBack,
+      HuntPhase.extractingBack => hints.extractingBack,
+      HuntPhase.done => [hints.processing],
     };
+    if (list.isEmpty) return '';
     return list[_hintIndex % list.length];
   }
 
@@ -1652,6 +1641,7 @@ class _ScannerHint extends StatelessWidget {
           ),
           child: Text(
             hint,
+            key: const Key('dni_scanner_hint'),
             textAlign: TextAlign.center,
             style: TextStyle(
               color: theme.white,

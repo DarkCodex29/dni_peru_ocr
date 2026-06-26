@@ -67,7 +67,11 @@ _MockCameraController _idleMock() {
   return mock;
 }
 
-Widget _buildScanner(CameraController cam, {required HuntPhase phase}) =>
+Widget _buildScanner(
+  CameraController cam, {
+  required HuntPhase phase,
+  DniScanHints? scanHints,
+}) =>
     MaterialApp(
       home: KycThemeProvider(
         theme: KycTheme.defaults(),
@@ -78,6 +82,7 @@ Widget _buildScanner(CameraController cam, {required HuntPhase phase}) =>
             stateMachine: HuntStateMachine(initialPhase: phase),
             motionGate: _StillMotionGate(),
             imageQualityGate: _PassQualityGate(),
+            scanHints: scanHints ?? const DniScanHints(),
           ),
         ),
       ),
@@ -89,6 +94,26 @@ Future<void> _dispose(WidgetTester tester) async {
   await tester.pump(Duration.zero);
 }
 
+/// Specific DNI field names (and their printed-label fragments) that must
+/// NEVER appear in a bottom guidance hint. The side a field belongs to is not
+/// knowable across DNI versions, so naming any field in a hint is an invalid
+/// assumption (#5486).
+const _forbiddenFieldTerms = <String>[
+  'grupo de votación',
+  'votación',
+  'sufragio',
+  'donación',
+  'cuadrícula',
+  'nombres',
+  'apellidos',
+  'fechas',
+];
+
+bool _containsForbiddenTerm(String hint) {
+  final lower = hint.toLowerCase();
+  return _forbiddenFieldTerms.any(lower.contains);
+}
+
 void main() {
   setUpAll(() {
     registerFallbackValue(FlashMode.off);
@@ -97,96 +122,78 @@ void main() {
     registerFallbackValue(ExposureMode.auto);
   });
 
-  group('DniScanner flip-document banner', () {
-    testWidgets('shows the flip instruction text when waiting for the back side',
-        (tester) async {
-      final cam = _idleMock();
-      await tester.pumpWidget(
-        _buildScanner(cam, phase: HuntPhase.waitingBack),
-      );
-      await tester.pump(const Duration(milliseconds: 350));
+  group('DniScanner bottom guidance never names a specific field (#5486)', () {
+    for (final phase in const [
+      HuntPhase.waitingFront,
+      HuntPhase.extractingFront,
+      HuntPhase.waitingBack,
+      HuntPhase.extractingBack,
+    ]) {
+      testWidgets('phase ${phase.name} renders only generic guidance',
+          (tester) async {
+        final cam = _idleMock();
+        await tester.pumpWidget(_buildScanner(cam, phase: phase));
+        await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.text('Voltea tu DNI'), findsWidgets);
+        final hintWidget =
+            tester.widget<Text>(find.byKey(const Key('dni_scanner_hint')));
+        final hint = hintWidget.data ?? '';
 
-      await _dispose(tester);
-    });
+        expect(
+          hint,
+          isNotEmpty,
+          reason: 'every scanning phase must surface a guidance hint',
+        );
+        expect(
+          _containsForbiddenTerm(hint),
+          isFalse,
+          reason: 'phase ${phase.name} hint "$hint" names a specific field; '
+              'bottom guidance must only guide the action, never a field',
+        );
 
-    testWidgets('renders the Material Orange gradient when waiting for the back',
-        (tester) async {
-      final cam = _idleMock();
-      await tester.pumpWidget(
-        _buildScanner(cam, phase: HuntPhase.waitingBack),
-      );
-      await tester.pump(const Duration(milliseconds: 350));
+        await _dispose(tester);
+      });
+    }
+  });
 
-      final containers = tester.widgetList<Container>(find.byType(Container));
-      LinearGradient? gradient;
-      for (final c in containers) {
-        final deco = c.decoration;
-        if (deco is BoxDecoration && deco.gradient is LinearGradient) {
-          gradient = deco.gradient as LinearGradient;
-          break;
-        }
+  group('DniScanHints default copy is generic and field-free (#5486)', () {
+    test('no default hint in any phase names a specific field', () {
+      const hints = DniScanHints();
+      final all = [
+        ...hints.waitingFront,
+        ...hints.extractingFront,
+        ...hints.waitingBack,
+        ...hints.extractingBack,
+      ];
+      expect(all, isNotEmpty);
+      for (final hint in all) {
+        expect(
+          _containsForbiddenTerm(hint),
+          isFalse,
+          reason: 'default hint "$hint" names a specific field',
+        );
       }
-      expect(gradient, isNotNull,
-          reason: 'Flip banner should paint a LinearGradient');
-      expect(gradient!.colors, contains(const Color(0xFFFB8C00)));
-      expect(gradient.colors, contains(const Color(0xFFF57C00)));
-
-      await _dispose(tester);
     });
+  });
 
-    testWidgets('animates the flip icon with a repeating RotationTransition',
-        (tester) async {
+  group('DniScanHints is configurable for a published library (#5486)', () {
+    testWidgets('renders a consumer-provided front waiting hint', (tester) async {
+      const custom = 'Place the front of your ID inside the frame';
       final cam = _idleMock();
       await tester.pumpWidget(
-        _buildScanner(cam, phase: HuntPhase.waitingBack),
+        _buildScanner(
+          cam,
+          phase: HuntPhase.waitingFront,
+          scanHints: const DniScanHints(waitingFront: [custom]),
+        ),
       );
       await tester.pump(const Duration(milliseconds: 50));
 
-      final rotations = tester
-          .widgetList<RotationTransition>(find.byType(RotationTransition));
-      expect(rotations, isNotEmpty,
-          reason: 'Flip banner should contain a RotationTransition');
-      expect(rotations.first.turns.isAnimating, isTrue,
-          reason: 'The rotation controller should repeat');
+      final hintWidget =
+          tester.widget<Text>(find.byKey(const Key('dni_scanner_hint')));
+      expect(hintWidget.data, custom);
 
       await _dispose(tester);
-    });
-
-    testWidgets('collapses the banner opacity while waiting for the front side',
-        (tester) async {
-      final cam = _idleMock();
-      await tester.pumpWidget(
-        _buildScanner(cam, phase: HuntPhase.waitingFront),
-      );
-      await tester.pump(const Duration(milliseconds: 350));
-
-      final opacities = tester
-          .widgetList<AnimatedOpacity>(find.byType(AnimatedOpacity))
-          .toList();
-      expect(opacities, isNotEmpty,
-          reason: 'Flip banner uses an AnimatedOpacity to show/hide');
-      expect(opacities.any((o) => o.opacity == 0.0), isTrue,
-          reason: 'On the front side the flip banner opacity must be 0');
-
-      await _dispose(tester);
-    });
-
-    testWidgets('disposes its AnimationController without leaking a ticker',
-        (tester) async {
-      final cam = _idleMock();
-      await tester.pumpWidget(
-        _buildScanner(cam, phase: HuntPhase.waitingBack),
-      );
-      await tester.pump(const Duration(milliseconds: 50));
-
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(Duration.zero);
-      await tester.pump(Duration.zero);
-
-      expect(tester.binding.transientCallbackCount, equals(0),
-          reason: 'All AnimationControllers should be disposed');
     });
   });
 }
