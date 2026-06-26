@@ -420,6 +420,16 @@ class DniScannerState extends State<DniScanner>
       return;
     }
     _frameCaptureable = true;
+    // Idempotent entry: once a countdown is running, repeated capture-ready
+    // frames must NOT restart it. Resetting the anchor/elapsed and the ticker
+    // every frame collapses synthetic progress back to ~0, so the ring never
+    // fills and auto-capture only fires by chance. Keep the live anchor and
+    // let the existing ticker keep accumulating progress toward 1.0.
+    if (_captureState is CountingDownWithAnchor) {
+      _advanceCapture();
+      if (mounted) setState(() {});
+      return;
+    }
     _countdownAnchor = DateTime.now();
     _countdownElapsedMs = 0;
     _advanceCapture();
