@@ -139,6 +139,16 @@ class DniCameraController {
     _manualFallbackTimer?.cancel();
   }
 
+  /// Surfaces manual-assisted capture on demand, reusing the same transition
+  /// as the 30s manual fallback. Used to escape a stuck waiting phase without
+  /// auto-capturing an unconfirmed side.
+  void activateManualFallback() {
+    if (_isDisposed) return;
+    _updateState(
+      _orchestrator.onManualFallbackTimeout(_captureStateNotifier.value),
+    );
+  }
+
   /// Triggers a manual capture.
   void captureManually() {
     if (_isDisposed) return;

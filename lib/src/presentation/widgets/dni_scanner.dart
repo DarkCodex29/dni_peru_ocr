@@ -398,6 +398,13 @@ class DniScannerState extends State<DniScanner>
         } else {
           _onCaptureReady(signal);
         }
+      case HuntSignal.recoverManual:
+        // A waiting phase stayed stuck because the side anchor was never
+        // confirmed. Escape the latch by offering manual-assisted capture
+        // instead of auto-capturing an unconfirmed side.
+        _frameCaptureable = false;
+        _cameraController.activateManualFallback();
+        _markCaptureReady();
       case HuntSignal.frontDetected:
       case HuntSignal.backDetected:
       case HuntSignal.none:

@@ -139,6 +139,69 @@ void main() {
       expect(signal, HuntSignal.backCaptureReady);
     });
 
+    group('waiting-phase stuck escape (#5457 latch fix)', () {
+      test('escapes a stuck waitingBack via idle with a recovery signal, '
+          'NOT a blind back-capture', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Side detector never confirms the back anchor (unknown forever).
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.recoverManual);
+      });
+
+      test('SAFETY: escaping waitingBack with an unconfirmed side does NOT '
+          'emit backCaptureReady', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+      });
+
+      test('escapes a stuck waitingFront via idle with a recovery signal', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.recoverManual);
+      });
+
+      test('REGRESSION: confirmed back anchor still advances to extractingBack '
+          'and reaches backCaptureReady (happy path intact)', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 2);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(detectedSide: backAnchor, addedNewField: false);
+        expect(machine.phase, HuntPhase.extractingBack);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('REGRESSION: an added field resets the waiting idle counter so a '
+          'productive wait is not cut short', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.none);
+      });
+    });
+
     test('advanceToDone moves to done phase', () {
       final machine = HuntStateMachine();
       _seedFrontPhaseComplete(machine);

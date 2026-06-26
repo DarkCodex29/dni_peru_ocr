@@ -14,6 +14,11 @@ enum HuntSignal {
   frontCaptureReady,
   backDetected,
   backCaptureReady,
+
+  /// A waiting phase stayed stuck (the side anchor was never confirmed) for the
+  /// idle threshold. The machine escapes the latch by handing off to
+  /// manual-assisted capture instead of auto-capturing an unconfirmed side.
+  recoverManual,
 }
 
 class HuntStateMachine {
@@ -61,7 +66,7 @@ class HuntStateMachine {
           _idleFrames = 0;
           return HuntSignal.frontDetected;
         }
-        return HuntSignal.none;
+        return _advanceWaitingIdle(addedNewField);
 
       case HuntPhase.extractingFront:
         if (_isComplete(filledFields, frontCompleteFieldsCount)) {
@@ -83,7 +88,7 @@ class HuntStateMachine {
           _idleFrames = 0;
           return HuntSignal.backDetected;
         }
-        return HuntSignal.none;
+        return _advanceWaitingIdle(addedNewField);
 
       case HuntPhase.extractingBack:
         if (_isComplete(filledFields, backCompleteFieldsCount)) {
@@ -102,6 +107,19 @@ class HuntStateMachine {
       case HuntPhase.done:
         return HuntSignal.none;
     }
+  }
+
+  HuntSignal _advanceWaitingIdle(bool addedNewField) {
+    if (addedNewField) {
+      _idleFrames = 0;
+      return HuntSignal.none;
+    }
+    _idleFrames++;
+    if (_idleFrames >= idleFramesThreshold) {
+      _idleFrames = 0;
+      return HuntSignal.recoverManual;
+    }
+    return HuntSignal.none;
   }
 
   int _effectiveThreshold(int filledFields) {
