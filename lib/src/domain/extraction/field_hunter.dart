@@ -173,7 +173,7 @@ class FieldHunter {
     final existing = bucket[normalized];
     if (existing == null) {
       bucket[normalized] = _Vote(display: cleaned, count: 1);
-      DniLogger.info(
+      DniLogger.verbose(
         'FieldHunter',
         'NEW ${key.name} = "$cleaned" (vote 1)',
       );
@@ -183,7 +183,7 @@ class FieldHunter {
     if (_preferDisplay(key, existing.display, cleaned)) {
       existing.display = cleaned;
     }
-    DniLogger.debug(
+    DniLogger.verbose(
       'FieldHunter',
       '+1 ${key.name} = "${existing.display}" (votes=${existing.count})',
     );
@@ -222,7 +222,7 @@ class FieldHunter {
   }
 
   void _logPartial(FieldExtractor extractor, ExtractedFields p) {
-    if (!DniLogger.isEnabled) return;
+    if (!DniLogger.isVerbose) return;
     final found = <String>[];
     if (p.documentNumber != null) found.add('docNum=${p.documentNumber}');
     if (p.firstName != null) found.add('firstName=${p.firstName}');
@@ -250,7 +250,7 @@ class FieldHunter {
       found.add('birthUbigeo=${p.birthUbigeoCode}');
     }
     if (found.isEmpty) return;
-    DniLogger.debug(
+    DniLogger.verbose(
       'FieldHunter',
       '${extractor.runtimeType} -> ${found.join(', ')}',
     );

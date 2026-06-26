@@ -346,7 +346,7 @@ class DniScannerState extends State<DniScanner>
       return;
     }
 
-    DniLogger.info(
+    DniLogger.verbose(
       'DniScanner',
       'raw OCR (${text.length} chars, ${recognized.blocks.length} blocks):\n$text',
     );
@@ -366,7 +366,7 @@ class DniScannerState extends State<DniScanner>
     );
 
     final total = widget.fields?.length ?? 19;
-    DniLogger.info(
+    DniLogger.verbose(
       'DniScanner',
       'side=$detectedSide addedNew=$addedNew phase=${_stateMachine.phase} '
           'signal=$signal filled=$filled/$total',
