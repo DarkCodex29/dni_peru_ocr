@@ -189,6 +189,7 @@ class _ScanScreenState extends State<ScanScreen> {
         controller: controller,
         fields: widget.fields ?? DniFields.full(),
         manualFallbackMs: 30000,
+        flipDocumentText: 'Voltea tu DNI',
         onScanComplete: _onScanComplete,
       ),
     );

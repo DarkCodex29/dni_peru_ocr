@@ -89,6 +89,7 @@ class DniScanner extends StatefulWidget {
     this.gracePeriodMs = 600,
     this.minStableFrames = 3,
     this.manualFallbackMs = 30000,
+    this.flipDocumentText = 'Voltea tu DNI',
   }) : assert(
           (isBackSide == null && onScanComplete != null) ||
               (isBackSide != null && onSideCaptured != null),
@@ -136,6 +137,11 @@ class DniScanner extends StatefulWidget {
   final int minStableFrames;
 
   final int manualFallbackMs;
+
+  /// Guidance shown to the user during the front-to-back transition, telling
+  /// them to flip the document. Configurable so a published-library consumer
+  /// can localize or reword it. Defaults to neutral Spanish.
+  final String flipDocumentText;
 
   @override
   State<DniScanner> createState() => DniScannerState();
@@ -1104,6 +1110,7 @@ class DniScannerState extends State<DniScanner>
               right: 0,
               child: _FlipDocumentBanner(
                 visible: _stateMachine.phase == HuntPhase.waitingBack,
+                guidanceText: widget.flipDocumentText,
               ),
             ),
           ],
@@ -1660,9 +1667,13 @@ class _ScannerHint extends StatelessWidget {
 }
 
 class _FlipDocumentBanner extends StatefulWidget {
-  const _FlipDocumentBanner({required this.visible});
+  const _FlipDocumentBanner({
+    required this.visible,
+    required this.guidanceText,
+  });
 
   final bool visible;
+  final String guidanceText;
 
   @override
   State<_FlipDocumentBanner> createState() => _FlipDocumentBannerState();
@@ -1725,6 +1736,12 @@ class _FlipDocumentBannerState extends State<_FlipDocumentBanner>
                 mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  if (widget.visible) ...const [
+                    _TransitionSuccessCheck(
+                      key: Key('dni_scanner_transition_success_check'),
+                    ),
+                    SizedBox(width: 10),
+                  ],
                   RotationTransition(
                     turns: _rotate,
                     child: const Icon(
@@ -1734,11 +1751,11 @@ class _FlipDocumentBannerState extends State<_FlipDocumentBanner>
                     ),
                   ),
                   const SizedBox(width: 10),
-                  const Flexible(
+                  Flexible(
                     child: Text(
-                      'Voltee el documento',
+                      widget.guidanceText,
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -1750,6 +1767,57 @@ class _FlipDocumentBannerState extends State<_FlipDocumentBanner>
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small green success mark shown in the front-to-back transition banner to
+/// confirm the front photo was captured before the user flips the document.
+/// Plays a brief scale-in so the confirmation feels intentional.
+class _TransitionSuccessCheck extends StatefulWidget {
+  const _TransitionSuccessCheck({super.key});
+
+  @override
+  State<_TransitionSuccessCheck> createState() =>
+      _TransitionSuccessCheckState();
+}
+
+class _TransitionSuccessCheckState extends State<_TransitionSuccessCheck>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pop;
+
+  @override
+  void initState() {
+    super.initState();
+    _pop = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _pop.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: CurvedAnimation(parent: _pop, curve: Curves.easeOutBack),
+      child: Container(
+        width: 26,
+        height: 26,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(
+          Icons.check_rounded,
+          color: Color(0xFF2E7D32),
+          size: 18,
         ),
       ),
     );
