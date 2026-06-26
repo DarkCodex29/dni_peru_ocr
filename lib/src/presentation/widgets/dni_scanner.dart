@@ -1100,7 +1100,11 @@ class DniScannerState extends State<DniScanner>
               left: 0,
               right: 0,
               child: _FlipDocumentBanner(
-                visible: _stateMachine.phase == HuntPhase.waitingBack,
+                visible: flipBannerVisible(
+                  phase: _stateMachine.phase,
+                  captureInFlight: _captureState is DniCaptureInFlight,
+                  twoSided: widget.isBackSide == null,
+                ),
                 guidanceText: widget.flipDocumentText,
               ),
             ),
@@ -1388,6 +1392,33 @@ int countdownDigitFromProgress(double progress, int totalMs) {
   final remainingMs = (totalMs * (1 - clamped)).round();
   final digit = (remainingMs / 1000).ceil();
   return digit.clamp(1, 3);
+}
+
+/// Whether the flip-document guidance banner should be visible (#5494).
+///
+/// The banner used to be gated only on `phase == waitingBack`, but that phase
+/// is reached only AFTER the slow Camera2 `takePicture`/crop completes. Between
+/// the front capture flash and `waitingBack` there is a DEAD WINDOW (the
+/// in-flight processing time) during which the user received no guidance — the
+/// paso1->paso2 gap (#5491). This widens the visibility so the flip guidance is
+/// also shown while the FRONT capture is in flight, giving continuous guidance
+/// from the flash through to back scanning.
+///
+/// It stays a pure visual gate: only [HuntPhase.waitingBack], or a front
+/// capture in flight ([HuntPhase.extractingFront] + [captureInFlight]) in
+/// two-sided mode, shows the banner. Single-side mode ([twoSided] == false) has
+/// no front-to-back transition, and an in-flight BACK capture is past the flip,
+/// so neither shows it.
+@visibleForTesting
+bool flipBannerVisible({
+  required HuntPhase phase,
+  required bool captureInFlight,
+  required bool twoSided,
+}) {
+  if (phase == HuntPhase.waitingBack) return true;
+  return twoSided &&
+      captureInFlight &&
+      phase == HuntPhase.extractingFront;
 }
 
 /// Honest side-progress ratio for the front/back indicator (#5494).
