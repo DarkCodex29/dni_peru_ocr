@@ -53,6 +53,7 @@ export 'src/infrastructure/fallback_quad_detector.dart';
 export 'src/infrastructure/dni_logger.dart';
 export 'src/infrastructure/input_image_converter.dart';
 export 'src/infrastructure/kyc_image_utils.dart';
+export 'src/infrastructure/opencv_quad_detector.dart';
 export 'src/infrastructure/tilt_calculator.dart';
 export 'src/presentation/camera_overlay_logic.dart';
 export 'src/presentation/document_validator.dart';
