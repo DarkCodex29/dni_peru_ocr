@@ -27,6 +27,7 @@ class HuntStateMachine {
     this.fastAdvanceThreshold = 14,
     this.minFieldsForFastAdvance = 12,
     this.minFieldsForStableCapture = 4,
+    this.backQuadDwellFrames = 6,
     this.frontCompleteFieldsCount,
     this.backCompleteFieldsCount,
     HuntPhase initialPhase = HuntPhase.waitingFront,
@@ -35,6 +36,22 @@ class HuntStateMachine {
   final int idleFramesThreshold;
   final int fastAdvanceThreshold;
   final int minFieldsForFastAdvance;
+
+  /// Sustained-frame dwell required before a quad-confirmed TEXTLESS back
+  /// auto-captures. Scoped to the back quad-latch path ONLY: it never affects
+  /// the front slow path or the waiting-phase manual escape, both of which keep
+  /// using [idleFramesThreshold].
+  ///
+  /// Calibrated from device truth (#5525): the Peru DNI back is textless, so
+  /// its dwell can only be satisfied by a sustained quad. On a real S22 capture
+  /// the quad held framing-valid cleanly for ~8 frames (~0.95s at the camera
+  /// cadence of ~118ms/processed-frame) before the hold ended, never reaching
+  /// the shared 18-frame [idleFramesThreshold] (~2.1s), so the reverso always
+  /// fell to manual. A dedicated, shorter dwell (6 frames ≈ 0.7s) is reliably
+  /// reachable in a human hold yet still requires sustained framing — a 1–2
+  /// frame quad blip never fires — and composes with the 3-second 3-2-1
+  /// countdown that follows the ready signal for a humane total back capture.
+  final int backQuadDwellFrames;
 
   /// Minimum distinct filled fields required before a stabilized plateau may
   /// auto-capture. Capture fires on DATA STABILITY (no new distinct field for
@@ -193,12 +210,21 @@ class HuntStateMachine {
     // OCR plateau without a quad never auto-captures. The idle dwell is
     // unchanged either way, so a sustained quad still has to hold for the
     // threshold — a single-frame quad blip never fires.
-    final framingFloorMet =
-        filledFields >= minFieldsForStableCapture || quadFramingValid;
+    final fieldsFloorMet = filledFields >= minFieldsForStableCapture;
+    final framingFloorMet = fieldsFloorMet || quadFramingValid;
     if (!framingFloorMet) {
       return false;
     }
-    return idle >= _effectiveThreshold(filledFields);
+    // A TEXTLESS back is framed by the quad ALONE (no OCR fields reach the
+    // field-count floor), so its dwell is governed by [backQuadDwellFrames]
+    // (#5525) — short enough to be reachable in a human hold. Any path that
+    // meets the field-count floor (the OCR-rich front-data back, or the front
+    // slow path) keeps the original [_effectiveThreshold] so the front and the
+    // manual escape are unaffected.
+    final threshold = (!fieldsFloorMet && quadFramingValid)
+        ? backQuadDwellFrames
+        : _effectiveThreshold(filledFields);
+    return idle >= threshold;
   }
 
   int _advanceExtractingIdle(int filledFields) {

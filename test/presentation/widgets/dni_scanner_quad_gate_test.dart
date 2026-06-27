@@ -74,6 +74,7 @@ Widget _buildScanner({
   required GlobalKey<DniScannerState> key,
   required bool isBackSide,
   int idleFramesBeforeCapture = 18,
+  int backQuadDwellFrames = 6,
 }) {
   return MaterialApp(
     home: KycThemeProvider(
@@ -84,6 +85,7 @@ Widget _buildScanner({
           controller: cam,
           isBackSide: isBackSide,
           idleFramesBeforeCapture: idleFramesBeforeCapture,
+          backQuadDwellFrames: backQuadDwellFrames,
           autoCaptureMs: 1500,
           gracePeriodMs: 600,
           minStableFrames: 2,
@@ -289,7 +291,7 @@ void main() {
           cam: cam,
           key: key,
           isBackSide: true,
-          idleFramesBeforeCapture: 3,
+          backQuadDwellFrames: 3,
         ),
       );
       await tester.pump();
@@ -424,7 +426,7 @@ void main() {
           cam: cam,
           key: key,
           isBackSide: true,
-          idleFramesBeforeCapture: 3,
+          backQuadDwellFrames: 3,
         ),
       );
       await tester.pump();

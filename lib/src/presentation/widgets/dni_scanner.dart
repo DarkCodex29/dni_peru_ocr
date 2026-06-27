@@ -83,6 +83,7 @@ class DniScanner extends StatefulWidget {
     this.onDniReady,
     this.onError,
     this.idleFramesBeforeCapture = 18,
+    this.backQuadDwellFrames = 6,
     this.holeWidth = 300,
     this.holeHeight = 220,
     this.captureMode = DniCaptureMode.auto,
@@ -124,6 +125,14 @@ class DniScanner extends StatefulWidget {
   final void Function(Object error, StackTrace stack)? onError;
 
   final int idleFramesBeforeCapture;
+
+  /// Sustained-frame dwell for a quad-confirmed TEXTLESS back before
+  /// auto-capture. Forwarded to [HuntStateMachine.backQuadDwellFrames] and
+  /// scoped to the back quad-latch path only; the front and the manual escape
+  /// keep using [idleFramesBeforeCapture]. Defaults to 6 (~0.7s at the camera
+  /// cadence), calibrated from device truth (#5525) so the reverso
+  /// auto-captures in a human hold instead of falling to manual.
+  final int backQuadDwellFrames;
   final double holeWidth;
   final double holeHeight;
 
@@ -244,6 +253,7 @@ class DniScannerState extends State<DniScanner>
     _stateMachine = widget.stateMachine ??
         HuntStateMachine(
           idleFramesThreshold: widget.idleFramesBeforeCapture,
+          backQuadDwellFrames: widget.backQuadDwellFrames,
           minFieldsForFastAdvance: stableFloor,
           minFieldsForStableCapture: stableFloor,
           frontCompleteFieldsCount: widget.fields?.frontCount,

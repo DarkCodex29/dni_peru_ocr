@@ -864,9 +864,12 @@ void main() {
         // The latch alone is not enough: the textless back has filled=0, so the
         // existing field-count stability gate would never emit the ready
         // signal. A sustained valid quad must satisfy the framing floor so the
-        // idle dwell can fire backCaptureReady — the trigger the device needs.
+        // back quad dwell can fire backCaptureReady — the trigger the device
+        // needs. The textless back is now governed by backQuadDwellFrames
+        // (#5525), decoupled from the shared idleFramesThreshold, so the test
+        // drives that knob directly.
         final machine = HuntStateMachine(
-          idleFramesThreshold: 3,
+          backQuadDwellFrames: 3,
           minFieldsForStableCapture: 4,
         );
         _seedFrontPhaseComplete(machine);
@@ -1169,6 +1172,158 @@ void main() {
         ];
         expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
         expect(machine.phase, isNot(HuntPhase.extractingBack));
+      });
+    });
+
+    group('back quad dwell calibration (#5525 device-confirmed)', () {
+      test('default backQuadDwellFrames is 6 — shorter than the 18-frame idle '
+          'threshold so the textless reverso auto-captures in a human hold', () {
+        // Device truth (/tmp/dni_cap3.log, S22): the quad-confirmed back dwell
+        // climbed 0..8 cleanly (~118ms/frame) with framingValid=true the whole
+        // time, then the hold ended — it never reached the shared
+        // idleFramesThreshold of 18 (~2.1s) and always fell to manual. The
+        // back quad-latch path needs its OWN, shorter dwell so a reasonable
+        // hold (~0.7s sustained quad) reaches backCaptureReady; the 3-2-1
+        // countdown then gives the final stabilization.
+        final machine = HuntStateMachine();
+        expect(machine.idleFramesThreshold, 18);
+        expect(machine.backQuadDwellFrames, 6);
+      });
+
+      test('a sustained textless quad-confirmed back fires backCaptureReady at '
+          'the lower backQuadDwellFrames, NOT the 18-frame idle threshold', () {
+        // PRODUCTION DEFAULTS: idleFramesThreshold stays 18 (front slow path +
+        // manual escape are unchanged) but the back quad-latch path uses
+        // backQuadDwellFrames (6). With filled=0 and a sustained valid quad,
+        // backCaptureReady must fire by the 6th dwell frame after the latch —
+        // well before frame 18 (which is all the device ever reached, ~8).
+        final machine = HuntStateMachine();
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Frame 1 latches into extractingBack (backDetected, dwell resets to 0).
+        final latch = machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        expect(latch, HuntSignal.backDetected);
+        expect(machine.phase, HuntPhase.extractingBack);
+        // Dwell frames accrue. With backQuadDwellFrames=6 the ready signal must
+        // appear by the 6th post-latch frame and BEFORE the 18th — the old
+        // threshold the device could never reach.
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: true,
+            ),
+        ];
+        expect(
+          signals,
+          contains(HuntSignal.backCaptureReady),
+          reason: 'the quad-confirmed textless back must fire within '
+              'backQuadDwellFrames (6), not the 18-frame idle threshold',
+        );
+      });
+
+      test('REGRESSION: the front slow path still uses the 18-frame idle '
+          'threshold (lowering the back must not make the front fire early)', () {
+        // The back-only dwell must NOT shorten the front. A front plateau below
+        // minFieldsForFastAdvance uses idleFramesThreshold (18). Holding the
+        // front for only 6 idle frames must NOT fire frontCaptureReady — proves
+        // backQuadDwellFrames is scoped to the back quad path alone.
+        final machine = HuntStateMachine();
+        machine.recordFrame(detectedSide: DocumentSide.front, addedNewField: false);
+        expect(machine.phase, HuntPhase.extractingFront);
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 5,
+            ),
+        ];
+        expect(
+          signals,
+          isNot(contains(HuntSignal.frontCaptureReady)),
+          reason: 'the front slow path must still wait the full 18-frame idle '
+              'threshold; the lowered back dwell must not leak into the front',
+        );
+      });
+
+      test('DWELL: a single quad-confirmed back frame then quad loss does NOT '
+          'fire even at the lower threshold (a blip must not capture)', () {
+        // Hysteresis preserved: the lower dwell must still require SUSTAINED
+        // framing. One valid-quad latch frame followed by quad loss accrues no
+        // ready signal — a 1-frame blip never captures.
+        final machine = HuntStateMachine();
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        expect(machine.phase, HuntPhase.extractingBack);
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: false,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+      });
+
+      test('SAFETY: a valid quad held on the FRONT during the back phase never '
+          'fires even at the lower back dwell (wrong-side invariant intact)', () {
+        // The lowered dwell must not weaken wrong-side safety: a perfectly
+        // framed FRONT (detectedSide == front) shown during the back phase must
+        // NEVER latch or fire, regardless of how short the back dwell is.
+        final machine = HuntStateMachine();
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 10; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.front,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: true,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(machine.phase, isNot(HuntPhase.extractingBack));
+      });
+
+      test('the back quad dwell is configurable for callers that need a '
+          'different hold', () {
+        final machine = HuntStateMachine(backQuadDwellFrames: 3);
+        expect(machine.backQuadDwellFrames, 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 3; i++) {
+          signal = machine.recordFrame(
+            detectedSide: DocumentSide.unknown,
+            addedNewField: false,
+            filledFields: 0,
+            quadFramingValid: true,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
       });
     });
   });
