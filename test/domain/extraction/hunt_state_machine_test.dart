@@ -830,6 +830,172 @@ void main() {
       });
     });
 
+    group('quad-confirmed back trigger (#5517 textless reverso)', () {
+      test('a side-safe valid QUAD latches extractingBack even when filled is '
+          'below the field-count floor (textless back)', () {
+        // Device truth: the Peru DNI back carries almost no OCR-able text, so
+        // the field-count floor (>= 4) is never reached and the OCR-only latch
+        // can never fire. The quad detector supplies the FRAMING proof the
+        // field count cannot: a side-safe (detectedSide != front) frame with a
+        // valid quad must latch the back, mirroring the front commit. TODAY
+        // this stays in waitingBack because recordFrame has no quad input.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        expect(
+          machine.phase,
+          HuntPhase.extractingBack,
+          reason: 'a side-safe valid quad must latch the back even with no '
+              'OCR fields',
+        );
+      });
+
+      test('a sustained side-safe valid QUAD reaches backCaptureReady through '
+          'the stability dwell with NO OCR fields', () {
+        // The latch alone is not enough: the textless back has filled=0, so the
+        // existing field-count stability gate would never emit the ready
+        // signal. A sustained valid quad must satisfy the framing floor so the
+        // idle dwell can fire backCaptureReady — the trigger the device needs.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 3,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 5; i++) {
+          signal = machine.recordFrame(
+            detectedSide: DocumentSide.unknown,
+            addedNewField: false,
+            filledFields: 0,
+            quadFramingValid: true,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('SAFETY: a valid QUAD held on the FRONT (detectedSide == front) '
+          'never latches the back and never emits backCaptureReady', () {
+        // Wrong-side invariant (#5457/#5484/#5499): a perfectly framed FRONT
+        // shown during the back phase must NOT trigger. The quad supplies
+        // FRAMING; the side detector supplies SIDE-SAFETY. A confident quad
+        // must never override detectedSide == front.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 10; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.front,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: true,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(
+          machine.phase,
+          isNot(HuntPhase.extractingBack),
+          reason: 'a valid quad on the front must never latch the back',
+        );
+      });
+
+      test('DWELL: a single valid-quad frame followed by quad loss does NOT '
+          'auto-capture (a blip must not fire)', () {
+        // Hysteresis: the quad must be SUSTAINED for the dwell, not fire on a
+        // single frame. A latch followed by quad loss must accrue no progress
+        // toward the ready signal.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // One valid quad frame latches.
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        expect(machine.phase, HuntPhase.extractingBack);
+        // Quad is then lost: no sustained framing, so the ready signal must
+        // not fire on these blank frames.
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: false,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+      });
+
+      test('REGRESSION: the OCR field-count back path still latches and fires '
+          'when filled >= floor and quad is absent (front-data-rich back)', () {
+        // The existing OCR-driven path must be preserved exactly: a flipped
+        // back carrying the front fields above the floor still auto-captures
+        // with no quad input at all.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 3,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 5; i++) {
+          signal = machine.recordFrame(
+            detectedSide: DocumentSide.unknown,
+            addedNewField: false,
+            filledFields: 11,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('SAFETY: the FRONT phase ignores quadFramingValid entirely (front '
+          'stays OCR-triggered)', () {
+        // Front behavior is unchanged: a valid quad must not short-circuit the
+        // front, which still fires on OCR data stability. Below the floor with
+        // no stable plateau, no capture even with a valid quad.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          minFieldsForStableCapture: 4,
+        );
+        machine.recordFrame(
+          detectedSide: DocumentSide.front,
+          addedNewField: false,
+          filledFields: 2,
+          quadFramingValid: true,
+        );
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 2,
+              quadFramingValid: true,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.frontCaptureReady)));
+        expect(machine.phase, HuntPhase.extractingFront);
+      });
+    });
+
     test('advanceToDone moves to done phase', () {
       final machine = HuntStateMachine();
       _seedFrontPhaseComplete(machine);

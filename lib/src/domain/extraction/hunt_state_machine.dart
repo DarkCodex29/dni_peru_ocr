@@ -67,6 +67,7 @@ class HuntStateMachine {
     required DocumentSide detectedSide,
     required bool addedNewField,
     int filledFields = 0,
+    bool quadFramingValid = false,
   }) {
     switch (_phase) {
       case HuntPhase.waitingFront:
@@ -118,8 +119,20 @@ class HuntStateMachine {
         // front: while the strong front anchors keep matching the back never
         // latches. A near-empty plateau stays below the floor and falls
         // through to the manual escape below.
-        if (detectedSide != DocumentSide.front &&
-            filledFields >= minFieldsForStableCapture) {
+        //
+        // QUAD-CONFIRMED LATCH (#5517): the Peru DNI back is textless, so the
+        // field-count floor is unreachable and the OCR-only latch above can
+        // never fire. The quad detector supplies the FRAMING proof the field
+        // count cannot — [quadFramingValid] means a well-framed document quad
+        // is present. A side-safe (detectedSide != front) frame with a valid
+        // quad latches the back even with no OCR fields. SIDE-SAFETY is a
+        // SEPARATE guard, sourced only from the side detector (detectedSide !=
+        // front): a confident quad must NEVER override a frame still reading
+        // `front`. Framing source = quad; side-safety = detector; both are
+        // required.
+        final sideSafe = detectedSide != DocumentSide.front;
+        final floorMet = filledFields >= minFieldsForStableCapture;
+        if (sideSafe && (floorMet || quadFramingValid)) {
           _phase = HuntPhase.extractingBack;
           _idleFrames = 0;
           _lastFilledFields = filledFields;
@@ -137,7 +150,10 @@ class HuntStateMachine {
         if (_isComplete(filledFields, backCompleteFieldsCount)) {
           return HuntSignal.backCaptureReady;
         }
-        if (_isStableCaptureReady(filledFields)) {
+        if (_isStableCaptureReady(
+          filledFields,
+          quadFramingValid: quadFramingValid,
+        )) {
           return HuntSignal.backCaptureReady;
         }
         return HuntSignal.none;
@@ -161,9 +177,20 @@ class HuntStateMachine {
   /// absent or illegible (#5471). The idle counter always advances so a real
   /// plateau accrues, but the ready signal is gated behind
   /// [minFieldsForStableCapture] so a near-empty view never auto-captures.
-  bool _isStableCaptureReady(int filledFields) {
+  bool _isStableCaptureReady(
+    int filledFields, {
+    bool quadFramingValid = false,
+  }) {
     final idle = _advanceExtractingIdle(filledFields);
-    if (filledFields < minFieldsForStableCapture) {
+    // A valid document quad supplies the framing proof the field count cannot
+    // on the textless back (#5517), so it satisfies the minimum-fields floor.
+    // The floor still applies when no quad confirms framing, so a near-empty
+    // OCR plateau without a quad never auto-captures. The idle dwell is
+    // unchanged either way, so a sustained quad still has to hold for the
+    // threshold — a single-frame quad blip never fires.
+    final framingFloorMet =
+        filledFields >= minFieldsForStableCapture || quadFramingValid;
+    if (!framingFloorMet) {
       return false;
     }
     return idle >= _effectiveThreshold(filledFields);
