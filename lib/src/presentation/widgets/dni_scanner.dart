@@ -250,7 +250,7 @@ class DniScannerState extends State<DniScanner>
     _cameraController = DniCameraController(
       orchestrator: _orchestrator,
       isBackSide: widget.isBackSide ?? false,
-      onValidCapture: (_, __) {},
+      onValidCapture: (_, _) {},
     );
     _cameraController.captureState.addListener(_onControllerStateChanged);
     _recognizer = TextRecognizer(script: TextRecognitionScript.latin);

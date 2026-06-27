@@ -46,7 +46,7 @@ Widget animatedSwitcherDedupeLayout(
     alignment: Alignment.center,
     children: [
       ...filtered,
-      if (current != null) current,
+      ?current,
     ],
   );
 }

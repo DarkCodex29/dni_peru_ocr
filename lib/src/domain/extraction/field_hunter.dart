@@ -171,7 +171,7 @@ class FieldHunter {
     if (_locked.contains(key)) return false;
     if (_fields != null) {
       final dniField = _fieldKeyToDniField[key];
-      if (dniField != null && !_fields!.contains(dniField)) return false;
+      if (dniField != null && !_fields.contains(dniField)) return false;
     }
     final cleaned = _shouldClean(key) ? _valueCleaner.clean(value) : value;
     if (cleaned == null || cleaned.isEmpty) return false;

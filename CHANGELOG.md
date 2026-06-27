@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.0
+
+### Added
+- **`opencv_dart` (`^2.2.1+4`) dependency** for upcoming on-device document
+  quad detection. The native binary is trimmed to the modules quad detection
+  needs via the `dartcv4` Native Assets hooks
+  (`include_modules: [core, imgproc, imgcodecs]`); `calib3d` and all other
+  modules are excluded. The perspective operations used by quad detection
+  (`cvtColor`, `GaussianBlur`, `Canny`, `findContours`, `approxPolyDP`,
+  `getPerspectiveTransform`, `warpPerspective`) all live in `imgproc`, so no
+  `calib3d` is shipped. Measured per-ABI native cost: `libdartcv.so` is
+  ~9.98 MiB on `arm64-v8a` (an App Bundle ships a single ABI per device).
+- `dartcv4` (`^2.2.1+4`) is declared as a direct dependency so the quad
+  detection adapter can import `package:dartcv4/dartcv.dart` directly.
+
+### Breaking
+- **Platform floor raised to Flutter `>=3.38.0` / Dart `>=3.10.0`.** `opencv_dart`
+  2.x relies on Dart hooks (Native Assets), which are stable only from Dart
+  3.10. Consumers on older toolchains must upgrade. This is the MAJOR `1.0.0`
+  bump.
+
+### Notes
+- This release wires the dependency, native module trim, platform floor, and
+  version bump only. The `DocumentQuadDetector` port, the OpenCV and pure-Dart
+  fallback adapters, the live framing overlay, and post-shutter perspective
+  rectification arrive across the following releases in this feature line.
+- Dependency currency upgrades from the previous work unit (camera `0.12`,
+  `path_provider` `2.1.6`, `sensors_plus` `7.1.0`, `flutter_lints` `6.0.0`)
+  ship as part of this `1.0.0` release.
+
 ## 0.20.0
 
 ### Breaking

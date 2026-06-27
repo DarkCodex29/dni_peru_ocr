@@ -61,7 +61,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -72,7 +72,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -84,7 +84,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -100,7 +100,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -120,7 +120,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 1),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -144,7 +144,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -160,7 +160,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -180,7 +180,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(manualFallbackMs: 50), // fast for tests
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -202,7 +202,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(manualFallbackMs: 50),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -229,7 +229,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
 
       await controller.dispose();
@@ -241,7 +241,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
 
       await controller.dispose();
@@ -253,7 +253,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
 
       await controller.dispose();
@@ -269,7 +269,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 1),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -282,7 +282,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 2),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -296,7 +296,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(autoCaptureMs: 1, minStableFrames: 1),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -317,7 +317,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 1),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
 
       await controller.dispose();
@@ -337,7 +337,7 @@ void main() {
           minStableFrames: 1,
         ),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -360,7 +360,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -373,7 +373,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 1),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -393,7 +393,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(minStableFrames: 1),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -416,7 +416,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(autoCaptureMs: 1, minStableFrames: 1),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
 
       _injectFrame(controller, isCaptureable: true, stableFrames: 1);
@@ -431,7 +431,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(autoCaptureMs: 1, minStableFrames: 1),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
       );
       addTearDown(controller.dispose);
 
@@ -449,7 +449,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
         onDocumentExpired: (_) {},
       );
       addTearDown(controller.dispose);
@@ -486,7 +486,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
         onDocumentExpired: (d) => firedDate = d,
       );
       addTearDown(controller.dispose);
@@ -509,7 +509,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
         onDocumentExpired: (_) => fireCount++,
       );
       addTearDown(controller.dispose);
@@ -536,7 +536,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) {},
+        onValidCapture: (_, _) {},
         onDocumentExpired: (_) => fired = true,
       );
       addTearDown(controller.dispose);
@@ -617,7 +617,7 @@ void main() {
       final controller = DniCameraController(
         orchestrator: _orchestrator(),
         isBackSide: false,
-        onValidCapture: (_, __) => called = true,
+        onValidCapture: (_, _) => called = true,
       );
 
       await controller.dispose();
@@ -695,7 +695,7 @@ void main() {
         final controller = DniCameraController(
           orchestrator: _orchestrator(),
           isBackSide: true,
-          onValidCapture: (_, __) {},
+          onValidCapture: (_, _) {},
           lookupService: service,
           onDniReady: completer.complete,
         );
@@ -721,7 +721,7 @@ void main() {
         final controller = DniCameraController(
           orchestrator: _orchestrator(),
           isBackSide: true,
-          onValidCapture: (_, __) {},
+          onValidCapture: (_, _) {},
           onDniReady: (_) => called = true,
         );
         addTearDown(controller.dispose);
@@ -752,7 +752,7 @@ void main() {
         final controller = DniCameraController(
           orchestrator: _orchestrator(),
           isBackSide: true,
-          onValidCapture: (_, __) {},
+          onValidCapture: (_, _) {},
           lookupService: service,
         );
         addTearDown(controller.dispose);
@@ -784,7 +784,7 @@ void main() {
         final controller = DniCameraController(
           orchestrator: _orchestrator(),
           isBackSide: true,
-          onValidCapture: (_, __) {},
+          onValidCapture: (_, _) {},
           lookupService: service,
           onDniReady: (_) => callCount++,
         );

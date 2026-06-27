@@ -49,7 +49,7 @@ void main() {
         final controller = DniCameraController(
           orchestrator: orchestrator,
           isBackSide: false,
-          onValidCapture: (_, __) {},
+          onValidCapture: (_, _) {},
         );
         expect(() => controller.onSideChanged(), returnsNormally);
         controller.dispose();
