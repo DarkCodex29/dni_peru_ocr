@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:dartcv4/dartcv.dart' as cv;
 
 import '../domain/capture/document_quad_detector.dart';
+import 'dni_logger.dart';
 import 'fallback_quad_detector.dart';
 
 /// Native [DocumentQuadDetector] backed by the trimmed opencv_dart binding.
@@ -250,7 +251,15 @@ double _sqrt(double value) {
 /// [OpenCvQuadDetector]; otherwise falls back to the pure-Dart
 /// [FallbackQuadDetector]. Never throws.
 DocumentQuadDetector selectQuadDetector() {
-  if (_probeNativeAvailable()) {
+  final native = _probeNativeAvailable();
+  // TEMP DIAG (#5528): expose which detector won the runtime probe. On device
+  // this is the single line that proves whether libdartcv.so actually loaded.
+  DniLogger.warn(
+    'OPENCV_PROBE',
+    'selectQuadDetector isNativeAvailable=$native '
+        'detector=${native ? 'OpenCvQuadDetector' : 'FallbackQuadDetector'}',
+  );
+  if (native) {
     return const OpenCvQuadDetector();
   }
   return const FallbackQuadDetector();
@@ -260,8 +269,24 @@ bool _probeNativeAvailable() {
   cv.Mat? probe;
   try {
     probe = cv.Mat.zeros(1, 1, cv.MatType.CV_8UC1);
-    return probe.rows == 1 && probe.cols == 1;
-  } on Object {
+    final ok = probe.rows == 1 && probe.cols == 1;
+    // TEMP DIAG (#5528): native op succeeded — the binding loaded on this
+    // device. Loud so it can be grepped alongside the failure variant.
+    DniLogger.warn(
+      'OPENCV_PROBE',
+      'native cv.Mat.zeros OK rows=${probe.rows} cols=${probe.cols} ok=$ok',
+    );
+    return ok;
+  } on Object catch (e, st) {
+    // TEMP DIAG (#5528): THE previously-swallowed runtime loader error. This is
+    // the device truth we were missing — full exception + stacktrace of why the
+    // first native cv op throws (e.g. library not found, missing symbol,
+    // native-assets not initialized). Behaviour is UNCHANGED: still returns
+    // false and falls back. We only expose the error, we do not handle it.
+    DniLogger.warn(
+      'OPENCV_PROBE',
+      'isNativeAvailable=false error=$e stack=$st',
+    );
     return false;
   } finally {
     probe?.dispose();
