@@ -3,7 +3,7 @@
 /// Process Google ML Kit Latin TextRecognizer output against the Peruvian
 /// Documento Nacional de Identidad. Recover diacritics, parse MRZ, extract
 /// addresses, and merge surnames across OCR + stored profile sources.
-library dni_peru_ocr;
+library;
 
 export 'src/data/address_noise_filter.dart';
 export 'src/data/field_value_cleaner.dart';

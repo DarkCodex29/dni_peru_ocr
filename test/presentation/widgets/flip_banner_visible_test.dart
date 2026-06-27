@@ -1,5 +1,4 @@
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
-import 'package:dni_peru_ocr/src/presentation/widgets/dni_scanner.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
