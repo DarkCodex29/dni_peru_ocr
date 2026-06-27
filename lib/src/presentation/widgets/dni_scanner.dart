@@ -400,41 +400,7 @@ class DniScannerState extends State<DniScanner>
 
     final text = recognized.blocks.map((b) => b.text).join('\n');
     if (text.isEmpty) {
-      // The Peru DNI back is textless, so OCR is frequently empty. The OCR
-      // path can no longer be the only trigger source (#5517): when the quad
-      // detector has confirmed a well-framed document, drive the SAME single
-      // record-and-dispatch chain with empty-OCR inputs so a quad-confirmed
-      // back can still reach backCaptureReady. An empty frame carries no front
-      // title block, so the side resolves to `unknown` (side-safe, != front) —
-      // a held front is text-dense and takes the OCR branch below instead, so
-      // the wrong-side guard in HuntStateMachine still protects this path.
-      if (_framingValid && !_isFrontPhase()) {
-        _recordAndDispatch(
-          detectedSide: DocumentSide.unknown,
-          addedNewField: false,
-          filledFields: _countFilled(_hunter.snapshot.fields),
-        );
-        return;
-      }
-      _frameCaptureable = false;
-      // TEMP DIAG (#5517): an empty-OCR back frame was DROPPED before reaching
-      // the trigger because the quad signal was not valid at this instant (or
-      // we are still in a front phase). On the textless reverso this is the
-      // most likely on-device silence: the quad isolate (350ms throttled) has
-      // not produced a sustained framingValid=true, so _recordAndDispatch is
-      // never called and no BACKTRIG trigger line is emitted. This line makes
-      // that drop visible. Remove with the flag to revert.
-      if (_diagBackTrigLogging && !_isFrontPhase()) {
-        DniLogger.warn(
-          'DniScanner',
-          'BACKTRIG phase=${_stateMachine.phase.name} side=emptyOCR '
-              'framingValid=$_framingValid corners=${_quadCorners.length} '
-              'filled=${_countFilled(_hunter.snapshot.fields)} '
-              'dwell=${_stateMachine.debugIdleFrames} signal=dropped '
-              'onCaptureReady=false',
-        );
-      }
-      DniLogger.debug('DniScanner', 'frame skipped — empty OCR');
+      _handleEmptyOcrFrame();
       return;
     }
 
@@ -455,6 +421,50 @@ class DniScannerState extends State<DniScanner>
       addedNewField: addedNew,
       filledFields: filled,
     );
+  }
+
+  /// Routes an empty-OCR frame through the single capture chain (#5523).
+  ///
+  /// The Peru DNI back is textless, so OCR is frequently empty and the OCR path
+  /// alone never triggers it. [resolveEmptyOcrRoute] decides, from the live
+  /// quad framing flag and the current phase, whether this empty frame must
+  /// drive the back trigger (a quad-confirmed, side-safe back) or be skipped (a
+  /// blank frame with no quad, or a front phase that stays OCR-triggered). An
+  /// empty frame carries no front title block, so the side resolves to
+  /// `unknown` (side-safe, != front); a held front is text-dense and takes the
+  /// OCR branch in [_processImage] instead, so the wrong-side guard in
+  /// [HuntStateMachine] still protects this path.
+  DniCaptureState _handleEmptyOcrFrame() {
+    final route = resolveEmptyOcrRoute(
+      framingValid: _framingValid,
+      isFrontPhase: _isFrontPhase(),
+    );
+    if (route == EmptyOcrRoute.dispatchBackTrigger) {
+      return _recordAndDispatch(
+        detectedSide: DocumentSide.unknown,
+        addedNewField: false,
+        filledFields: _countFilled(_hunter.snapshot.fields),
+      );
+    }
+    _frameCaptureable = false;
+    // TEMP DIAG (#5517/#5523): an empty-OCR back frame was DROPPED before
+    // reaching the trigger because the quad signal was not valid at this
+    // instant. On the textless reverso this is the most likely on-device
+    // silence: the quad isolate (350ms throttled) has not produced a sustained
+    // framingValid=true, so the trigger is never driven and no BACKTRIG line is
+    // emitted. This line makes that drop visible. Remove with the flag.
+    if (_diagBackTrigLogging && !_isFrontPhase()) {
+      DniLogger.warn(
+        'DniScanner',
+        'BACKTRIG phase=${_stateMachine.phase.name} side=emptyOCR '
+            'framingValid=$_framingValid corners=${_quadCorners.length} '
+            'filled=${_countFilled(_hunter.snapshot.fields)} '
+            'dwell=${_stateMachine.debugIdleFrames} signal=dropped '
+            'onCaptureReady=false',
+      );
+    }
+    DniLogger.debug('DniScanner', 'frame skipped — empty OCR');
+    return _captureState;
   }
 
   /// Records one frame through [HuntStateMachine] and dispatches the resulting
@@ -644,6 +654,15 @@ class DniScannerState extends State<DniScanner>
         addedNewField: addedNewField,
         filledFields: filledFields,
       );
+
+  /// Drives the REAL empty-OCR branch a textless device frame triggers (#5523):
+  /// runs the exact [_handleEmptyOcrFrame] routing (text.isEmpty ->
+  /// [resolveEmptyOcrRoute] -> dispatch or skip) against the current framing
+  /// flag and phase, WITHOUT pre-resolving a side/field count for the dispatch.
+  /// This proves an empty frame actually routes to the back trigger (or is
+  /// safely skipped) — the layer the device log fingered.
+  @visibleForTesting
+  DniCaptureState debugProcessEmptyOcrForTest() => _handleEmptyOcrFrame();
 
   @visibleForTesting
   DniCaptureState get debugCaptureState => _captureState;
@@ -1647,6 +1666,41 @@ double sideProgressRatio({
   if (total <= 0) return 0.0;
   final raw = (filled / total).clamp(0.0, 1.0);
   return raw < scanningCeiling ? raw : scanningCeiling;
+}
+
+/// How an empty-OCR frame must be routed by the live frame processor (#5523).
+enum EmptyOcrRoute {
+  /// Drive the single record-and-dispatch chain with empty-OCR back inputs so a
+  /// quad-confirmed textless back can still reach backCaptureReady.
+  dispatchBackTrigger,
+
+  /// Discard the frame: either no document quad confirms framing (a blank view
+  /// is not a document) or the machine is still in a front phase (the front
+  /// stays OCR-triggered, never back-triggered by an empty frame).
+  skip,
+}
+
+/// Routes an empty-OCR frame for [_DniScannerState._processImage] (#5523).
+///
+/// The Peru DNI back is textless, so OCR is frequently empty. The OCR path can
+/// no longer be the only trigger source: when the quad detector has confirmed a
+/// well-framed document ([framingValid]) AND the machine has left the front
+/// phase ([isFrontPhase] == false), the empty frame must DRIVE the back trigger
+/// instead of being discarded — otherwise the early skip wins the race and the
+/// textless back never auto-captures. Two guards keep this safe:
+/// - NO valid quad => [EmptyOcrRoute.skip]: a blank frame with no document quad
+///   must never trigger a capture.
+/// - A front phase => [EmptyOcrRoute.skip]: the front is text-dense and stays
+///   OCR-triggered; an empty frame must never produce a wrong-side back trigger.
+@visibleForTesting
+EmptyOcrRoute resolveEmptyOcrRoute({
+  required bool framingValid,
+  required bool isFrontPhase,
+}) {
+  if (framingValid && !isFrontPhase) {
+    return EmptyOcrRoute.dispatchBackTrigger;
+  }
+  return EmptyOcrRoute.skip;
 }
 
 /// Centered 3-2-1 auto-capture counter rendered in smoke white over the dark

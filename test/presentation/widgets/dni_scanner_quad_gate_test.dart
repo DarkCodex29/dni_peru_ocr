@@ -402,4 +402,142 @@ void main() {
       await _disposeWidget(tester);
     });
   });
+
+  // These tests drive the REAL empty-OCR branch of _processImage through a seam
+  // that runs the same routing decision a textless device frame triggers. They
+  // do NOT pre-resolve the side/field count and hand them to _recordAndDispatch
+  // (the prior real-chain tests did, so they never proved that an EMPTY OCR
+  // frame routes to the trigger at all). Here the seam reproduces the live
+  // empty-OCR branch: text.isEmpty -> resolveEmptyOcrRoute -> dispatch or skip.
+  // This is the layer the device log (#5523) fingered: many "frame skipped —
+  // empty OCR" and zero back trigger.
+  group('empty-OCR back frame drives the real trigger routing (#5523)', () {
+    testWidgets('a textless back (empty OCR) with a sustained valid quad drives '
+        'the back countdown without any OCR fields', (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_back.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(
+          cam: cam,
+          key: key,
+          isBackSide: true,
+          idleFramesBeforeCapture: 3,
+        ),
+      );
+      await tester.pump();
+
+      key.currentState!.debugSetFramingValid(true);
+
+      DniCaptureState? state;
+      for (var i = 0; i < 6; i++) {
+        state = key.currentState!.debugProcessEmptyOcrForTest();
+        await tester.pump();
+      }
+      expect(state, isA<DniCaptureCountingDown>());
+
+      await tester.pump(const Duration(milliseconds: 1600));
+      verify(() => cam.takePicture()).called(1);
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('SAFETY: an empty-OCR frame with NO valid quad skips and never '
+        'starts a countdown (a blank frame is not a document)', (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_back.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(
+          cam: cam,
+          key: key,
+          isBackSide: true,
+          idleFramesBeforeCapture: 3,
+        ),
+      );
+      await tester.pump();
+
+      key.currentState!.debugSetFramingValid(false);
+
+      DniCaptureState? state;
+      for (var i = 0; i < 8; i++) {
+        state = key.currentState!.debugProcessEmptyOcrForTest();
+        await tester.pump();
+      }
+      expect(state, isA<DniCaptureScanning>());
+
+      await tester.pump(const Duration(milliseconds: 1600));
+      verifyNever(() => cam.takePicture());
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('SAFETY: an empty-OCR frame on the FRONT phase with a valid '
+        'quad skips (front stays OCR-triggered, no wrong-side trigger)',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(
+          cam: cam,
+          key: key,
+          isBackSide: false,
+          idleFramesBeforeCapture: 3,
+        ),
+      );
+      await tester.pump();
+
+      key.currentState!.debugSetFramingValid(true);
+
+      DniCaptureState? state;
+      for (var i = 0; i < 8; i++) {
+        state = key.currentState!.debugProcessEmptyOcrForTest();
+        await tester.pump();
+      }
+      expect(state, isA<DniCaptureScanning>());
+
+      await tester.pump(const Duration(milliseconds: 1600));
+      verifyNever(() => cam.takePicture());
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('DWELL: a single empty-OCR valid-quad frame then quad loss does '
+        'NOT auto-capture (the quad must be sustained)', (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_back.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(
+          cam: cam,
+          key: key,
+          isBackSide: true,
+          idleFramesBeforeCapture: 3,
+        ),
+      );
+      await tester.pump();
+
+      key.currentState!.debugSetFramingValid(true);
+      key.currentState!.debugProcessEmptyOcrForTest();
+      await tester.pump();
+
+      key.currentState!.debugSetFramingValid(false);
+      DniCaptureState? state;
+      for (var i = 0; i < 6; i++) {
+        state = key.currentState!.debugProcessEmptyOcrForTest();
+        await tester.pump();
+      }
+      expect(state, isA<DniCaptureScanning>());
+
+      await tester.pump(const Duration(milliseconds: 1600));
+      verifyNever(() => cam.takePicture());
+      await _disposeWidget(tester);
+    });
+  });
 }
