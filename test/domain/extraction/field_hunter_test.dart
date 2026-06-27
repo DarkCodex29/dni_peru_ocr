@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('FieldHunter', () {
-    const frontAnchor = 'CUI 1234567890\n';
+    const frontAnchor = 'DOCUMENTO NACIONAL DE IDENTIDAD\n';
 
     group('fields parameter — extractor filtering', () {
       test('standard() with no fields instantiates all 14 extractors', () {
@@ -76,9 +76,9 @@ void main() {
       expect(hunter.snapshot.fields.documentNumber, '16793105');
     });
 
-    test('tracks front detected when CUI present', () {
+    test('tracks front detected when the front title block is present', () {
       final hunter = FieldHunter.standard();
-      hunter.process('CUI 1234567890');
+      hunter.process('DOCUMENTO NACIONAL DE IDENTIDAD');
       expect(hunter.snapshot.frontDetected, isTrue);
       expect(hunter.snapshot.backDetected, isFalse);
     });
@@ -92,7 +92,7 @@ void main() {
 
     test('both flags true after seeing front then back', () {
       final hunter = FieldHunter.standard();
-      hunter.process('CUI 1234567890');
+      hunter.process('DOCUMENTO NACIONAL DE IDENTIDAD');
       hunter.process('DONACIÓN DE ÓRGANOS');
       expect(hunter.snapshot.frontDetected, isTrue);
       expect(hunter.snapshot.backDetected, isTrue);

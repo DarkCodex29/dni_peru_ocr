@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('FieldHunter voting', () {
-    const frontAnchor = 'CUI 1234567890\n';
+    const frontAnchor = 'DOCUMENTO NACIONAL DE IDENTIDAD\n';
 
     test('records first occurrence of a field', () {
       final hunter = FieldHunter.standard();

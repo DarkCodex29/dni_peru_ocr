@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('FieldHunter data lock (#5486)', () {
-    const frontAnchor = 'CUI 1234567890\n';
+    const frontAnchor = 'DOCUMENTO NACIONAL DE IDENTIDAD\n';
 
     test(
         'once a field reaches the lock threshold its winner is FIXED and a '

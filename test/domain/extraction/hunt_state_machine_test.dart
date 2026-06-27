@@ -905,6 +905,106 @@ void main() {
         expect(signal, HuntSignal.none);
       });
     });
+
+    group('real detect() -> recordFrame seam (#5498 blind spot)', () {
+      // The unit tests above feed detectedSide DIRECTLY, which is exactly what
+      // hid the device bug: they never drive the REAL DocumentSideDetector.
+      // These tests compute detectedSide through the production detector from
+      // realistic OCR text, then feed THAT into the state machine — the live
+      // path (dni_scanner.dart:384 -> :391) the isolated unit tests bypass.
+      const detector = DocumentSideDetector();
+
+      test('a realistic BACK frame computed through the REAL detector latches '
+          'into extractingBack and emits backCaptureReady (NOT recoverManual)',
+          () {
+        // Device-truth back OCR: the back prints the DNI number near the MRZ,
+        // plus Grupo de Votación and an address, but NO front title block and
+        // NO clean CONSTANCIA/DONACIÓN anchor. Through the corrected detector
+        // this resolves to NOT front, so the back latch can finally fire.
+        const backText =
+            'Grupo de Votación 083966\n'
+            'Dirección AMPLC. TUPAC AMARU SICUANI 215\n'
+            'DNI 71542895\n'
+            'I<PER7154289<<<<<<<<<<<<<<<';
+        final detectedSide = detector.detect(backText);
+        expect(
+          detectedSide,
+          isNot(DocumentSide.front),
+          reason: 'the realistic back must not read as front through the real '
+              'detector — this is the root-cause gate (#5498)',
+        );
+
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+
+        // First genuine flipped frame (computed via the real detector) latches.
+        machine.recordFrame(
+          detectedSide: detectedSide,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        expect(
+          machine.phase,
+          HuntPhase.extractingBack,
+          reason: 'a back frame computed through the real detector must latch '
+              'the back, not stay stranded in waitingBack',
+        );
+
+        // Subsequent stable frames fire on pure stability through the same
+        // path as the front — reaching the counter, never the manual escape.
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: detector.detect(backText),
+              addedNewField: false,
+              filledFields: 11,
+            ),
+        ];
+        expect(signals, contains(HuntSignal.backCaptureReady));
+        expect(signals, isNot(contains(HuntSignal.recoverManual)));
+      });
+
+      test('SAFETY: a genuine FRONT frame computed through the REAL detector '
+          'never latches the back (wrong-side invariant #5457/#5484)', () {
+        // The front title block is present, so the real detector returns front
+        // every frame; the back must never latch and never auto-capture while
+        // the user is still showing the front.
+        const frontText =
+            'REPÚBLICA DEL PERÚ\n'
+            'DOCUMENTO NACIONAL DE IDENTIDAD\n'
+            'GOICOCHEA PEREZ ODETTE\n'
+            'DNI 71542895';
+        expect(detector.detect(frontText), DocumentSide.front);
+
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 10; i++)
+            machine.recordFrame(
+              detectedSide: detector.detect(frontText),
+              addedNewField: false,
+              filledFields: 11,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(machine.phase, isNot(HuntPhase.extractingBack));
+      });
+    });
   });
 }
 
