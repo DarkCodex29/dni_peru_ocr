@@ -49,6 +49,7 @@ export 'src/extraction/ubigeo_nacimiento_extractor.dart';
 export 'src/domain/interfaces/ocr_logger.dart';
 export 'src/infrastructure/breadcrumb_throttle.dart';
 export 'src/infrastructure/detector_lifecycle.dart';
+export 'src/infrastructure/fallback_quad_detector.dart';
 export 'src/infrastructure/dni_logger.dart';
 export 'src/infrastructure/input_image_converter.dart';
 export 'src/infrastructure/kyc_image_utils.dart';
