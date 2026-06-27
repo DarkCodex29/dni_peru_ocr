@@ -73,6 +73,7 @@ Widget _buildScanner({
   required CameraController cam,
   required GlobalKey<DniScannerState> key,
   required bool isBackSide,
+  int idleFramesBeforeCapture = 18,
 }) {
   return MaterialApp(
     home: KycThemeProvider(
@@ -82,6 +83,7 @@ Widget _buildScanner({
           key: key,
           controller: cam,
           isBackSide: isBackSide,
+          idleFramesBeforeCapture: idleFramesBeforeCapture,
           autoCaptureMs: 1500,
           gracePeriodMs: 600,
           minStableFrames: 2,
@@ -260,6 +262,142 @@ void main() {
         key.currentState!.debugCaptureState,
         isA<DniCaptureScanning>(),
       );
+      verifyNever(() => cam.takePicture());
+      await _disposeWidget(tester);
+    });
+  });
+
+  // These tests drive the REAL record-and-dispatch chain the live frame
+  // processing uses (DocumentSideDetector-derived side + field count + the
+  // quad framing flag fed into HuntStateMachine.recordFrame and the signal
+  // dispatch into _onCaptureReady). They deliberately do NOT inject
+  // backCaptureReady via debugFeedCaptureReady — that injects the very signal
+  // the device never produces on a textless back and hid this bug repeatedly
+  // (#5461/#5491/#5498/#5517). Here the state machine must EMIT the signal
+  // from realistic textless-back inputs.
+  group('quad-driven back trigger through the real dispatch chain (#5517)', () {
+    testWidgets('a textless back (filled < floor, side-safe) with a sustained '
+        'valid quad starts the back countdown and auto-captures by edges',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_back.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(
+          cam: cam,
+          key: key,
+          isBackSide: true,
+          idleFramesBeforeCapture: 3,
+        ),
+      );
+      await tester.pump();
+
+      // The quad detector reports a well-framed document quad on the back.
+      key.currentState!.debugSetFramingValid(true);
+
+      // Feed realistic textless-back frames through the REAL dispatch: the
+      // side detector resolves the sparse back to `unknown` (not front) and no
+      // OCR fields accrue (filled = 0, below the floor of 4). With no quad
+      // this would never start a countdown — today the back stalls.
+      DniCaptureState? state;
+      for (var i = 0; i < 6; i++) {
+        state = key.currentState!.debugProcessFrameForTest(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+        );
+        await tester.pump();
+      }
+      expect(state, isA<DniCaptureCountingDown>());
+
+      await tester.pump(const Duration(milliseconds: 1600));
+      verify(() => cam.takePicture()).called(1);
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('SAFETY: a well-framed FRONT held during the back phase '
+        '(detectedSide == front + valid quad) never starts the back countdown',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(
+          cam: cam,
+          key: key,
+          isBackSide: true,
+          idleFramesBeforeCapture: 3,
+        ),
+      );
+      await tester.pump();
+
+      // A perfectly framed FRONT is shown while the back is expected: the side
+      // detector reports `front`. A confident quad must NOT override the side
+      // guard — no wrong-side capture.
+      key.currentState!.debugSetFramingValid(true);
+
+      DniCaptureState? state;
+      for (var i = 0; i < 8; i++) {
+        state = key.currentState!.debugProcessFrameForTest(
+          detectedSide: DocumentSide.front,
+          addedNewField: false,
+          filledFields: 0,
+        );
+        await tester.pump();
+      }
+      expect(state, isA<DniCaptureScanning>());
+
+      await tester.pump(const Duration(milliseconds: 1600));
+      verifyNever(() => cam.takePicture());
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('DWELL: a single valid-quad back frame then quad loss does NOT '
+        'auto-capture (the quad must be sustained, not a blip)',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_back.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(
+          cam: cam,
+          key: key,
+          isBackSide: true,
+          idleFramesBeforeCapture: 3,
+        ),
+      );
+      await tester.pump();
+
+      // One valid-quad frame latches the back...
+      key.currentState!.debugSetFramingValid(true);
+      key.currentState!.debugProcessFrameForTest(
+        detectedSide: DocumentSide.unknown,
+        addedNewField: false,
+        filledFields: 0,
+      );
+      await tester.pump();
+
+      // ...but the quad is then lost. Without a sustained quad and with no OCR
+      // fields, the stability dwell must not reach a capture.
+      key.currentState!.debugSetFramingValid(false);
+      DniCaptureState? state;
+      for (var i = 0; i < 6; i++) {
+        state = key.currentState!.debugProcessFrameForTest(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+        );
+        await tester.pump();
+      }
+      expect(state, isA<DniCaptureScanning>());
+
+      await tester.pump(const Duration(milliseconds: 1600));
       verifyNever(() => cam.takePicture());
       await _disposeWidget(tester);
     });

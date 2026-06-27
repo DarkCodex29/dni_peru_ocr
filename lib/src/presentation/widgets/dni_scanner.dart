@@ -394,6 +394,22 @@ class DniScannerState extends State<DniScanner>
 
     final text = recognized.blocks.map((b) => b.text).join('\n');
     if (text.isEmpty) {
+      // The Peru DNI back is textless, so OCR is frequently empty. The OCR
+      // path can no longer be the only trigger source (#5517): when the quad
+      // detector has confirmed a well-framed document, drive the SAME single
+      // record-and-dispatch chain with empty-OCR inputs so a quad-confirmed
+      // back can still reach backCaptureReady. An empty frame carries no front
+      // title block, so the side resolves to `unknown` (side-safe, != front) —
+      // a held front is text-dense and takes the OCR branch below instead, so
+      // the wrong-side guard in HuntStateMachine still protects this path.
+      if (_framingValid && !_isFrontPhase()) {
+        _recordAndDispatch(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: _countFilled(_hunter.snapshot.fields),
+        );
+        return;
+      }
       _frameCaptureable = false;
       DniLogger.debug('DniScanner', 'frame skipped — empty OCR');
       return;
@@ -410,23 +426,42 @@ class DniScannerState extends State<DniScanner>
       false => DocumentSide.front,
     };
     final addedNew = _hunter.process(text);
-    final snapshot = _hunter.snapshot;
-    final filled = _countFilled(snapshot.fields);
-    final signal = _stateMachine.recordFrame(
+    final filled = _countFilled(_hunter.snapshot.fields);
+    _recordAndDispatch(
       detectedSide: detectedSide,
       addedNewField: addedNew,
       filledFields: filled,
+    );
+  }
+
+  /// Records one frame through [HuntStateMachine] and dispatches the resulting
+  /// signal — the single capture trigger path shared by the OCR frames and the
+  /// quad-confirmed textless-back frames. The current quad framing flag
+  /// ([_framingValid], updated by the quad-detection isolate) is fed into the
+  /// machine so a side-safe valid quad can latch and fire the back even with no
+  /// OCR fields (#5517). There is exactly one trigger path, so the two
+  /// per-frame analyses (OCR + quad) never race for a second trigger.
+  DniCaptureState _recordAndDispatch({
+    required DocumentSide detectedSide,
+    required bool addedNewField,
+    required int filledFields,
+  }) {
+    final signal = _stateMachine.recordFrame(
+      detectedSide: detectedSide,
+      addedNewField: addedNewField,
+      filledFields: filledFields,
+      quadFramingValid: _framingValid,
     );
 
     final total = widget.fields?.length ?? 19;
     DniLogger.verbose(
       'DniScanner',
-      'side=$detectedSide addedNew=$addedNew phase=${_stateMachine.phase} '
-          'signal=$signal filled=$filled/$total',
+      'side=$detectedSide addedNew=$addedNewField phase=${_stateMachine.phase} '
+          'signal=$signal filled=$filledFields/$total framing=$_framingValid',
     );
 
     if (mounted &&
-        (_stateMachine.phase != _lastPhaseRendered || addedNew)) {
+        (_stateMachine.phase != _lastPhaseRendered || addedNewField)) {
       setState(() => _lastPhaseRendered = _stateMachine.phase);
     }
 
@@ -452,6 +487,7 @@ class DniScannerState extends State<DniScanner>
         _frameCaptureable = false;
         break;
     }
+    return _captureState;
   }
 
   void _onCaptureReady(HuntSignal signal) {
@@ -548,6 +584,25 @@ class DniScannerState extends State<DniScanner>
 
   @visibleForTesting
   void debugFeedCaptureReady(HuntSignal signal) => _onCaptureReady(signal);
+
+  /// Drives the REAL record-and-dispatch chain a live frame uses: feeds the
+  /// OCR-derived [detectedSide]/[addedNewField]/[filledFields] plus the current
+  /// quad framing flag into [HuntStateMachine.recordFrame] and dispatches the
+  /// EMITTED signal. Unlike [debugFeedCaptureReady] it never injects a capture
+  /// signal directly, so a test can prove the machine actually emits
+  /// backCaptureReady from realistic textless-back inputs (#5517). Returns the
+  /// resulting capture state.
+  @visibleForTesting
+  DniCaptureState debugProcessFrameForTest({
+    required DocumentSide detectedSide,
+    required bool addedNewField,
+    required int filledFields,
+  }) =>
+      _recordAndDispatch(
+        detectedSide: detectedSide,
+        addedNewField: addedNewField,
+        filledFields: filledFields,
+      );
 
   @visibleForTesting
   DniCaptureState get debugCaptureState => _captureState;
