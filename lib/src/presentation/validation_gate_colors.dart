@@ -15,5 +15,6 @@ abstract final class ValidationGateColors {
         ValidationGate.sideMismatch => theme.accentOrange,
         ValidationGate.lighting => theme.accentOrange,
         ValidationGate.glare => theme.accentOrange,
+        ValidationGate.quad => theme.accentOrange,
       };
 }

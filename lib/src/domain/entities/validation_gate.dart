@@ -7,7 +7,8 @@ enum ValidationGate {
   tilt,
   sideMismatch,
   lighting,
-  glare;
+  glare,
+  quad;
 
   String get sentryCode => switch (this) {
         ValidationGate.minBlocks => 'min_blocks',
@@ -19,5 +20,6 @@ enum ValidationGate {
         ValidationGate.sideMismatch => 'side_mismatch',
         ValidationGate.lighting => 'lighting',
         ValidationGate.glare => 'glare',
+        ValidationGate.quad => 'quad',
       };
 }
