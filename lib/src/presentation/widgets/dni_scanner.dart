@@ -158,6 +158,12 @@ class DniScanner extends StatefulWidget {
   State<DniScanner> createState() => DniScannerState();
 }
 
+// TEMP DIAG (#5517): single flag that turns on the per-frame BACKTRIG line so
+// the owner can capture device truth for the textless-back trigger. Emits via
+// DniLogger (silent unless DniLogger.enable() is called). Remove this const and
+// every `// TEMP DIAG (#5517)` block to revert — no behavior depends on it.
+const bool _diagBackTrigLogging = true;
+
 class DniScannerState extends State<DniScanner>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late final FieldHunter _hunter;
@@ -411,6 +417,23 @@ class DniScannerState extends State<DniScanner>
         return;
       }
       _frameCaptureable = false;
+      // TEMP DIAG (#5517): an empty-OCR back frame was DROPPED before reaching
+      // the trigger because the quad signal was not valid at this instant (or
+      // we are still in a front phase). On the textless reverso this is the
+      // most likely on-device silence: the quad isolate (350ms throttled) has
+      // not produced a sustained framingValid=true, so _recordAndDispatch is
+      // never called and no BACKTRIG trigger line is emitted. This line makes
+      // that drop visible. Remove with the flag to revert.
+      if (_diagBackTrigLogging && !_isFrontPhase()) {
+        DniLogger.warn(
+          'DniScanner',
+          'BACKTRIG phase=${_stateMachine.phase.name} side=emptyOCR '
+              'framingValid=$_framingValid corners=${_quadCorners.length} '
+              'filled=${_countFilled(_hunter.snapshot.fields)} '
+              'dwell=${_stateMachine.debugIdleFrames} signal=dropped '
+              'onCaptureReady=false',
+        );
+      }
       DniLogger.debug('DniScanner', 'frame skipped — empty OCR');
       return;
     }
@@ -459,6 +482,24 @@ class DniScannerState extends State<DniScanner>
       'side=$detectedSide addedNew=$addedNewField phase=${_stateMachine.phase} '
           'signal=$signal filled=$filledFields/$total framing=$_framingValid',
     );
+
+    // TEMP DIAG (#5517): one concise line per processed frame on the back
+    // trigger path so a device log pinpoints the exact failing link. Logs the
+    // live phase, detector side, the quad signal actually fed to recordFrame,
+    // the quad corner count, the resulting HuntSignal, the dwell counter, and
+    // whether _onCaptureReady fires this frame. Gated behind the flag + the
+    // silent DniLogger; remove with the flag to revert.
+    if (_diagBackTrigLogging && !_isFrontPhase()) {
+      final onCaptureReady = signal == HuntSignal.frontCaptureReady ||
+          signal == HuntSignal.backCaptureReady;
+      DniLogger.warn(
+        'DniScanner',
+        'BACKTRIG phase=${_stateMachine.phase.name} side=${detectedSide.name} '
+            'framingValid=$_framingValid corners=${_quadCorners.length} '
+            'filled=$filledFields dwell=${_stateMachine.debugIdleFrames} '
+            'signal=${signal.name} onCaptureReady=$onCaptureReady',
+      );
+    }
 
     if (mounted &&
         (_stateMachine.phase != _lastPhaseRendered || addedNewField)) {
