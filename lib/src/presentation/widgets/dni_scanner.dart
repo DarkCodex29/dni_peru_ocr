@@ -9,6 +9,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
+import '../../domain/capture/document_quad_detector.dart';
 import '../../domain/capture/motion_stillness_gate.dart';
 import '../../domain/entities/document_side.dart';
 import '../../domain/extraction/dni_fields.dart';
@@ -19,6 +20,7 @@ import '../../domain/extraction/hunt_state_machine.dart';
 import '../../infrastructure/detector_lifecycle.dart';
 import '../../infrastructure/dni_logger.dart';
 import '../../infrastructure/input_image_converter.dart';
+import '../../infrastructure/opencv_quad_detector.dart';
 import '../../lookup/models/dni_data.dart';
 import '../../lookup/models/dni_lookup_result.dart';
 import '../../lookup/services/dni_lookup_service.dart';
@@ -32,6 +34,7 @@ import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
 import '../theme/kyc_theme.dart';
 import 'dni_scan_hints.dart';
+import 'quad_overlay_painter.dart';
 
 enum DniCaptureMode { auto, manual, hybrid }
 
@@ -196,6 +199,12 @@ class DniScannerState extends State<DniScanner>
   int _lastLightingMs = 0;
 
   static const int _lightingIntervalMs = 350;
+
+  late final DocumentQuadDetector _quadDetector;
+  bool _framingValid = true;
+  List<QuadCorner> _quadCorners = const <QuadCorner>[];
+  int _quadFrameWidth = 0;
+  int _quadFrameHeight = 0;
   bool _torchOn = false;
   bool _captureReady = false;
   XFile? _frontPhoto;
@@ -247,6 +256,7 @@ class DniScannerState extends State<DniScanner>
         );
     _motionGate = widget.motionGate ?? SensorsMotionGate();
     _imageQualityGate = widget.imageQualityGate ?? ImageQualityGate();
+    _quadDetector = selectQuadDetector();
     _cameraController = DniCameraController(
       orchestrator: _orchestrator,
       isBackSide: widget.isBackSide ?? false,
@@ -319,7 +329,7 @@ class DniScannerState extends State<DniScanner>
 
   void _onCameraImage(CameraImage image) {
     if (_disposed || _capturing) return;
-    _maybeAnalyzeLighting(image);
+    _maybeAnalyzeFrame(image);
     if (_processing) return;
     _processing = true;
     unawaited(
@@ -329,25 +339,43 @@ class DniScannerState extends State<DniScanner>
     );
   }
 
-  void _maybeAnalyzeLighting(CameraImage image) {
+  /// Runs lighting and (when native is available) quad detection on the same
+  /// Y-plane inside a single isolate hop, reusing one throttle interval and one
+  /// in-flight guard so per-frame analysis never spawns a second isolate or
+  /// outpaces the camera.
+  void _maybeAnalyzeFrame(CameraImage image) {
     if (_analyzingLighting) return;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (nowMs - _lastLightingMs < _lightingIntervalMs) return;
     _lastLightingMs = nowMs;
-    final request = _LightingRequest(
+    final detectQuad = _quadDetector.isNativeAvailable;
+    final request = _FrameAnalysisRequest(
       luminancePlane: image.planes.first.bytes,
       bytesPerRow: image.planes.first.bytesPerRow,
       width: image.width,
       height: image.height,
+      rotationDegrees: widget.controller.description.sensorOrientation,
+      detectQuad: detectQuad,
     );
     _analyzingLighting = true;
     unawaited(
-      Isolate.run(() => _analyzeLighting(request)).then((result) {
+      Isolate.run(() => _analyzeFrame(request)).then((result) {
         if (_disposed) return;
-        _lightingValid = result.isValid;
+        _lightingValid = result.lighting.isValid;
+        if (detectQuad) {
+          _framingValid = result.framingValid;
+          _quadCorners = result.corners;
+          _quadFrameWidth = request.width;
+          _quadFrameHeight = request.height;
+          if (mounted) setState(() {});
+        }
       }).catchError((_) {
         if (_disposed) return;
         _lightingValid = true;
+        if (detectQuad) {
+          _framingValid = true;
+          _quadCorners = const <QuadCorner>[];
+        }
       }).whenComplete(() {
         _analyzingLighting = false;
       }),
@@ -500,6 +528,7 @@ class DniScannerState extends State<DniScanner>
       now: now,
       imuStill: _motionGate.isStill,
       lightingValid: _lightingValid,
+      framingValid: _framingValid,
     );
     if (!identical(next, _captureState)) {
       final firedNow =
@@ -544,6 +573,24 @@ class DniScannerState extends State<DniScanner>
 
   @visibleForTesting
   void debugSetLightingValid(bool value) => _lightingValid = value;
+
+  @visibleForTesting
+  void debugSetFramingValid(bool value) => _framingValid = value;
+
+  @visibleForTesting
+  void debugSetQuad(
+    List<QuadCorner> corners, {
+    int frameWidth = 640,
+    int frameHeight = 480,
+  }) {
+    _quadCorners = corners;
+    _quadFrameWidth = frameWidth;
+    _quadFrameHeight = frameHeight;
+    if (mounted) setState(() {});
+  }
+
+  @visibleForTesting
+  List<QuadCorner> get debugQuadCorners => _quadCorners;
 
   @visibleForTesting
   void debugSetFrameCaptureable(bool value) => _frameCaptureable = value;
@@ -955,6 +1002,24 @@ class DniScannerState extends State<DniScanner>
     }
   }
 
+  List<Offset> _quadPreviewPoints(Size previewSize) {
+    if (_quadCorners.isEmpty ||
+        _quadFrameWidth <= 0 ||
+        _quadFrameHeight <= 0) {
+      return const <Offset>[];
+    }
+    final mirror = widget.controller.description.lensDirection ==
+        CameraLensDirection.front;
+    return mapQuadToPreview(
+      corners: _quadCorners,
+      frameWidth: _quadFrameWidth,
+      frameHeight: _quadFrameHeight,
+      rotationDegrees: widget.controller.description.sensorOrientation,
+      previewSize: previewSize,
+      mirror: mirror,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = KycTheme.of(context);
@@ -980,6 +1045,16 @@ class DniScannerState extends State<DniScanner>
                     borderColor: theme.white,
                     accentColor: _isExtracting() ? theme.success : theme.white,
                     overlayColor: theme.overlayDark,
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: QuadOverlayPainter(
+                    points: _quadPreviewPoints(previewSize),
+                    color: theme.white,
                   ),
                 ),
               ),
@@ -1122,25 +1197,67 @@ const int _cropJpegQuality = 97;
 
 const int _lightingTargetSamples = 64;
 
-class _LightingRequest {
-  const _LightingRequest({
+class _FrameAnalysisRequest {
+  const _FrameAnalysisRequest({
     required this.luminancePlane,
     required this.bytesPerRow,
     required this.width,
     required this.height,
+    required this.rotationDegrees,
+    required this.detectQuad,
   });
 
   final List<int> luminancePlane;
   final int bytesPerRow;
   final int width;
   final int height;
+  final int rotationDegrees;
+  final bool detectQuad;
 }
 
-LightingResult _analyzeLighting(_LightingRequest request) {
-  return LightingGate.evaluate(_downscaleLuminance(request));
+class _FrameAnalysisResult {
+  const _FrameAnalysisResult({
+    required this.lighting,
+    required this.framingValid,
+    required this.corners,
+  });
+
+  final LightingResult lighting;
+  final bool framingValid;
+  final List<QuadCorner> corners;
 }
 
-List<int> _downscaleLuminance(_LightingRequest request) {
+/// Runs lighting evaluation and, when requested, native quad detection on the
+/// same luminance buffer. Executed inside `Isolate.run`; only plain values
+/// cross the boundary. When quad detection is not requested (fallback path),
+/// [_FrameAnalysisResult.framingValid] stays true so framing degrades to the
+/// OCR-block gate and capture is never blocked.
+_FrameAnalysisResult _analyzeFrame(_FrameAnalysisRequest request) {
+  final lighting = LightingGate.evaluate(_downscaleLuminance(request));
+  if (!request.detectQuad) {
+    return _FrameAnalysisResult(
+      lighting: lighting,
+      framingValid: true,
+      corners: const <QuadCorner>[],
+    );
+  }
+  final quad = detectQuadInFrame(
+    QuadFrame(
+      luminance: Uint8List.fromList(request.luminancePlane),
+      width: request.width,
+      height: request.height,
+      bytesPerRow: request.bytesPerRow,
+      rotationDegrees: request.rotationDegrees,
+    ),
+  );
+  return _FrameAnalysisResult(
+    lighting: lighting,
+    framingValid: quad.framingValid,
+    corners: quad.corners,
+  );
+}
+
+List<int> _downscaleLuminance(_FrameAnalysisRequest request) {
   final width = request.width;
   final height = request.height;
   if (width <= 0 || height <= 0 || request.luminancePlane.isEmpty) {
@@ -1168,12 +1285,16 @@ LightingResult analyzeLuminancePlaneForTest({
   required int width,
   required int height,
 }) =>
-    _analyzeLighting(
-      _LightingRequest(
-        luminancePlane: luminancePlane,
-        bytesPerRow: bytesPerRow,
-        width: width,
-        height: height,
+    LightingGate.evaluate(
+      _downscaleLuminance(
+        _FrameAnalysisRequest(
+          luminancePlane: luminancePlane,
+          bytesPerRow: bytesPerRow,
+          width: width,
+          height: height,
+          rotationDegrees: 0,
+          detectQuad: false,
+        ),
       ),
     );
 
