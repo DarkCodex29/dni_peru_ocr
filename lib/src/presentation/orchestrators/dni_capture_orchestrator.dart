@@ -22,6 +22,7 @@ final class DniCaptureOrchestrator {
     required DateTime now,
     bool imuStill = true,
     bool lightingValid = true,
+    bool framingValid = true,
   }) {
     if (current is DniCaptureInFlight ||
         current is DniCaptureExpired ||
@@ -29,7 +30,8 @@ final class DniCaptureOrchestrator {
       return current;
     }
 
-    final entryCaptureable = validation.isCaptureable && lightingValid;
+    final entryCaptureable =
+        validation.isCaptureable && lightingValid && framingValid;
     final holdCaptureable = entryCaptureable && imuStill;
 
     if (current is CountingDownWithAnchor) {

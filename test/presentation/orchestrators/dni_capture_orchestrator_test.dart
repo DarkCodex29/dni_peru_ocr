@@ -764,6 +764,217 @@ void main() {
     });
   });
 
+  // ── Quad framing gate ─────────────────────────────────────────────────────
+
+  group('Quad framing gate', () {
+    late DniCaptureOrchestrator orc;
+
+    setUp(() => orc = _orchestrator(
+          autoCaptureMs: 1500,
+          gracePeriodMs: 600,
+          minStableFrames: 2,
+        ));
+
+    const initial = DniCaptureScanning(
+      guideText: '',
+      failingGate: null,
+      validationProgress: 0,
+      stableFrames: 0,
+      userDataMatch: null,
+      manualModeActive: false,
+    );
+
+    test('framingValid true allows countdown entry when captureable', () {
+      final next = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        framingValid: true,
+      );
+
+      expect(next, isA<DniCaptureCountingDown>());
+    });
+
+    test('framingValid false blocks countdown entry even when captureable', () {
+      final next = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        framingValid: false,
+      );
+
+      expect(next, isA<DniCaptureScanning>());
+    });
+
+    test('framingValid defaults to true so legacy call sites keep counting',
+        () {
+      final next = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+      );
+
+      expect(next, isA<DniCaptureCountingDown>());
+    });
+
+    test(
+        'wrong-side safety: framingValid true cannot override a non-captureable '
+        'validation (preserves OCR-block side gate)', () {
+      // The OCR-block side gate (DocumentValidator sideMismatch / the
+      // HuntStateMachine wrong-side latch) surfaces here as isCaptureable=false.
+      // Quad framing MUST NOT bypass it: a confident quad on the wrong side
+      // still must not auto-capture (#5457/#5484/#5499).
+      final next = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: false),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        framingValid: true,
+      );
+
+      expect(next, isA<DniCaptureScanning>());
+    });
+
+    CountingDownWithAnchor startCounting() {
+      return orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        framingValid: true,
+      ) as CountingDownWithAnchor;
+    }
+
+    test('quad flap to false within grace period keeps the countdown anchor',
+        () {
+      final counting = startCounting();
+
+      final tGrace = t0.add(const Duration(milliseconds: 300)); // < 600ms
+      final next = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tGrace,
+        userDataMatch: null,
+        framingValid: false,
+      );
+
+      expect(
+        next,
+        isA<CountingDownWithAnchor>().having(
+          (c) => c.perfectSinceEpochMs,
+          'perfectSinceEpochMs',
+          equals(counting.perfectSinceEpochMs),
+        ),
+      );
+    });
+
+    test('quad flap true→false→true within grace does NOT reset the countdown',
+        () {
+      final counting = startCounting();
+
+      // Brief drop mid-dwell, still inside the grace window.
+      final tDrop = t0.add(const Duration(milliseconds: 200));
+      final afterDrop = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tDrop,
+        userDataMatch: null,
+        framingValid: false,
+      );
+      expect(afterDrop, isA<CountingDownWithAnchor>());
+
+      // Quad recovers within grace — same anchor must survive.
+      final tRecover = t0.add(const Duration(milliseconds: 400));
+      final afterRecover = orc.onFrame(
+        current: afterDrop,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tRecover,
+        userDataMatch: null,
+        framingValid: true,
+      );
+
+      expect(
+        afterRecover,
+        isA<CountingDownWithAnchor>().having(
+          (c) => c.perfectSinceEpochMs,
+          'perfectSinceEpochMs',
+          equals(counting.perfectSinceEpochMs),
+        ),
+      );
+    });
+
+    test('sustained quad loss beyond grace period resets to scanning', () {
+      final counting = startCounting();
+
+      final tBeyond = t0.add(const Duration(milliseconds: 700)); // > 600ms
+      final next = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tBeyond,
+        userDataMatch: null,
+        framingValid: false,
+      );
+
+      expect(next, isA<DniCaptureScanning>());
+    });
+
+    test('steady quad framing reaches inFlight at autoCaptureMs', () {
+      final counting = startCounting();
+
+      final tCapture = t0.add(const Duration(milliseconds: 1500));
+      final result = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tCapture,
+        userDataMatch: null,
+        framingValid: true,
+      );
+
+      expect(result, isA<DniCaptureInFlight>());
+    });
+
+    test('framing gates entry independently of lighting and imu', () {
+      // Quad invalid blocks even with perfect lighting + stillness.
+      final blockedByFraming = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        framingValid: false,
+        lightingValid: true,
+        imuStill: true,
+      );
+      // Quad valid enters even with a jolt at entry (imu is hold-only).
+      final entersDespiteJolt = orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        framingValid: true,
+        lightingValid: true,
+        imuStill: false,
+      );
+
+      expect(blockedByFraming, isA<DniCaptureScanning>());
+      expect(entersDespiteJolt, isA<DniCaptureCountingDown>());
+    });
+  });
+
   // ── Clock-skew edge cases ─────────────────────────────────────────────────
 
   group('Clock-skew edge cases', () {
