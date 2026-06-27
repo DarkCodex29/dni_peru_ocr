@@ -14,9 +14,19 @@ final class CountingDownWithAnchor extends DniCaptureCountingDown {
     required super.elapsedMs,
     required super.totalMs,
     required this.perfectSinceEpochMs,
+    this.disturbedSinceEpochMs,
   });
 
+  /// Epoch ms when the countdown started (the first perfectly-held frame).
   final int perfectSinceEpochMs;
+
+  /// Epoch ms when the CURRENT continuous disturbance began, or `null` while
+  /// the hold is good. The grace window is measured against the disturbance
+  /// DURATION (`now - disturbedSinceEpochMs`), not the total countdown
+  /// progress, so a brief handheld jitter pauses — never resets — the dwell.
+  /// Only a disturbance that itself spans `gracePeriodMs` aborts the countdown.
+  /// Recovering the hold clears it back to `null` (#5532).
+  final int? disturbedSinceEpochMs;
 }
 
 /// Stream running; waiting for a captureable frame.

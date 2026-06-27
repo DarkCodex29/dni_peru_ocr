@@ -43,19 +43,34 @@ final class DniCaptureOrchestrator {
         if (elapsedMs >= autoCaptureMs) {
           return const DniCaptureInFlight(showFlash: true);
         }
+        // Hold is good: progress accrues and any prior disturbance clears, so
+        // the next jitter starts a fresh grace window.
         return CountingDownWithAnchor(
           guideText: current.guideText,
           elapsedMs: elapsedMs,
           totalMs: autoCaptureMs,
           perfectSinceEpochMs: current.perfectSinceEpochMs,
+          disturbedSinceEpochMs: null,
         );
       } else {
-        if (elapsedMs < gracePeriodMs) {
+        // Hold is broken this frame. The grace window measures how long the
+        // disturbance has lasted CONTINUOUSLY — not the total countdown
+        // progress — so a brief handheld jitter pauses the dwell instead of
+        // resetting it. The reset-loop that hung the textless back compared the
+        // grace against total elapsed: once progress passed the grace mark, a
+        // single jitter frame reset the whole countdown and the back could
+        // never sustain 3s before the next micro-jitter (#5532).
+        final disturbedSince =
+            current.disturbedSinceEpochMs ?? now.millisecondsSinceEpoch;
+        final disturbedForMs = (now.millisecondsSinceEpoch - disturbedSince)
+            .clamp(0, autoCaptureMs * 10);
+        if (disturbedForMs < gracePeriodMs) {
           return CountingDownWithAnchor(
             guideText: current.guideText,
             elapsedMs: current.elapsedMs,
             totalMs: autoCaptureMs,
             perfectSinceEpochMs: current.perfectSinceEpochMs,
+            disturbedSinceEpochMs: disturbedSince,
           );
         }
         return _resetToScanning(current);

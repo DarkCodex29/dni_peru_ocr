@@ -282,12 +282,23 @@ void main() {
       expect(next, isA<DniCaptureCountingDown>());
     });
 
-    test('regression beyond grace period resets to scanning', () {
+    test('regression sustained beyond grace period resets to scanning', () {
       final counting = startCounting(orc);
+
+      // The disturbance must be CONTINUOUS to abort (#5532): a first bad frame
+      // starts it, a second bad frame past the grace window aborts.
+      final tStart = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: false),
+        stableFrames: 0,
+        now: t0.add(const Duration(milliseconds: 50)),
+        userDataMatch: null,
+      );
+      expect(tStart, isA<DniCaptureCountingDown>());
 
       final tBeyond = t0.add(const Duration(milliseconds: 700)); // > 600ms
       final next = orc.onFrame(
-        current: counting,
+        current: tStart,
         validation: _fakeResult(isCaptureable: false),
         stableFrames: 0,
         now: tBeyond,
@@ -300,9 +311,16 @@ void main() {
     test('reset countdown does NOT trigger capture on late frame', () {
       final counting = startCounting(orc);
 
+      final disturbed = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: false),
+        stableFrames: 0,
+        now: t0.add(const Duration(milliseconds: 50)),
+        userDataMatch: null,
+      );
       final tBeyond = t0.add(const Duration(milliseconds: 700));
       final scanning = orc.onFrame(
-        current: counting,
+        current: disturbed,
         validation: _fakeResult(isCaptureable: false),
         stableFrames: 0,
         now: tBeyond,
@@ -321,6 +339,197 @@ void main() {
       );
       expect(afterLate, isA<DniCaptureScanning>());
       expect(afterLate, isNot(isA<DniCaptureInFlight>()));
+    });
+  });
+
+  // ── Intermittent disturbance does not stall the countdown (#5532) ─────────
+
+  // The device-confirmed back hang: the reverso reached backCaptureReady but
+  // its 3s countdown never completed (dwell climbed 125+). Root cause — the
+  // grace window was measured against TOTAL elapsed progress, so once the
+  // countdown passed gracePeriodMs a SINGLE non-hold frame (handheld micro-
+  // jitter, which never stops on a real phone) reset the whole countdown. With
+  // autoCaptureMs(3000) >> gracePeriodMs(600) the back looped 0→600→reset
+  // forever and never fired. The fix measures the DISTURBANCE DURATION
+  // (continuous broken-hold time): a brief jitter pauses the countdown but only
+  // a disturbance that itself spans > gracePeriodMs resets it.
+  group('Intermittent disturbance keeps countdown alive (#5532)', () {
+    late DniCaptureOrchestrator orc;
+
+    setUp(() => orc = _orchestrator(
+          autoCaptureMs: 3000,
+          gracePeriodMs: 600,
+          minStableFrames: 2,
+        ));
+
+    CountingDownWithAnchor startCounting() {
+      const initial = DniCaptureScanning(
+        guideText: '',
+        failingGate: null,
+        validationProgress: 0,
+        stableFrames: 0,
+        userDataMatch: null,
+        manualModeActive: false,
+      );
+      return orc.onFrame(
+        current: initial,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0,
+        userDataMatch: null,
+        imuStill: true,
+      ) as CountingDownWithAnchor;
+    }
+
+    test(
+        'a single jitter frame past the grace mark does NOT reset — the '
+        'disturbance only just started (was the back-hang reset bug)', () {
+      final counting = startCounting();
+
+      // Countdown has progressed well past gracePeriodMs (1000ms > 600ms).
+      // A single not-still frame (jitter) lands here. Under the OLD elapsed-
+      // based grace this reset to scanning; under the disturbance-duration
+      // model the disturbance has lasted 0ms, so it must stay counting.
+      final tJitter = t0.add(const Duration(milliseconds: 1000));
+      final next = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tJitter,
+        userDataMatch: null,
+        imuStill: false,
+      );
+
+      expect(
+        next,
+        isA<CountingDownWithAnchor>().having(
+          (c) => c.perfectSinceEpochMs,
+          'perfectSinceEpochMs',
+          equals(counting.perfectSinceEpochMs),
+        ),
+        reason: 'a brief jitter mid-countdown must pause, not nuke, the dwell',
+      );
+    });
+
+    test(
+        'intermittent jitter throughout the dwell still reaches inFlight at '
+        'autoCaptureMs (the textless back must complete despite handheld '
+        'micro-jitter)', () {
+      var state = startCounting() as DniCaptureState;
+
+      // Walk the full 3s dwell at 100ms steps, flapping imuStill exactly like a
+      // handheld phone: still 3 frames, jitter 1 frame, repeated. Each
+      // individual jitter is a single 100ms frame (< 600ms grace), so the hold
+      // is never CONTINUOUSLY broken past the grace window.
+      DniCaptureState? fired;
+      for (var ms = 100; ms <= 3000; ms += 100) {
+        final still = (ms ~/ 100) % 4 != 0;
+        state = orc.onFrame(
+          current: state,
+          validation: _fakeResult(isCaptureable: true),
+          stableFrames: 2,
+          now: t0.add(Duration(milliseconds: ms)),
+          userDataMatch: null,
+          imuStill: still,
+        );
+        if (state is DniCaptureInFlight) {
+          fired = state;
+          break;
+        }
+        // It must never collapse back to scanning on a brief jitter.
+        expect(
+          state,
+          isA<CountingDownWithAnchor>(),
+          reason: 'intermittent jitter reset the countdown at ms=$ms — the '
+              'device back-hang bug',
+        );
+      }
+
+      expect(
+        fired,
+        isA<DniCaptureInFlight>(),
+        reason: 'the dwell must fire despite intermittent handheld jitter; it '
+            'hung forever before the disturbance-duration fix',
+      );
+    });
+
+    test(
+        'a CONTINUOUS disturbance that itself spans the grace window still '
+        'resets to scanning (real loss of framing/hold must abort)', () {
+      final counting = startCounting();
+
+      // Disturbance starts at t+200 and is sustained across consecutive frames.
+      final tStart = t0.add(const Duration(milliseconds: 200));
+      final disturbed = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tStart,
+        userDataMatch: null,
+        imuStill: false,
+      );
+      expect(disturbed, isA<CountingDownWithAnchor>());
+
+      // Still disturbed 700ms after the disturbance BEGAN (> 600ms grace).
+      final tBeyond = t0.add(const Duration(milliseconds: 900));
+      final next = orc.onFrame(
+        current: disturbed,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: tBeyond,
+        userDataMatch: null,
+        imuStill: false,
+      );
+
+      expect(
+        next,
+        isA<DniCaptureScanning>(),
+        reason: 'a sustained disturbance past the grace window must still abort',
+      );
+    });
+
+    test(
+        'recovering the hold before the disturbance grace elapses clears the '
+        'disturbance so a later jitter gets a fresh grace window', () {
+      final counting = startCounting();
+
+      // Brief disturbance at t+200 (just started).
+      final dist1 = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0.add(const Duration(milliseconds: 200)),
+        userDataMatch: null,
+        imuStill: false,
+      );
+      expect(dist1, isA<CountingDownWithAnchor>());
+
+      // Hold recovers at t+300 — disturbance cleared.
+      final recovered = orc.onFrame(
+        current: dist1,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0.add(const Duration(milliseconds: 300)),
+        userDataMatch: null,
+        imuStill: true,
+      );
+      expect(recovered, isA<CountingDownWithAnchor>());
+
+      // A NEW single jitter much later (t+2000) must NOT instantly reset: the
+      // earlier disturbance was cleared, so this one's grace window is fresh.
+      final dist2 = orc.onFrame(
+        current: recovered,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0.add(const Duration(milliseconds: 2000)),
+        userDataMatch: null,
+        imuStill: false,
+      );
+      expect(
+        dist2,
+        isA<CountingDownWithAnchor>(),
+        reason: 'a fresh isolated jitter after recovery must not reset',
+      );
     });
   });
 
@@ -560,12 +769,24 @@ void main() {
       );
     });
 
-    test('a strong jolt beyond grace period resets to scanning', () {
+    test('a sustained jolt beyond grace period resets to scanning', () {
       final counting = startCounting();
+
+      // A continuous jolt (#5532): a first not-still frame begins the
+      // disturbance, a second not-still frame past the grace window aborts.
+      final jolted = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0.add(const Duration(milliseconds: 50)),
+        userDataMatch: null,
+        imuStill: false,
+      );
+      expect(jolted, isA<DniCaptureCountingDown>());
 
       final tBeyond = t0.add(const Duration(milliseconds: 700));
       final next = orc.onFrame(
-        current: counting,
+        current: jolted,
         validation: _fakeResult(isCaptureable: true),
         stableFrames: 2,
         now: tBeyond,
@@ -717,9 +938,21 @@ void main() {
     test('sustained bad lighting beyond grace period resets to scanning', () {
       final counting = startCounting();
 
+      // Continuous bad lighting (#5532): begins on a first bad frame, aborts on
+      // a second bad frame past the grace window.
+      final dim = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0.add(const Duration(milliseconds: 50)),
+        userDataMatch: null,
+        lightingValid: false,
+      );
+      expect(dim, isA<DniCaptureCountingDown>());
+
       final tBeyond = t0.add(const Duration(milliseconds: 700));
       final next = orc.onFrame(
-        current: counting,
+        current: dim,
         validation: _fakeResult(isCaptureable: true),
         stableFrames: 2,
         now: tBeyond,
@@ -917,9 +1150,22 @@ void main() {
     test('sustained quad loss beyond grace period resets to scanning', () {
       final counting = startCounting();
 
+      // Continuous quad loss (#5532): begins on a first lost frame, aborts on a
+      // second lost frame past the grace window. A brief blip alone never
+      // resets (covered by the flap-within-grace tests above).
+      final lost = orc.onFrame(
+        current: counting,
+        validation: _fakeResult(isCaptureable: true),
+        stableFrames: 2,
+        now: t0.add(const Duration(milliseconds: 50)),
+        userDataMatch: null,
+        framingValid: false,
+      );
+      expect(lost, isA<DniCaptureCountingDown>());
+
       final tBeyond = t0.add(const Duration(milliseconds: 700)); // > 600ms
       final next = orc.onFrame(
-        current: counting,
+        current: lost,
         validation: _fakeResult(isCaptureable: true),
         stableFrames: 2,
         now: tBeyond,

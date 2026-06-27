@@ -677,6 +677,9 @@ class DniScannerState extends State<DniScanner>
   @visibleForTesting
   DniCaptureState get debugCaptureState => _captureState;
 
+  @visibleForTesting
+  HuntPhase get debugHuntPhase => _stateMachine.phase;
+
   /// Auto-capture countdown progress (0 → 1) currently fed to the hole
   /// overlay. Zero whenever no countdown is running, so the ring is hidden.
   double get _countdownProgress {
