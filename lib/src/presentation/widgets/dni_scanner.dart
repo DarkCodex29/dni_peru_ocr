@@ -196,10 +196,6 @@ class DniScannerState extends State<DniScanner>
   int _lastLightingMs = 0;
 
   static const int _lightingIntervalMs = 350;
-
-  // TEMP DIAG (#5453): per-frame gate logging for the auto-capture stall
-  // (Root Cause B). Set to false / delete this block after the device run.
-  static const bool _diagGateLogging = true;
   bool _torchOn = false;
   bool _captureReady = false;
   XFile? _frontPhoto;
@@ -400,18 +396,6 @@ class DniScannerState extends State<DniScanner>
       'side=$detectedSide addedNew=$addedNew phase=${_stateMachine.phase} '
           'signal=$signal filled=$filled/$total',
     );
-
-    // TEMP DIAG (#5453): one line per frame so the owner can confirm WHERE the
-    // auto-capture gate stalls on device. Remove with _diagGateLogging.
-    if (_diagGateLogging) {
-      DniLogger.warn(
-        'DniScanner',
-        'GATE phase=${_stateMachine.phase} addedNew=$addedNew '
-            'idle=${_stateMachine.debugIdleFrames} filled=$filled/$total '
-            'lightingValid=$_lightingValid motionStill=${_motionGate.isStill} '
-            'signal=$signal',
-      );
-    }
 
     if (mounted &&
         (_stateMachine.phase != _lastPhaseRendered || addedNew)) {
