@@ -175,12 +175,6 @@ class DniScanner extends StatefulWidget {
   State<DniScanner> createState() => DniScannerState();
 }
 
-// TEMP DIAG (#5517): single flag that turns on the per-frame BACKTRIG line so
-// the owner can capture device truth for the textless-back trigger. Emits via
-// DniLogger (silent unless DniLogger.enable() is called). Remove this const and
-// every `// TEMP DIAG (#5517)` block to revert — no behavior depends on it.
-const bool _diagBackTrigLogging = true;
-
 class DniScannerState extends State<DniScanner>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late final FieldHunter _hunter;
@@ -400,13 +394,6 @@ class DniScannerState extends State<DniScanner>
         if (_disposed) return;
         _lightingValid = result.lighting.isValid;
         if (detectQuad) {
-          // TEMP DIAG (#corners0): emit the per-detection pipeline funnel on the
-          // MAIN isolate, where DniLogger is enabled. Grep `QUADPIPE` on device
-          // to see WHERE the quad is lost. Remove with the rest of the diag.
-          final diag = result.quadPipeDiag;
-          if (diag != null) {
-            DniLogger.warn('QUADPIPE', diag.format());
-          }
           _framingValid = result.framingValid;
           _quadCorners = result.corners;
           _quadFrameWidth = request.width;
@@ -486,22 +473,6 @@ class DniScannerState extends State<DniScanner>
     }
     _frameCaptureable = false;
     _setDocumentPresent(false);
-    // TEMP DIAG (#5517/#5523): an empty-OCR back frame was DROPPED before
-    // reaching the trigger because the quad signal was not valid at this
-    // instant. On the textless reverso this is the most likely on-device
-    // silence: the quad isolate (350ms throttled) has not produced a sustained
-    // framingValid=true, so the trigger is never driven and no BACKTRIG line is
-    // emitted. This line makes that drop visible. Remove with the flag.
-    if (_diagBackTrigLogging && !_isFrontPhase()) {
-      DniLogger.warn(
-        'DniScanner',
-        'BACKTRIG phase=${_stateMachine.phase.name} side=emptyOCR '
-            'framingValid=$_framingValid corners=${_quadCorners.length} '
-            'filled=${_countFilled(_hunter.snapshot.fields)} '
-            'dwell=${_stateMachine.debugIdleFrames} signal=dropped '
-            'onCaptureReady=false',
-      );
-    }
     DniLogger.debug('DniScanner', 'frame skipped — empty OCR');
     return _captureState;
   }
@@ -531,24 +502,6 @@ class DniScannerState extends State<DniScanner>
       'side=$detectedSide addedNew=$addedNewField phase=${_stateMachine.phase} '
           'signal=$signal filled=$filledFields/$total framing=$_framingValid',
     );
-
-    // TEMP DIAG (#5517): one concise line per processed frame on the back
-    // trigger path so a device log pinpoints the exact failing link. Logs the
-    // live phase, detector side, the quad signal actually fed to recordFrame,
-    // the quad corner count, the resulting HuntSignal, the dwell counter, and
-    // whether _onCaptureReady fires this frame. Gated behind the flag + the
-    // silent DniLogger; remove with the flag to revert.
-    if (_diagBackTrigLogging && !_isFrontPhase()) {
-      final onCaptureReady = signal == HuntSignal.frontCaptureReady ||
-          signal == HuntSignal.backCaptureReady;
-      DniLogger.warn(
-        'DniScanner',
-        'BACKTRIG phase=${_stateMachine.phase.name} side=${detectedSide.name} '
-            'framingValid=$_framingValid corners=${_quadCorners.length} '
-            'filled=$filledFields dwell=${_stateMachine.debugIdleFrames} '
-            'signal=${signal.name} onCaptureReady=$onCaptureReady',
-      );
-    }
 
     if (mounted &&
         (_stateMachine.phase != _lastPhaseRendered || addedNewField)) {
@@ -1432,16 +1385,11 @@ class _FrameAnalysisResult {
     required this.lighting,
     required this.framingValid,
     required this.corners,
-    this.quadPipeDiag, // TEMP DIAG (#corners0): null on the fallback path
   });
 
   final LightingResult lighting;
   final bool framingValid;
   final List<QuadCorner> corners;
-
-  // TEMP DIAG (#corners0): per-detection pipeline funnel carried OUT of the
-  // isolate so it can be logged on the main isolate where DniLogger is live.
-  final QuadPipeDiag? quadPipeDiag;
 }
 
 /// Runs lighting evaluation and, when requested, native quad detection on the
@@ -1458,11 +1406,7 @@ _FrameAnalysisResult _analyzeFrame(_FrameAnalysisRequest request) {
       corners: const <QuadCorner>[],
     );
   }
-  // TEMP DIAG (#corners0): use the diag-aware entry point so the per-stage
-  // funnel travels back out of the isolate. Swap back to detectQuadInFrame and
-  // drop quadPipeDiag to remove. Behaviour/result is identical either way.
-  final diag = QuadPipeDiag();
-  final quad = detectQuadInFrameDiag(
+  final quad = detectQuadInFrame(
     QuadFrame(
       luminance: Uint8List.fromList(request.luminancePlane),
       width: request.width,
@@ -1470,13 +1414,11 @@ _FrameAnalysisResult _analyzeFrame(_FrameAnalysisRequest request) {
       bytesPerRow: request.bytesPerRow,
       rotationDegrees: request.rotationDegrees,
     ),
-    diag,
   );
   return _FrameAnalysisResult(
     lighting: lighting,
     framingValid: quad.framingValid,
     corners: quad.corners,
-    quadPipeDiag: diag,
   );
 }
 

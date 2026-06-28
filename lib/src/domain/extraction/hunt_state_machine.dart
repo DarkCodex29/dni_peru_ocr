@@ -80,11 +80,6 @@ class HuntStateMachine {
 
   HuntPhase get phase => _phase;
 
-  /// TEMP DIAG (#5517): current idle/dwell counter, exposed so the scanner can
-  /// log the back-trigger dwell progress per frame on device. Remove with the
-  /// rest of the BACKTRIG diagnostics.
-  int get debugIdleFrames => _idleFrames;
-
   HuntSignal recordFrame({
     required DocumentSide detectedSide,
     required bool addedNewField,
