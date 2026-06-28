@@ -21,7 +21,6 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
-import 'package:dni_peru_ocr/src/infrastructure/opencv_quad_detector.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const int _frameWidth = 640;
