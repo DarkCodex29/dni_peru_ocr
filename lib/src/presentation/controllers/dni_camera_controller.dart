@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 
-import '../document_validator.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
 import '../orchestrators/dni_capture_state.dart';
 import '../../data/ocr_consensus.dart';
@@ -14,51 +13,12 @@ import '../../lookup/reliable/dni_data_merger.dart';
 import '../../lookup/reliable/reliable_dni_pipeline.dart';
 import '../../lookup/services/dni_lookup_service.dart';
 
-/// Diagnostic telemetry emitted each time a camera frame is processed.
-@immutable
-class DniTelemetry {
-  const DniTelemetry({
-    required this.stableFrames,
-    required this.failingGate,
-    this.tiltDegrees = 0.0,
-    this.rawBlockCount = 0,
-    this.filteredBlockCount = 0,
-  });
-
-  final int stableFrames;
-  final String? failingGate;
-  final double tiltDegrees;
-  final int rawBlockCount;
-  final int filteredBlockCount;
-
-  @override
-  bool operator ==(Object other) {
-    if (identical(this, other)) return true;
-    return other is DniTelemetry &&
-        other.stableFrames == stableFrames &&
-        other.failingGate == failingGate &&
-        other.tiltDegrees == tiltDegrees &&
-        other.rawBlockCount == rawBlockCount &&
-        other.filteredBlockCount == filteredBlockCount;
-  }
-
-  @override
-  int get hashCode => Object.hash(
-        stableFrames,
-        failingGate,
-        tiltDegrees,
-        rawBlockCount,
-        filteredBlockCount,
-      );
-}
-
 /// Pure Dart lifecycle controller for the DNI camera capture flow.
 class DniCameraController {
   DniCameraController({
     required DniCaptureOrchestrator orchestrator,
     required bool isBackSide,
     required void Function(XFile file, OcrConsensusResult? consensus) onValidCapture,
-    void Function(DateTime expirationDate)? onDocumentExpired,
     OcrLogger logger = const NoOpOcrLogger(),
     DniLookupService? lookupService,
     void Function(DniData)? onDniReady,
@@ -66,7 +26,6 @@ class DniCameraController {
   })  : _orchestrator = orchestrator,
         _isBackSide = isBackSide,
         _onValidCapture = onValidCapture,
-        _onDocumentExpired = onDocumentExpired,
         _logger = logger,
         _onDniReady = onDniReady,
         _pipeline = lookupService != null
@@ -85,9 +44,6 @@ class DniCameraController {
             userDataMatch: null,
             manualModeActive: false,
           ),
-        ),
-        _telemetryNotifier = ValueNotifier(
-          const DniTelemetry(stableFrames: 0, failingGate: null),
         );
 
   final DniCaptureOrchestrator _orchestrator;
@@ -110,21 +66,15 @@ class DniCameraController {
 
   final void Function(XFile file, OcrConsensusResult? consensus) _onValidCapture;
 
-  final void Function(DateTime expirationDate)? _onDocumentExpired;
-
   final ValueNotifier<DniCaptureState> _captureStateNotifier;
-  final ValueNotifier<DniTelemetry> _telemetryNotifier;
 
   bool _isDisposed = false;
-  bool _expiredHandled = false;
   bool _pipelineFired = false;
   Timer? _manualFallbackTimer;
 
   OcrConsensusAccumulator? _accumulator;
 
   ValueListenable<DniCaptureState> get captureState => _captureStateNotifier;
-
-  ValueListenable<DniTelemetry> get telemetry => _telemetryNotifier;
 
   bool get isBackSide => _isBackSide;
 
@@ -179,7 +129,6 @@ class DniCameraController {
   }) {
     if (_isDisposed) return;
     _manualFallbackTimer?.cancel();
-    _expiredHandled = false;
     _pipelineFired = false;
 
     _isBackSide = isBackSide;
@@ -277,46 +226,6 @@ class DniCameraController {
   /// Emits the current consensus snapshot, or `null` when no accumulator is active.
   OcrConsensusResult? snapshotConsensus() => _accumulator?.snapshot();
 
-  /// Processes a single camera frame.
-  void processFrame({
-    required DocumentValidationResult validation,
-    required int stableFrames,
-    required bool? userDataMatch,
-    DateTime? expirationDate,
-    String? failingGate,
-    double tiltDegrees = 0.0,
-    int rawBlockCount = 0,
-    int filteredBlockCount = 0,
-  }) {
-    if (_isDisposed) return;
-
-    if (expirationDate != null && !_expiredHandled) {
-      if (expirationDate.isBefore(DateTime.now())) {
-        _expiredHandled = true;
-        _updateState(DniCaptureExpired(expirationDate));
-        _onDocumentExpired?.call(expirationDate);
-        return;
-      }
-    }
-
-    final next = _orchestrator.onFrame(
-      current: _captureStateNotifier.value,
-      validation: validation,
-      stableFrames: stableFrames,
-      userDataMatch: userDataMatch,
-      now: DateTime.now(),
-    );
-    _updateState(next);
-
-    _telemetryNotifier.value = DniTelemetry(
-      stableFrames: stableFrames,
-      failingGate: failingGate,
-      tiltDegrees: tiltDegrees,
-      rawBlockCount: rawBlockCount,
-      filteredBlockCount: filteredBlockCount,
-    );
-  }
-
   /// Notifies the controller that the widget has completed a capture.
   void onCaptureDelivered({
     required XFile file,
@@ -336,7 +245,6 @@ class DniCameraController {
     _accumulator?.dispose();
     _accumulator = null;
     _captureStateNotifier.dispose();
-    _telemetryNotifier.dispose();
   }
 
   void _resolveAndDeliver(DniData ocrData) {

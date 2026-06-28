@@ -16,8 +16,6 @@ export 'src/data/strategies/address_field_strategy.dart';
 export 'src/data/strategies/mrz_field_strategy.dart';
 export 'src/data/strategies/ocr_field_strategy.dart';
 export 'src/data/strategies/text_ocr_field_strategy.dart';
-export 'src/domain/capture/capture_decider.dart';
-export 'src/domain/capture/capture_signal.dart';
 export 'src/domain/capture/document_quad_detector.dart';
 export 'src/domain/capture/motion_stillness_gate.dart';
 export 'src/domain/capture/stability_state.dart';
