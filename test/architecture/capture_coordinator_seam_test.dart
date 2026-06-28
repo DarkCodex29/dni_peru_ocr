@@ -115,8 +115,9 @@ void main() {
       expect(
         allSources.contains('package:flutter/'),
         isFalse,
-        reason: 'the coordinator owns no widget/timer state in PR3a; it must '
-            'stay pure Dart so it is trivially testable and layer-clean.',
+        reason: 'the coordinator owns the countdown/dwell state (PR4) but must '
+            'stay free of any Flutter framework import so it is trivially '
+            'testable and layer-clean.',
       );
       expect(
         allSources.contains('package:dartcv'),

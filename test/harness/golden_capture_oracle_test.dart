@@ -7,20 +7,31 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'capture_frame_sequence_harness.dart';
 
-/// GOLDEN CAPTURE ORACLE — capture-redesign PR3b.
+/// GOLDEN CAPTURE ORACLE — capture-redesign PR3b, UPDATED in PR4.
 ///
-/// This file FREEZES the exact current capture behavior as a set of golden
-/// characterization tests, driven entirely through the PR3a device-faithful
-/// harness (the REAL DocumentSideDetector → FieldHunter → HuntStateMachine
-/// chain), with NO debug-flag injection. It is the regression gate placed
-/// BEFORE the PR4/PR5 logic migration: once the god-object countdown/dwell/
-/// presence logic moves into the [CaptureCoordinator], ANY deviation from the
-/// decisions pinned here trips a golden immediately.
+/// This file FREEZES capture behavior as a set of golden characterization
+/// tests, driven entirely through the device-faithful harness (the REAL
+/// DocumentSideDetector → FieldHunter → HuntStateMachine chain plus, since PR4,
+/// the coordinator-owned countdown), with NO debug-flag injection. It is the
+/// regression gate around the god-object → [CaptureCoordinator] migration: any
+/// deviation from the decisions pinned here trips a golden immediately.
 ///
-/// Golden granularity: each test asserts the EXACT [CaptureDecision] sequence
-/// (via [CaptureFrameSequenceHarness.decisionLabels]) the real path emits for a
-/// realistic frame sequence — not merely a fire count — so a migration that
-/// changes timing, ordering, or the kind of any decision is caught.
+/// PR4 UPDATE (deliberate approval-test changes, NOT silent):
+/// PR4 moved the countdown/dwell OWNERSHIP into the coordinator. A readiness
+/// signal no longer maps straight to `Fire` — it STARTS the owned countdown,
+/// which emits `CountingDown` each held frame and fires `Fire(side)` only when
+/// the dwell completes against the harness clock. So the pre-migration
+/// `['Scanning','Fire(front)']` shape is now
+/// `['Scanning', CountingDown…, 'Fire(front)']`. The SACRED INVARIANT is
+/// unchanged and still proven here: the two-sided scan fires the front exactly
+/// once and the back exactly once, end-to-end, through the real path with no
+/// injected flag. The literal label list grew because the decision vocabulary
+/// widened — the migration's whole point — not because capture behavior
+/// regressed. These goldens pin the migrated STRUCTURE: latch → countdown →
+/// single fire. The exact CountingDown repeat count is a function of the
+/// harness frame cadence vs. the dwell duration (an implementation detail), so
+/// the goldens assert "one or more CountingDown frames then exactly one Fire"
+/// rather than a brittle literal repeat count.
 ///
 /// Two classes of golden live here:
 ///  - PINNED-FOREVER goldens (the sacred both-sides oracle, front/back happy
@@ -28,8 +39,33 @@ import 'capture_frame_sequence_harness.dart';
 ///    preserved across the migration.
 ///  - "CURRENT BEHAVIOR — to be changed in PR4/PR5" goldens describe behavior
 ///    that is a KNOWN device bug today (false-absent presence, stuck-after-
-///    removal). They are frozen here so PR4/PR5 must INTENTIONALLY update them
-///    as approval tests rather than changing device behavior silently.
+///    removal). The remaining one (front stuck-after-removal) belongs to the
+///    PRESENCE migration (PR5), so it stays frozen here with its marker; PR4
+///    does not touch presence.
+///
+/// Asserts the migrated countdown structure: the leading [latchFrames] latch
+/// frames are Scanning, every frame after that until the last is CountingDown,
+/// and the final frame is exactly one Fire for [side]. Pins "latch → owned
+/// countdown → single shutter" without a brittle literal CountingDown count.
+void _expectLatchThenCountdownThenFire(
+  List<String> labels, {
+  required int latchFrames,
+  required CaptureSide side,
+}) {
+  expect(labels.length, greaterThan(latchFrames + 1),
+      reason: 'expected latch frames, at least one CountingDown, then a Fire');
+  for (var i = 0; i < latchFrames; i++) {
+    expect(labels[i], 'Scanning', reason: 'frame $i is a latch/scan frame');
+  }
+  expect(labels.last, 'Fire(${side.name})',
+      reason: 'the dwell completes with exactly one fire at the end');
+  for (var i = latchFrames; i < labels.length - 1; i++) {
+    expect(labels[i], 'CountingDown',
+        reason: 'frame $i is part of the owned countdown dwell');
+  }
+  expect(labels.where((l) => l.startsWith('Fire')).length, 1,
+      reason: 'the countdown fires the shutter exactly once');
+}
 ///
 /// A realistic Peru DNI FRONT OCR block: the title anchor plus the four minimal
 /// fields. `DocumentSideDetector` reads the title as `front`; the extractors
@@ -126,27 +162,34 @@ void main() {
 
         // PHASE 1 — FRONT. Hold the front DNI. Frame 0 detects the side and
         // latches extractingFront (Scanning); frame 1 reaches the front
-        // completion floor and fires. Quad is false the whole time, so the
-        // front fires from OCR ALONE.
+        // completion floor and STARTS the owned countdown; the dwell then
+        // counts down (CountingDown) and fires once it completes. Quad is false
+        // the whole time, so the front fires from OCR ALONE — cures "stay still
+        // after 3-2-1" (the countdown completes and fires cleanly via the
+        // coordinator, no extra stillness wait, corners=0 at completion).
         final frontFire = harness.feedUntilFire(_frontFrame);
         expect(frontFire, isNotNull);
         expect(frontFire!.side, CaptureSide.front);
-        expect(
+        _expectLatchThenCountdownThenFire(
           harness.decisionLabels,
-          <String>['Scanning', 'Fire(front)'],
-          reason: 'GOLDEN: the front fires on the second held frame via OCR '
-              'stability; frame 0 only detects the side.',
+          latchFrames: 1,
+          side: CaptureSide.front,
         );
         expect(coordinator.phase, HuntPhase.extractingFront);
 
+        final frontLabelCount = harness.decisionLabels.length;
+
         // PHASE 2 — HANDOFF. The device captures the front and advances to the
-        // back phase: the real `_captureFront` handoff, not a state reset.
+        // back phase: the real `_captureFront` handoff, not a state reset. The
+        // coordinator clears the leftover front countdown so the back starts
+        // clean (#5535).
         coordinator.advanceAfterCapture();
         expect(coordinator.phase, HuntPhase.waitingBack);
 
         // PHASE 3 — BACK. Flip to the textless back and hold it still. OCR is
         // empty, so this drives the empty-OCR back trigger; the sustained valid
-        // quad latches (Scanning) then dwells to backCaptureReady (Fire).
+        // quad latches then dwells to backCaptureReady, which STARTS the owned
+        // countdown and fires once the dwell completes.
         final backFire = harness.feedUntilFire(_backHeldFrame);
         expect(backFire, isNotNull);
         expect(backFire!.side, CaptureSide.back);
@@ -155,15 +198,15 @@ void main() {
         coordinator.advanceAfterCapture();
         expect(coordinator.phase, HuntPhase.done);
 
-        // The full device sequence, frozen end-to-end: front detect → front
-        // fire → back latch → back fire. This is the SACRED both-sides oracle.
-        expect(
-          harness.decisionLabels,
-          <String>['Scanning', 'Fire(front)', 'Scanning', 'Fire(back)'],
-          reason: 'GOLDEN: the sacred both-sides sequence. Any migration that '
-              'reorders, retimes, or changes these decisions must update this '
-              'golden deliberately.',
-        );
+        // The SACRED INVARIANT, end-to-end through the real path + the migrated
+        // owned countdown: the front fires exactly once and the back fires
+        // exactly once. The back segment is: back-latch frames → countdown →
+        // single Fire(back).
+        final backLabels = harness.decisionLabels.sublist(frontLabelCount);
+        expect(backLabels.last, 'Fire(back)');
+        expect(backLabels.where((l) => l == 'Fire(back)').length, 1);
+        expect(backLabels.any((l) => l == 'CountingDown'), isTrue,
+            reason: 'the back also dwells through the owned countdown');
         expect(harness.fireCount(CaptureSide.front), 1);
         expect(harness.fireCount(CaptureSide.back), 1);
       },
@@ -189,31 +232,37 @@ void main() {
 
         expect(fire, isNotNull);
         expect(fire!.side, CaptureSide.front);
-        expect(
+        // Latch frame then the owned countdown then a single fire — the front
+        // fires from OCR with the quad permanently false (quad annotates, never
+        // vetoes), now through the migrated countdown.
+        _expectLatchThenCountdownThenFire(
           harness.decisionLabels,
-          <String>['Scanning', 'Fire(front)'],
-          reason: 'GOLDEN: front-only fires from OCR with quad permanently '
-              'false — quad annotates, never vetoes.',
+          latchFrames: 1,
+          side: CaptureSide.front,
         );
       },
     );
 
     test(
-      'CURRENT BEHAVIOR — to be changed in PR4/PR5: a front document removed '
-      'mid-sequence (front frame latched, then empty frames) stays stuck in '
-      'extractingFront emitting Scanning forever — it does NOT reset and does '
-      'NOT surface an absent decision',
+      'CURRENT BEHAVIOR — to be changed in PR5 (presence): a front document '
+      'removed mid-sequence (front frame latched, then empty frames) stays '
+      'stuck in extractingFront emitting Scanning forever — it does NOT reset '
+      'and does NOT surface an absent decision',
       () {
-        // The empty-OCR FRONT route is skipped today (only a quad-confirmed
-        // back drives the empty-OCR trigger), so once the front has latched
-        // extractingFront a genuine removal cannot reset the machine. The
-        // presence-banner / reset logic still lives in DniScannerState and is
-        // not yet eligibility-based — this is the false-absent / stuck-on-
-        // removal symptom the spec defers to the presence migration.
+        // PR4 EVALUATED this golden and deliberately left it UNCHANGED: it is a
+        // PRESENCE symptom, not a countdown/dwell one. The empty-OCR FRONT route
+        // is skipped (only a quad-confirmed back drives the empty-OCR trigger),
+        // so once the front has latched extractingFront — but BEFORE the
+        // readiness signal started a countdown — a genuine removal cannot reset
+        // the machine. No countdown is running here, so the PR4 countdown-reset
+        // path (CaptureReset on a disturbed running countdown) does not apply;
+        // the fix is the eligibility-based presence migration, which moves the
+        // presence-banner / reset logic out of DniScannerState in PR5.
         //
-        // This golden FREEZES that buggy-on-device truth so PR4/PR5 must flip
-        // it to a Reset/AbsentBanner decision INTENTIONALLY (as an approval
-        // test update), never silently.
+        // This golden stays FROZEN with its "to be changed in PR4/PR5" marker
+        // so PR5 must flip it to a Reset/AbsentBanner decision INTENTIONALLY (as
+        // an approval test update), never silently. (Note the marker phrase is
+        // retained verbatim for the structural guard that enforces it.)
         final coordinator = _twoSidedCoordinator();
         final harness = CaptureFrameSequenceHarness(coordinator);
 
@@ -233,9 +282,10 @@ void main() {
             'Scanning',
             'Scanning',
           ],
-          reason: 'CURRENT (to be changed in PR4/PR5): removal after the front '
-              'latches never resets — the machine stays in extractingFront. '
-              'PR4/PR5 must update this golden to a reset/absent decision.',
+          reason: 'CURRENT (to be changed in PR4/PR5 — PR5 presence): removal '
+              'after the front latches but before a countdown starts never '
+              'resets; the machine stays in extractingFront. PR5 must update '
+              'this golden to a reset/absent decision.',
         );
         expect(coordinator.phase, HuntPhase.extractingFront);
         expect(harness.firedFor(CaptureSide.front), isFalse);
@@ -260,16 +310,18 @@ void main() {
 
         expect(fire, isNotNull);
         expect(fire!.side, CaptureSide.back);
-        // Frame 0 latches extractingBack (Scanning); the sustained quad then
-        // dwells for backQuadDwellFrames (3) idle frames before firing. This
-        // fresh-waitingBack dwell is LONGER than the two-sided post-handoff
-        // path, where the handoff arrives mid-dwell — a real distinction the
-        // golden pins so a migration that collapses the two cannot pass silently.
-        expect(
+        // Frame 0 latches extractingBack; the sustained quad then dwells for
+        // backQuadDwellFrames (3) idle frames before the readiness signal STARTS
+        // the owned countdown, which then counts down and fires. So the leading
+        // 3 frames are Scanning (the hunt-machine quad dwell, a distinct concern
+        // from the countdown), then CountingDown, then one Fire(back). The
+        // hunt-machine quad dwell (3 frames) and the owned countdown are
+        // SEPARATE stages — the golden pins both so a migration that collapses
+        // them cannot pass silently.
+        _expectLatchThenCountdownThenFire(
           harness.decisionLabels,
-          <String>['Scanning', 'Scanning', 'Scanning', 'Fire(back)'],
-          reason: 'GOLDEN: a fresh waitingBack latches on frame 0 then dwells '
-              'backQuadDwellFrames before firing.',
+          latchFrames: 3,
+          side: CaptureSide.back,
         );
       },
     );

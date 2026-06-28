@@ -27,7 +27,8 @@ import '../../lookup/services/dni_lookup_service.dart';
 import '../../infrastructure/sensors_motion_gate.dart';
 import '../camera_overlay_logic.dart';
 import '../controllers/dni_camera_controller.dart';
-import '../document_validator.dart';
+import '../coordinators/capture_coordinator.dart';
+import '../coordinators/capture_decision.dart';
 import '../framing/framing_signal.dart';
 import '../image_quality_gate.dart';
 import '../lighting_gate.dart';
@@ -185,6 +186,7 @@ class DniScannerState extends State<DniScanner>
   late final AnimationController _pulse;
   late final AnimationController _captureFlash;
   late final DniCaptureOrchestrator _orchestrator;
+  late final CaptureCoordinator _coordinator;
   late final DniCameraController _cameraController;
   late final MotionStillnessGate _motionGate;
   late final ImageQualityGate _imageQualityGate;
@@ -192,14 +194,11 @@ class DniScannerState extends State<DniScanner>
   static const int maxBlurRetries = 2;
   int _blurRetries = 0;
 
-  DniCaptureState _captureState = const DniCaptureScanning(
-    guideText: '',
-    failingGate: null,
-    validationProgress: 0,
-    stableFrames: 0,
-    userDataMatch: null,
-    manualModeActive: false,
-  );
+  /// The capture/countdown state is now OWNED by [_coordinator] (PR4 migration);
+  /// the widget reads it through this getter to render the 3-2-1 counter and
+  /// flash from the single coordinator-owned source.
+  DniCaptureState get _captureState => _coordinator.captureState;
+
   Timer? _countdownTicker;
   DateTime? _countdownAnchor;
   int _countdownElapsedMs = 0;
@@ -274,6 +273,17 @@ class DniScannerState extends State<DniScanner>
           manualFallbackMs: widget.manualFallbackMs,
           minStableFrames: widget.minStableFrames,
         );
+    // The coordinator OWNS the countdown/dwell decision (PR4). It SHARES this
+    // widget's hunt machine, hunter and orchestrator so there is a single
+    // source of truth — the widget renders from the same machine the
+    // coordinator decides from, with no duplicated/divergent state.
+    _coordinator = CaptureCoordinator(
+      isBackSide: widget.isBackSide,
+      minStableFrames: widget.minStableFrames,
+      hunter: _hunter,
+      stateMachine: _stateMachine,
+      orchestrator: _orchestrator,
+    );
     _motionGate = widget.motionGate ?? SensorsMotionGate();
     _imageQualityGate = widget.imageQualityGate ?? ImageQualityGate();
     _quadDetector = selectQuadDetector();
@@ -536,18 +546,27 @@ class DniScannerState extends State<DniScanner>
     return _captureState;
   }
 
+  /// Starts (or continues) the coordinator-owned countdown for [signal]'s side
+  /// and drives the dwell through the widget's periodic ticker (PR4 migration).
+  ///
+  /// The countdown DECISION + state now live in [_coordinator]; the widget only
+  /// supplies the camera-pause ticker that advances the dwell clock and renders
+  /// the returned [CaptureDecision]. Idempotent: re-entry while a countdown runs
+  /// keeps the live anchor instead of collapsing progress back to ~0.
   void _onCaptureReady(HuntSignal signal) {
     if (_capturing || _disposed) return;
     if (_captureState is DniCaptureInFlight ||
         _captureState is DniCaptureDone) {
       return;
     }
+    final side = signal == HuntSignal.backCaptureReady
+        ? CaptureSide.back
+        : CaptureSide.front;
+    // The readiness signal makes this frame capture-eligible — the blocking
+    // signal the coordinator's countdown reads on the next tick. (Set here too
+    // for the debugFeedCaptureReady path, which enters without _recordAndDispatch.)
     _frameCaptureable = true;
-    // Idempotent entry: once a countdown is running, repeated capture-ready
-    // frames must NOT restart it. Resetting the anchor/elapsed and the ticker
-    // every frame collapses synthetic progress back to ~0, so the ring never
-    // fills and auto-capture only fires by chance. Keep the live anchor and
-    // let the existing ticker keep accumulating progress toward 1.0.
+    _coordinator.beginCountdown(side);
     if (_captureState is CountingDownWithAnchor) {
       _advanceCapture();
       if (mounted) setState(() {});
@@ -574,15 +593,15 @@ class DniScannerState extends State<DniScanner>
       return;
     }
     _countdownElapsedMs += _countdownTickMs;
-    _advanceCapture();
-    if (_captureState is DniCaptureInFlight) {
+    final decision = _advanceCapture();
+    if (decision is CaptureFire) {
       _countdownTicker?.cancel();
       _countdownTicker = null;
       if (mounted) setState(() {});
       unawaited(_fireCapture(signal));
       return;
     }
-    if (_captureState is DniCaptureScanning) {
+    if (decision is CaptureReset || decision is CaptureScanning) {
       _resetCaptureToScanning();
       return;
     }
@@ -597,48 +616,26 @@ class DniScannerState extends State<DniScanner>
     }
   }
 
-  void _advanceCapture() {
+  /// Advances the coordinator-owned countdown one tick. The widget feeds the
+  /// monotonic countdown clock (anchor + elapsed) and the live gate readings;
+  /// the coordinator runs the dwell/grace math and returns the decision. The
+  /// flash fires on the transition into the shutter instant.
+  CaptureDecision _advanceCapture() {
     final anchor = _countdownAnchor ?? DateTime.now();
     final now = anchor.add(Duration(milliseconds: _countdownElapsedMs));
-    final next = _orchestrator.onFrame(
-      current: _captureState,
-      validation: _frameCaptureable
-          ? const DocumentValidationResult.captureable()
-          : const DocumentValidationResult.notCaptureable(),
-      stableFrames: _frameCaptureable ? widget.minStableFrames : 0,
-      userDataMatch: null,
+    final wasInFlight = _captureState is DniCaptureInFlight;
+    final decision = _coordinator.tickCountdown(
       now: now,
       imuStill: _motionGate.isStill,
+      quadFramingValid: _framingValid,
       lightingValid: _lightingValid,
-      framingValid: _fireFramingValid(),
+      captureEligible: _frameCaptureable,
     );
-    if (!identical(next, _captureState)) {
-      final firedNow =
-          next is DniCaptureInFlight && _captureState is! DniCaptureInFlight;
-      _captureState = next;
-      if (firedNow) _triggerCaptureFlash();
+    if (decision is CaptureFire && !wasInFlight) {
+      _triggerCaptureFlash();
     }
+    return decision;
   }
-
-  /// Side-aware framing value fed to the capture orchestrator (#5543).
-  ///
-  /// The FRONT readiness is OCR-sourced ([HuntSignal.frontCaptureReady] comes
-  /// from field stability, not the quad), so a running front countdown already
-  /// implies an OCR-confirmed framed document. The text-dense Peru DNI front
-  /// held still makes the native quad find text edges, not a clean 4-corner
-  /// card boundary, so [_framingValid] frequently degrades to false at the
-  /// completion tick and the strict gate vetoes the shutter until motion yields
-  /// a momentarily clean quad — the "captures only when I move" regression
-  /// introduced when commit 08a32e4 wired the live quad into the front gate. On
-  /// the front, framing degrades OPEN so it never vetoes the fire; document
-  /// removal is still caught by the capture-eligibility gate (OCR-derived
-  /// `isCaptureable`), so #5540 document-removed protection is preserved.
-  ///
-  /// The BACK has no OCR readiness signal — its only proof of a framed document
-  /// is the quad itself — so it keeps the strict live [_framingValid] gate: a
-  /// degrade-closed quad at completion correctly blocks the back, and the
-  /// wrong-side guard (#5495/#5499) stays intact.
-  bool _fireFramingValid() => _framingSignal().fireFramingValid;
 
   /// The single unified read of the live quad framing flag, capture-eligibility,
   /// and side context (#5543). All four side-aware quad forks — fire gate,
@@ -778,14 +775,7 @@ class DniScannerState extends State<DniScanner>
     _countdownTicker = null;
     _countdownAnchor = null;
     _countdownElapsedMs = 0;
-    _captureState = const DniCaptureScanning(
-      guideText: '',
-      failingGate: null,
-      validationProgress: 0,
-      stableFrames: 0,
-      userDataMatch: null,
-      manualModeActive: false,
-    );
+    _coordinator.resetCountdown();
     if (mounted) setState(() {});
   }
 

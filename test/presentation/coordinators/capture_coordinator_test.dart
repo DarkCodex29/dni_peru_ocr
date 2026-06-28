@@ -16,22 +16,42 @@ const _frontText = 'DOCUMENTO NACIONAL DE IDENTIDAD\n'
     'SEGUNDO APELLIDO\nPEREZ\n'
     'PRE NOMBRES\nJUAN CARLOS';
 
-FrameInput _frontFrame({bool quadFramingValid = false}) => FrameInput(
+/// PR4: the coordinator owns the countdown/dwell, so a readiness signal starts
+/// a countdown that completes only after the dwell elapses against
+/// [FrameInput.now]. These helpers stamp an advancing clock so the migrated
+/// countdown reaches the shutter — the same cadence the live camera supplies.
+class _Clock {
+  _Clock([DateTime? start]) : _now = start ?? DateTime(2026, 1, 1, 12);
+
+  DateTime _now;
+
+  DateTime tick([int ms = 250]) {
+    final value = _now;
+    _now = _now.add(Duration(milliseconds: ms));
+    return value;
+  }
+}
+
+FrameInput _frontFrame(_Clock clock, {bool quadFramingValid = false}) =>
+    FrameInput(
       ocrText: _frontText,
       quadFramingValid: quadFramingValid,
       imuStill: true,
       isBlurry: false,
       frameWidth: 640,
       frameHeight: 480,
+      now: clock.tick(),
     );
 
-FrameInput _emptyFrame({bool quadFramingValid = false}) => FrameInput(
+FrameInput _emptyFrame(_Clock clock, {bool quadFramingValid = false}) =>
+    FrameInput(
       ocrText: '',
       quadFramingValid: quadFramingValid,
       imuStill: true,
       isBlurry: false,
       frameWidth: 640,
       frameHeight: 480,
+      now: clock.tick(),
     );
 
 void main() {
@@ -42,9 +62,10 @@ void main() {
         fields: DniFields.minimal(),
         idleFramesThreshold: 4,
       );
+      final clock = _Clock();
 
       // First front frame: the title anchor latches extractingFront.
-      final first = coordinator.onFrame(_frontFrame());
+      final first = coordinator.onFrame(_frontFrame(clock));
       expect(
         first,
         isA<CaptureScanning>(),
@@ -55,17 +76,23 @@ void main() {
 
       // Hold still on the same plateau: the distinct field count stops rising,
       // so after the idle dwell the REAL HuntStateMachine emits
-      // frontCaptureReady — derived from OCR stability, NOT an injected flag.
+      // frontCaptureReady, which STARTS the owned countdown; holding through the
+      // dwell (advancing the clock each frame) fires the shutter — derived from
+      // OCR stability + the migrated countdown, NOT an injected flag.
       CaptureDecision? lastFire;
-      for (var i = 0; i < 6; i++) {
-        final decision = coordinator.onFrame(_frontFrame());
+      var sawCountingDown = false;
+      for (var i = 0; i < 30; i++) {
+        final decision = coordinator.onFrame(_frontFrame(clock));
+        if (decision is CaptureCountingDown) sawCountingDown = true;
         if (decision is CaptureFire) lastFire = decision;
       }
 
+      expect(sawCountingDown, isTrue,
+          reason: 'readiness starts a countdown the coordinator now owns');
       expect(
         lastFire,
         isNotNull,
-        reason: 'the front must fire from OCR stability through the real path',
+        reason: 'the front must fire from OCR stability + the owned countdown',
       );
       expect((lastFire! as CaptureFire).side, CaptureSide.front);
     });
@@ -81,18 +108,20 @@ void main() {
         backQuadDwellFrames: 3,
         initialPhase: HuntPhase.waitingBack,
       );
+      final clock = _Clock();
 
       CaptureDecision? lastFire;
-      for (var i = 0; i < 8; i++) {
-        final decision = coordinator.onFrame(_emptyFrame(quadFramingValid: true));
+      for (var i = 0; i < 30; i++) {
+        final decision =
+            coordinator.onFrame(_emptyFrame(clock, quadFramingValid: true));
         if (decision is CaptureFire) lastFire = decision;
       }
 
       expect(
         lastFire,
         isNotNull,
-        reason: 'a sustained valid quad must drive the textless back to fire '
-            'through the real machine, with no injected flag',
+        reason: 'a sustained valid quad must drive the textless back through '
+            'the real machine + owned countdown, with no injected flag',
       );
       expect((lastFire! as CaptureFire).side, CaptureSide.back);
     });
@@ -103,8 +132,9 @@ void main() {
         idleFramesThreshold: 4,
         initialPhase: HuntPhase.waitingBack,
       );
+      final clock = _Clock();
 
-      final decision = coordinator.onFrame(_emptyFrame());
+      final decision = coordinator.onFrame(_emptyFrame(clock));
 
       expect(
         decision,
@@ -124,6 +154,7 @@ void main() {
         idleFramesThreshold: 3,
         initialPhase: HuntPhase.waitingBack,
       );
+      final clock = _Clock();
 
       // A textful but anchorless / sub-floor frame: it has OCR text (so it is
       // not the empty-OCR branch) but detects as `unknown` and fills no minimal
@@ -135,12 +166,12 @@ void main() {
       for (var i = 0; i < 5; i++) {
         decisions.add(
           coordinator.onFrame(
-            const FrameInput(
+            FrameInput(
               ocrText: stuckText,
               imuStill: true,
-              isBlurry: false,
               frameWidth: 640,
               frameHeight: 480,
+              now: clock.tick(),
             ),
           ),
         );

@@ -18,7 +18,8 @@ class FrameInput {
     this.isBlurry = false,
     this.frameWidth = 0,
     this.frameHeight = 0,
-  });
+    DateTime? now,
+  }) : _now = now;
 
   /// The recognized OCR text for this frame, exactly as the live widget joins
   /// the ML Kit recognized blocks. Empty for a textless back or a removed
@@ -41,4 +42,14 @@ class FrameInput {
 
   /// Source frame height in pixels (carried for downstream quad/rectify use).
   final int frameHeight;
+
+  final DateTime? _now;
+
+  /// The injectable wall-clock instant for this frame. The countdown owner
+  /// measures the dwell and the disturbance grace against this clock, so the
+  /// live widget supplies its monotonic countdown anchor + elapsed and the
+  /// device-faithful harness supplies a deterministic advancing time — both
+  /// drive the SAME dwell logic with no real `Timer`. Defaults to the Unix
+  /// epoch when unspecified so untimed [FrameInput] constructions stay `const`.
+  DateTime get now => _now ?? DateTime.fromMillisecondsSinceEpoch(0);
 }
