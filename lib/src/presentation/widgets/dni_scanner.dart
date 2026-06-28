@@ -530,14 +530,16 @@ class DniScannerState extends State<DniScanner>
         _frameCaptureable = false;
         break;
     }
-    // A frame's document-presence is the conjunction of a confirmed framing
-    // quad and a capture-eligible signal (#5540): a stale flag alone never
-    // keeps it "present", so removing the DNI mid-count drops presence and the
-    // countdown grace window resets it instead of capturing empty air.
+    // A frame's document-presence is side-aware (#5540/#5543): the front trusts
+    // the OCR-eligibility signal (its quad degrades to false on the text-dense
+    // card), the back trusts the quad. A stale flag alone never keeps it
+    // "present", so removing the DNI mid-count drops presence and the countdown
+    // grace window resets it instead of capturing empty air.
     _setDocumentPresent(
       documentPresent(
         framingValid: _framingValid,
         captureEligible: _frameCaptureable,
+        isFrontPhase: _isFrontPhase(),
       ),
     );
     return _captureState;
@@ -1346,6 +1348,7 @@ class DniScannerState extends State<DniScanner>
                       documentPresent: documentPresent(
                         framingValid: _framingValid,
                         captureEligible: _frameCaptureable,
+                        isFrontPhase: _isFrontPhase(),
                       ),
                       phase: _stateMachine.phase,
                     ),
@@ -1738,28 +1741,41 @@ bool manualButtonVisible({
   return !countdownActive && !autoCaptureProgressing;
 }
 
-/// Whether a document is actually present and framed this frame (#5540).
+/// Whether a document is actually present and framed this frame (#5540/#5543).
 ///
-/// The 3-2-1 countdown must abort if the user REMOVES the DNI mid-count instead
-/// of counting down on empty air and capturing nothing. Document-presence is the
-/// conjunction of two live per-frame signals already tracked by the scanner:
-/// - [framingValid]: the quad detector confirms a well-framed document quad.
-///   With the native detector this is the reliable presence proof — it drops to
-///   false the moment the card leaves the frame.
+/// The 3-2-1 countdown must abort, and the no-document banner must show, if the
+/// user REMOVES the DNI mid-count instead of counting down on empty air and
+/// capturing nothing. Presence is computed side-aware, mirroring the fire-time
+/// framing split in [DniScannerState._fireFramingValid] (#5543), because the
+/// two sides prove a framed document through different live signals:
 /// - [captureEligible]: the latest processed frame yielded a capture-ready /
 ///   side-detected signal from [HuntStateMachine] (so OCR/quad confirmed a
 ///   document), as opposed to a `none`/dropped frame.
+/// - [framingValid]: the quad detector confirms a well-framed document quad.
 ///
-/// Requiring BOTH means a stale flag alone never keeps the document "present":
-/// removing the card drops framing (native regime) or stops the capture-ready
-/// confirmation (front OCR), so the countdown's grace window (#5504/#5532) sees
-/// the disturbance and resets. The same hysteresis is preserved — a single
-/// dropped frame within the grace window does not reset, only a sustained loss.
+/// On the FRONT ([isFrontPhase] true) readiness is OCR-sourced. The text-dense
+/// Peru DNI front held still makes the native quad find text edges, not a clean
+/// 4-corner card boundary, so [framingValid] frequently degrades to false while
+/// the DNI IS present and OCR-confirmed. Gating front presence on the quad made
+/// the banner cry "no document" on a present card. Front presence therefore
+/// tracks [captureEligible] only — the real per-frame device signal. Removal
+/// still drops presence because OCR goes empty (signal=none ->
+/// captureEligible=false), so #5540 document-removed protection holds.
+///
+/// On the BACK ([isFrontPhase] false) there is no OCR readiness signal — the
+/// quad IS the only proof of a framed document — so presence stays the strict
+/// conjunction of [framingValid] and [captureEligible]: a stale flag alone never
+/// keeps it present, and a quad drop when the card leaves the frame aborts.
+///
+/// The same hysteresis is preserved — a single dropped frame within the grace
+/// window (#5504/#5532) does not reset, only a sustained loss.
 @visibleForTesting
 bool documentPresent({
   required bool framingValid,
   required bool captureEligible,
+  required bool isFrontPhase,
 }) {
+  if (isFrontPhase) return captureEligible;
   return framingValid && captureEligible;
 }
 
