@@ -28,6 +28,7 @@ import '../../infrastructure/sensors_motion_gate.dart';
 import '../camera_overlay_logic.dart';
 import '../controllers/dni_camera_controller.dart';
 import '../document_validator.dart';
+import '../framing/framing_signal.dart';
 import '../image_quality_gate.dart';
 import '../lighting_gate.dart';
 import '../orchestrators/dni_capture_orchestrator.dart';
@@ -460,11 +461,7 @@ class DniScannerState extends State<DniScanner>
   /// OCR branch in [_processImage] instead, so the wrong-side guard in
   /// [HuntStateMachine] still protects this path.
   DniCaptureState _handleEmptyOcrFrame() {
-    final route = resolveEmptyOcrRoute(
-      framingValid: _framingValid,
-      isFrontPhase: _isFrontPhase(),
-    );
-    if (route == EmptyOcrRoute.dispatchBackTrigger) {
+    if (_framingSignal().dispatchEmptyOcrBackTrigger) {
       return _recordAndDispatch(
         detectedSide: DocumentSide.unknown,
         addedNewField: false,
@@ -535,13 +532,7 @@ class DniScannerState extends State<DniScanner>
     // card), the back trusts the quad. A stale flag alone never keeps it
     // "present", so removing the DNI mid-count drops presence and the countdown
     // grace window resets it instead of capturing empty air.
-    _setDocumentPresent(
-      documentPresent(
-        framingValid: _framingValid,
-        captureEligible: _frameCaptureable,
-        isFrontPhase: _isFrontPhase(),
-      ),
-    );
+    _setDocumentPresent(_framingSignal().documentPresent);
     return _captureState;
   }
 
@@ -647,7 +638,18 @@ class DniScannerState extends State<DniScanner>
   /// is the quad itself — so it keeps the strict live [_framingValid] gate: a
   /// degrade-closed quad at completion correctly blocks the back, and the
   /// wrong-side guard (#5495/#5499) stays intact.
-  bool _fireFramingValid() => _isFrontPhase() ? true : _framingValid;
+  bool _fireFramingValid() => _framingSignal().fireFramingValid;
+
+  /// The single unified read of the live quad framing flag, capture-eligibility,
+  /// and side context (#5543). All four side-aware quad forks — fire gate,
+  /// presence, overlay annotation, empty-OCR routing — derive from this one
+  /// value so they can never drift apart. The quad annotates but never vetoes;
+  /// the OCR-derived [_frameCaptureable] is the blocking signal.
+  FramingSignal _framingSignal() => FramingSignal(
+        framingValid: _framingValid,
+        captureEligible: _frameCaptureable,
+        isFrontPhase: _isFrontPhase(),
+      );
 
   void _triggerCaptureFlash() {
     if (_disposed || !mounted) return;
@@ -1345,11 +1347,7 @@ class DniScannerState extends State<DniScanner>
                       twoSided: widget.isBackSide == null,
                     ) &&
                     documentAbsentBannerVisible(
-                      documentPresent: documentPresent(
-                        framingValid: _framingValid,
-                        captureEligible: _frameCaptureable,
-                        isFrontPhase: _isFrontPhase(),
-                      ),
+                      documentPresent: _framingSignal().documentPresent,
                       phase: _stateMachine.phase,
                     ),
                 guidanceText: widget.scanHints.documentAbsent,
