@@ -2,18 +2,74 @@
 
 ## 1.0.0
 
+The first major release. It lands on-device document quad detection (a hybrid,
+non-blocking enhancement) and a full redesign of the capture subsystem into a
+single source of truth, and raises the platform floor for the native
+dependency. Read the **Breaking** section before upgrading.
+
 ### Added
-- **`opencv_dart` (`^2.2.1+4`) dependency** for upcoming on-device document
-  quad detection. The native binary is trimmed to the modules quad detection
-  needs via the `dartcv4` Native Assets hooks
-  (`include_modules: [core, imgproc, imgcodecs]`); `calib3d` and all other
-  modules are excluded. The perspective operations used by quad detection
-  (`cvtColor`, `GaussianBlur`, `Canny`, `findContours`, `approxPolyDP`,
+
+#### Document quad detection (hybrid, non-blocking)
+- **`DocumentQuadDetector` domain port** plus two adapters: an OpenCV-backed
+  `OpenCvQuadDetector` (`opencv_dart`) and a pure-Dart `FallbackQuadDetector`.
+  A one-time runtime probe selects the native adapter when the binary loads and
+  falls back to pure Dart otherwise; the probe never throws. The port surface
+  (`isNativeAvailable`, `detectQuad`, `rectify`) and its value types
+  (`QuadFrame`, `QuadCorner`, `QuadDetectionResult`) are exported so consumers
+  can supply their own detector.
+- **The quad is an enhancement signal, not a capture gate.** Auto-capture fires
+  on OCR readiness + frame stability (via `HuntStateMachine`); the quad only
+  raises confidence and enables a cleaner crop when a clean 4-corner boundary is
+  found. It **never** vetoes a capture, so a present, OCR-confirmed DNI is
+  captured even when the detector returns zero corners on a frame. On real,
+  text-dense DNI frames the native detector frequently returns no clean quad —
+  this is a known limitation and the reason capture is OCR-driven. Clean-corner
+  quality and post-capture perspective crop are tracked as future work.
+- **`opencv_dart` (`^2.2.1+4`) + `dartcv4` (`^2.2.1+4`) dependencies.** The
+  native binary is trimmed to the modules quad detection needs via the `dartcv4`
+  Native Assets hooks (`include_modules: [core, imgproc, imgcodecs]`); `calib3d`
+  and all other modules are excluded. The perspective operations used by quad
+  detection (`cvtColor`, `GaussianBlur`, `Canny`, `findContours`, `approxPolyDP`,
   `getPerspectiveTransform`, `warpPerspective`) all live in `imgproc`, so no
   `calib3d` is shipped. Measured per-ABI native cost: `libdartcv.so` is
   ~9.98 MiB on `arm64-v8a` (an App Bundle ships a single ABI per device).
-- `dartcv4` (`^2.2.1+4`) is declared as a direct dependency so the quad
-  detection adapter can import `package:dartcv4/dartcv.dart` directly.
+  `dartcv4` is a direct dependency so the adapter can import
+  `package:dartcv4/dartcv.dart` directly.
+
+#### Capture subsystem redesign (centralized `CaptureCoordinator`)
+- **Single source of truth for capture.** An internal `CaptureCoordinator`
+  (pure Dart, in `presentation/coordinators/`, **not exported**) now owns capture
+  readiness, the countdown, document presence, AND the manual fallback. It
+  consumes a normalized `FrameInput`, runs the real readiness path
+  (`DocumentSideDetector` → `HuntStateMachine`), unifies framing through one
+  internal `FramingSignal`, and emits a `CaptureDecision` that `DniScanner`
+  renders. This replaces logic that was previously fragmented across the widget,
+  the controller, and a parallel capture-state subsystem.
+- **Live 3-2-1 countdown.** Once a side is aligned, stable, and OCR-ready, the
+  scanner shows a 3-2-1 countdown owned by the coordinator. The countdown
+  completes cleanly via the coordinator instead of stalling after reaching 1.
+- **Configurable `DniScanHints`.** Phase-aware, rotating bottom guidance
+  (`waitingFront`, `extractingFront`, `waitingBack`, `extractingBack`,
+  `processing`, `documentAbsent`). Copy is intentionally generic (guides the
+  physical action, never names a DNI field) and defaults to neutral Spanish so a
+  published-library consumer can localize or reword it.
+- **Device-faithful capture harness + golden oracle (tests).** A new test tier
+  drives realistic frame sequences through the real
+  `DocumentSideDetector` → `HuntStateMachine` → `CaptureCoordinator` path (no
+  debug-flag injection), and a golden oracle pins the sacred "both sides
+  auto-capture" behavior end-to-end. This closes the structural blind spot where
+  the suite passed while the device flow broke.
+
+#### Cured capture symptoms
+- **Front auto-capture reliability.** A held, OCR-confirmed front DNI now
+  auto-captures instead of only firing on motion.
+- **False "no document" banner cured.** Document presence is now OCR-based on the
+  front (and quad-or-OCR-based on the back), so a present but not-yet-stabilized
+  front card never shows a false "no document" warning.
+- **Manual fallback timing fixed.** The manual button is a real per-side
+  fallback: it is suppressed while an auto-capture countdown is in progress and
+  surfaces only when readiness is genuinely unreachable, instead of appearing too
+  soon from a second, parallel timer.
 
 ### Breaking
 - **Platform floor raised to Flutter `>=3.38.0` / Dart `>=3.10.0`.** `opencv_dart`
@@ -34,23 +90,26 @@
   `captureManually` / `activateManualFallback` / `restartManualFallbackTimer`
   methods were a second, unreconciled source of capture truth that ran in
   parallel to the live auto-capture and surfaced the manual button too soon. The
-  single capture-readiness owner is now the internal capture coordinator, which
+  single capture-readiness owner is now the internal `CaptureCoordinator`, which
   owns the countdown, document presence, AND the manual fallback. The controller
-  is now scoped to its remaining job — the back-side OCR consensus accumulator,
-  the reliable lookup pipeline, capture delivery (`onCaptureDelivered`,
-  `recordOcrFrame`, `snapshotConsensus`, `onSideChanged`), and `dispose`. The
-  document-presence banner no longer false-fires on a held front DNI: presence
-  is now OCR-document-based (front) and quad-or-OCR-based (back), so a present
-  but not-yet-stabilized front card never shows a false "no document" warning.
+  is now **lifecycle-only**, scoped to its remaining job — the back-side OCR
+  consensus accumulator, the reliable lookup pipeline, capture delivery
+  (`onCaptureDelivered`, `recordOcrFrame`, `snapshotConsensus`, `onSideChanged`),
+  and `dispose`. Its constructor no longer takes an orchestrator.
 
 ### Notes
-- This release wires the dependency, native module trim, platform floor, and
-  version bump only. The `DocumentQuadDetector` port, the OpenCV and pure-Dart
-  fallback adapters, the live framing overlay, and post-shutter perspective
-  rectification arrive across the following releases in this feature line.
-- Dependency currency upgrades from the previous work unit (camera `0.12`,
-  `path_provider` `2.1.6`, `sensors_plus` `7.1.0`, `flutter_lints` `6.0.0`)
-  ship as part of this `1.0.0` release.
+- `DniScanner` is the single, canonical capture widget. (`DniCameraMask` was
+  removed in `0.20.0`; if you are upgrading from before that, replace every
+  `DniCameraMask(...)` with `DniScanner(...)`.)
+- The capture brain — `CaptureCoordinator`, `FrameInput`, `FramingSignal`,
+  `CaptureDecision` — is internal and intentionally **not exported**. The public
+  surface is `DniScanner` plus its configuration (`DniScanHints`, `DniFields`,
+  `DniCaptureMode`, the `DniScanResult` / `DniSideScanResult` payloads).
+- Dependency currency upgrades ship as part of this `1.0.0` release: camera
+  `0.12`, `path_provider` `2.1.6`, `sensors_plus` `7.1.0`, `flutter_lints`
+  `6.0.0`.
+- Verification: `flutter test` passes 1301 cases; `flutter analyze` is clean in
+  `lib/` and `example/`; `dart pub publish --dry-run` reports 0 warnings.
 
 ## 0.20.0
 

@@ -33,21 +33,42 @@ temporal accumulator** — no manual cleanup required at the consumer.
 - **Pluggable observability** — inject your own `OcrLogger` (Sentry,
   Crashlytics, Datadog, custom) at the extractor constructor.
 - **Capture widget** — `DniScanner` is the single production capture
-  widget. It ships auto-capture with an IMU jolt-reset guard, a live
-  lighting/glare gate, post-shutter blur reject-and-retry, a manual
-  fallback after a configurable timeout, tilt detection, side-toggle
-  seeding, and a dispose-safe lifecycle. Pure-Dart `DniCameraController`
-  is exposed for headless use.
+  widget. It ships auto-capture with a centralized capture brain
+  (`CaptureCoordinator`, internal), a live 3-2-1 countdown, an IMU
+  jolt-reset guard, a live lighting/glare gate, post-shutter blur
+  reject-and-retry, a manual fallback after a configurable timeout, tilt
+  detection, two-sided front→back handoff, and a dispose-safe lifecycle.
+  Capture readiness, countdown, document presence, and the manual
+  fallback all flow through one source of truth. The lifecycle-only
+  `DniCameraController` is exposed for OCR-consensus and lookup wiring.
+- **Document quad detection (hybrid, non-blocking)** — an on-device
+  document-quadrilateral detector (`DocumentQuadDetector` port, OpenCV
+  adapter via `opencv_dart`, with a pure-Dart fallback). The quad is an
+  **enhancement signal**, not a capture gate: auto-capture fires on OCR
+  readiness + frame stability, and the quad raises confidence / enables a
+  cleaner crop when available. It never blocks a capture, so a present DNI
+  is captured even when the quad detector returns no corners on a given
+  frame. See [Document quad detection](#document-quad-detection) below.
 
 ## Installation
 
 ```yaml
 dependencies:
-  dni_peru_ocr: ^0.7.1
+  dni_peru_ocr: ^1.0.0
 ```
 
-> Note: as of v0.11.1, `dio` is a direct runtime dependency of this package (required for pub.dev compliance).
-> You don't need to add it to your own `pubspec.yaml`.
+> **Breaking platform floor (v1.0.0).** The on-device quad detector depends on
+> `opencv_dart`, which relies on Dart Native Assets hooks. That raises the host
+> floor to **Flutter `>=3.38.0` / Dart `>=3.10.0`**. Consumers on older
+> toolchains must upgrade before adopting v1.0.0.
+>
+> The native binary (`libdartcv.so`) is trimmed to the modules quad detection
+> needs (`core`, `imgproc`, `imgcodecs`); `calib3d` and every other module are
+> excluded. Measured per-ABI native cost is ~9.98 MiB on `arm64-v8a`, and an
+> App Bundle ships a single ABI per device.
+
+> Note: `dio` is a direct runtime dependency of this package (required for
+> pub.dev compliance). You don't need to add it to your own `pubspec.yaml`.
 
 ```bash
 flutter pub get
@@ -60,16 +81,17 @@ dependencies:
   dni_peru_ocr:
     git:
       url: https://github.com/DarkCodex29/dni_peru_ocr.git
-      ref: v0.7.1
+      ref: v1.0.0
 ```
 
 ## Example
 
 A runnable example app is available under [`example/`](example/). It demonstrates
-the complete DNI capture flow — front scan, back scan with `frontSideFields`
-seeding, and result display with per-field confidence indicators — on a real
-Android or iOS device. See [example/README.md](example/README.md) for setup
-instructions and a walkthrough of the recommended integration pattern.
+the complete two-sided DNI capture flow — `DniScanner` drives the front→back
+handoff internally and emits a single `DniScanResult` — plus result display with
+per-field confidence indicators, on a real Android or iOS device. See
+[example/README.md](example/README.md) for setup instructions and a walkthrough
+of the recommended integration pattern.
 
 ## Quick start — headless extraction
 
@@ -100,18 +122,29 @@ final fields = extractor.extractWith(recognizedText);
 
 `DniScanner` is a Flutter widget that owns the full capture flow. The
 host provides a `camera` plugin `CameraController` and listens for the
-final capture. Use `onScanComplete` for the two-sided flow, or
-`onSideCaptured` for single-side capture.
+final capture.
+
+- **Two-sided mode** (`isBackSide == null`, the default): the scanner
+  drives the front→back handoff itself and emits a single `DniScanResult`
+  through `onScanComplete`.
+- **Single-side mode** (`isBackSide: false` or `true`): the scanner scans
+  one side and emits a `DniSideScanResult` through `onSideCaptured`.
+
+The constructor `assert` enforces the pairing: two-sided requires
+`onScanComplete`; single-side requires `onSideCaptured`.
 
 ```dart
 import 'package:dni_peru_ocr/dni_peru_ocr.dart';
 
+// Two-sided flow — scanner handles front then back internally.
 DniScanner(
   controller: cameraController,
   fields: DniFields.kyc(),
   onScanComplete: (result) {
     print(result.hunt.firstName);
     print(result.hunt.address);
+    print(result.frontPhoto.path);
+    print(result.backPhoto.path);
   },
 )
 ```
@@ -126,6 +159,31 @@ DniScanner(
   gracePeriodMs: 600,                 // tolerated quality dip mid-countdown
   manualFallbackMs: 30000,            // show manual button after this
   minStableFrames: 3,                 // stable frames required to arm
+  scanHints: const DniScanHints(),    // rotating guidance (see below)
+  onScanComplete: (result) { /* ... */ },
+)
+```
+
+### Scan hints
+
+`DniScanHints` configures the rotating, phase-aware guidance shown along
+the bottom of the scanner. The copy is intentionally generic — it guides
+the physical action (focus, hold still, flip) and never names a specific
+DNI field, because the side a field belongs to is not knowable across the
+many Peru DNI versions. Defaults are neutral Spanish; pass your own lists
+to localize or reword:
+
+```dart
+DniScanner(
+  controller: cameraController,
+  scanHints: const DniScanHints(
+    waitingFront: ['Place the document inside the frame', 'Focus the document'],
+    extractingFront: ['Hold the document still', 'Hold steady for a moment'],
+    waitingBack: ['Flip the document', 'Place it inside the frame'],
+    extractingBack: ['Hold the document still'],
+    processing: 'Processing…',
+    documentAbsent: 'No document detected',
+  ),
   onScanComplete: (result) { /* ... */ },
 )
 ```
@@ -203,7 +261,8 @@ adjust them per device class if your fleet skews very low- or high-end.
 
 Beyond OCR, `dni_peru_ocr` ships a flexible lookup contract so you can fetch
 normalized DNI data from any backend. The lookup feature is fully optional —
-OCR-only consumers compile and run identically to v0.7.x.
+OCR-only consumers never instantiate any lookup service and pay no behavioral
+cost.
 
 ### Recommended composition — caching + service
 
@@ -284,7 +343,42 @@ Built-in presets:
 
 Or define a custom set: `DniFields.required({DniField.documentNumber, DniField.firstName, DniField.address})`.
 
+## Document quad detection
+
+v1.0.0 ships an on-device document-quadrilateral detector. It is a **hybrid,
+non-blocking enhancement** — be precise about what that means:
+
+| Aspect | Behavior |
+|---|---|
+| What fires a capture | OCR readiness + frame stability (via `HuntStateMachine`). |
+| Role of the quad | An **annotation**: it raises confidence and enables a cleaner perspective crop **when** a clean 4-corner card boundary is found. |
+| Can the quad block a capture? | **No.** A present, OCR-confirmed DNI is captured even when the detector returns zero corners on a frame. The quad never vetoes. |
+| Native vs fallback | `DocumentQuadDetector` is the domain port. The OpenCV adapter (`opencv_dart`) is selected when the native binary loads; otherwise a pure-Dart `FallbackQuadDetector` is used. A one-time runtime probe picks the adapter and never throws. |
+
+**Honest status.** On real, text-dense DNI frames the native detector frequently
+returns no clean quad (text edges are not a card boundary). That is why capture
+is driven by OCR + stability, not by the quad. Treat quad corners as a
+best-effort enhancement signal, not a reliable edge detector. Improving quad
+quality (clean corners on real frames) and post-capture perspective crop are
+tracked as future work — see [Roadmap](#roadmap).
+
+The port surface, for consumers who want to supply their own detector:
+
+```dart
+abstract interface class DocumentQuadDetector {
+  bool get isNativeAvailable;
+  QuadDetectionResult detectQuad(QuadFrame frame);
+  Uint8List? rectify({required Uint8List imageBytes, required List<QuadCorner> corners});
+}
+```
+
+`QuadFrame` carries a luminance plane + dimensions; `QuadDetectionResult` carries
+`framingValid` and an ordered (TL, TR, BR, BL) corner list that is empty when no
+quad is found.
+
 ## Public API
+
+### Extraction & consensus
 
 | Type | Purpose |
 |---|---|
@@ -300,10 +394,28 @@ Or define a custom set: `DniFields.required({DniField.documentNumber, DniField.f
 | `AddressNoiseFilter` | Peruvian address vocabulary + noise-token filter. |
 | `StringSimilarity` | Levenshtein utilities. |
 | `OcrLogger` / `NoOpOcrLogger` | Observability hook (default no-op). |
-| `DniScanner` | Production capture widget. |
-| `DniCameraController` | Pure-Dart capture state machine. |
+
+### Field selection & hunt
+
+| Type | Purpose |
+|---|---|
+| `DniField` (enum) | The 19 extractable DNI fields. |
+| `DniFields` | Immutable field selection (`minimal()`, `kyc()`, `full()`, `required({...})`). |
+| `FieldHunter` | Per-frame field extraction pipeline honoring a `DniFields` selection. |
+| `HuntStateMachine` | OCR-readiness state machine that drives auto-capture eligibility. |
+| `HuntResult` / `ExtractedFields` | Per-side hunt output. |
+
+### Capture widget & gates
+
+| Type | Purpose |
+|---|---|
+| `DniScanner` | The single production capture widget. |
+| `DniScanHints` | Configurable, phase-aware rotating guidance (neutral Spanish default). |
+| `DniScanResult` / `DniSideScanResult` | Two-sided / single-side capture payloads. |
+| `DniCaptureMode` (enum) | `auto` \| `manual` \| `hybrid`. |
+| `DniCameraController` | Lifecycle-only controller: OCR-consensus accumulator + lookup pipeline wiring (no capture-state subsystem). |
 | `DniCaptureOrchestrator` | Auto-capture countdown logic. |
-| `DniCaptureState` (sealed) | Capture state hierarchy. |
+| `DniCaptureState` (sealed) | Capture state hierarchy (`Scanning`, `CountingDown`, `InFlight`, `Expired`, `Done`). |
 | `MotionStillnessGate` | IMU jolt-guard contract (default `SensorsMotionGate`). |
 | `LightingGate` | Mean-luminance + glare scorer for live frames. |
 | `ImageQualityGate` | Post-shutter blur (Laplacian) sharpness gate. |
@@ -312,6 +424,32 @@ Or define a custom set: `DniFields.required({DniField.documentNumber, DniField.f
 | `ValidationGateColors` | Presentation-side gate → color mapping. |
 | `KycTheme` / `KycThemeProvider` | Inject visual identity into the capture widget. |
 | `UserVerificationData` | Pre-scan user context for OCR-vs-user matching. |
+
+### Document quad detection
+
+| Type | Purpose |
+|---|---|
+| `DocumentQuadDetector` | Domain port for the hybrid, non-blocking quad detector. |
+| `OpenCvQuadDetector` | `opencv_dart`-backed adapter (used when the native binary loads). |
+| `FallbackQuadDetector` | Pure-Dart fallback adapter (used when native is unavailable). |
+| `QuadFrame` / `QuadCorner` / `QuadDetectionResult` | Quad detection value types. |
+
+### DNI lookup
+
+| Type | Purpose |
+|---|---|
+| `DniLookupService` | Lookup contract for external DNI data sources. |
+| `ApisPeruLookupService` / `ReniecSunatLookupService` | Built-in backend adapters. |
+| `CachingDniLookupService` | Cache-aside decorator (TTL, consumer-provided `DniCache`). |
+| `FallbackDniLookupService` | Ordered service chain with configurable retry predicate. |
+| `DniCache` / `InMemoryDniCache` | Cache contract + in-memory implementation. |
+| `DniData` / `DniLookupResult` | Lookup model + sealed result type. |
+| `DniHttpClient` / `DioDniHttpClient` | HTTP contract + Dio adapter. |
+
+> The capture brain — `CaptureCoordinator`, `FrameInput`, `FramingSignal`, and
+> `CaptureDecision` — is **internal** and intentionally **not exported**. It is
+> the single source of truth that owns capture readiness, the 3-2-1 countdown,
+> document presence, and the manual fallback behind `DniScanner`.
 
 ## Logging adapter example
 
@@ -340,48 +478,73 @@ class SentryOcrLogger implements OcrLogger {
 
 ```
 lib/src/
-├── domain/           — entities + interfaces, pure Dart
-│   ├── entities/     (UserVerificationData, ValidationGate)
+├── domain/           — entities + ports, pure Dart (no Flutter import)
+│   ├── entities/     (UserVerificationData, ValidationGate, DocumentSide…)
+│   ├── capture/      (DocumentQuadDetector port, MotionStillnessGate, StabilityState)
+│   ├── extraction/   (DniField, DniFields, FieldHunter, HuntStateMachine, HuntResult)
 │   └── interfaces/   (OcrLogger)
 ├── data/             — extraction strategies + accumulator
-│   ├── strategies/   (Mrz / TextOcr / Address)
+│   ├── strategies/   (Mrz / TextOcr / Address / OcrFieldStrategy)
 │   ├── ocr_consensus.dart
 │   ├── ocr_field_extractor.dart
 │   ├── ocr_field_normalizer.dart
 │   ├── address_noise_filter.dart
 │   └── string_similarity.dart
-├── infrastructure/   — ML Kit / camera lifecycle utilities
-└── presentation/     — Flutter widgets + controllers
-    ├── controllers/  (DniCameraController)
-    ├── orchestrators/(DniCaptureOrchestrator + sealed state)
-    ├── widgets/      (DniScanner + sub-widgets)
+├── extraction/       — per-field extractors (dni number, MRZ, dates, ubigeo…)
+├── infrastructure/   — ML Kit / camera lifecycle + quad adapters
+│   ├── opencv_quad_detector.dart    (opencv_dart adapter; only dartcv4 importer)
+│   └── fallback_quad_detector.dart  (pure-Dart fallback)
+├── lookup/           — DNI lookup services, cache, decorators, http
+└── presentation/     — Flutter widgets + capture brain
+    ├── coordinators/ (CaptureCoordinator, CaptureDecision, FrameInput — internal)
+    ├── framing/      (FramingSignal — internal)
+    ├── controllers/  (DniCameraController — lifecycle-only)
+    ├── orchestrators/(DniCaptureOrchestrator + sealed DniCaptureState)
+    ├── widgets/      (DniScanner + DniScanHints + sub-widgets)
     └── theme/        (KycTheme + provider)
 ```
 
-Follows **Clean Architecture** (domain has no Flutter import). Each
-layer depends only on its inner neighbours. Strategies follow the
-**Strategy pattern**; consensus follows the **Accumulator pattern**.
+Follows **Clean Architecture** (domain has no Flutter import; the quad detector
+is a domain **port** with infrastructure adapters). Each layer depends only on
+its inner neighbours. Strategies follow the **Strategy pattern**; consensus
+follows the **Accumulator pattern**.
+
+The capture subsystem is **centralized**: a single internal `CaptureCoordinator`
+(pure Dart, in `presentation/coordinators/`) owns capture readiness, the 3-2-1
+countdown, document presence, and the manual fallback. It consumes a normalized
+`FrameInput`, runs the real readiness path (`DocumentSideDetector` →
+`HuntStateMachine`), unifies framing through one `FramingSignal`, and emits a
+`CaptureDecision`. `DniScanner` is a thin renderer that acts on those decisions;
+`DniCameraController` is lifecycle-only. None of these capture-brain types are
+exported — only `DniScanner` and its public configuration are.
 
 ## Roadmap
 
-### v0.7.0 (current)
-- Ubigeo fields (`department`, `province`, `district`).
-- Name vote consolidation by strict prefix containment.
-- Address `locked` flag requires ≥ 2 corroborating frames.
-- `tiltCalculator` becomes a constructor parameter (last global mutable
-  static removed from the public surface).
-- Deprecated aliases removed: `OcrConsensusBuilder` typedef,
-  `OcrFieldExtractor.extractStatic`, `evaluate(theme:)`.
-- Property-based shuffle tests + WidgetTester E2E state-lifecycle tests.
+### v1.0.0 (current)
+- **Platform floor raised** to Flutter `>=3.38.0` / Dart `>=3.10.0` for the
+  `opencv_dart` Native Assets dependency (the MAJOR bump).
+- **Document quad detection** (`DocumentQuadDetector` port + OpenCV adapter +
+  pure-Dart fallback) shipped as a hybrid, **non-blocking** enhancement.
+- **Capture subsystem redesign**: a single internal `CaptureCoordinator` owns
+  capture readiness, the 3-2-1 countdown, document presence, and the manual
+  fallback. Cured the front auto-capture reliability, the false "no document"
+  banner on a held front DNI, and the stay-still-after-countdown symptoms.
+- **`DniScanner` is the single, canonical capture widget**; the legacy
+  `DniCameraMask` was removed.
+- Configurable `DniScanHints` (neutral Spanish default).
 
-### v0.6.x — bug-fix cycle on top of v0.6.0
-Nine patch releases addressing real-world DNI OCR cases. See `CHANGELOG.md`.
+### Future work
+- **Quad quality** — real DNI frames frequently return `corners = 0` (text edges
+  are not a card boundary). Improving clean-corner detection on real frames is
+  open work; until then the quad stays a non-blocking enhancement and capture is
+  driven by OCR + stability.
+- **Post-capture perspective crop** — rectify the captured still using the quad
+  corners when a clean quad is available.
 
-### v0.6.0
-- Clean Architecture refactor (5 PRs).
-- Strategy + Accumulator decomposition.
-- `DniCameraMask` God Object split into widget + controller + orchestrator.
-- GitHub Actions CI on every PR / push to `main`.
+### Earlier history
+See `CHANGELOG.md` for the full pre-1.0 history (Clean Architecture refactor,
+Strategy + Accumulator decomposition, the ubigeo feature, the DNI lookup
+contract, and the v0.6.x real-world bug-fix cycle).
 
 ### Planned — sibling library
 `face_validator_peru`: extract face validation + selfie capture into a
@@ -391,11 +554,16 @@ lives in the consumer app.
 ## Testing
 
 ```bash
-flutter test                # 1069 tests
-flutter analyze             # 0 issues on a clean checkout
+flutter test                # ~1260 test/testWidgets calls, 1301 cases pass
+flutter analyze             # 0 issues in lib/ and example/
 ```
 
-CI runs both on every push and PR (see `.github/workflows/ci.yaml`).
+The suite includes a **device-faithful capture harness** that drives real
+`CameraImage`-equivalent frame sequences through the real
+`DocumentSideDetector` → `HuntStateMachine` → `CaptureCoordinator` path, plus a
+**golden capture oracle** that pins the sacred "both sides auto-capture"
+behavior end-to-end. CI runs `flutter test` and `flutter analyze` on every push
+and PR (see `.github/workflows/ci.yaml`).
 
 ## License
 
