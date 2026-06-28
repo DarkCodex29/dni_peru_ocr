@@ -17,12 +17,6 @@ import 'package:flutter_test/flutter_test.dart';
 /// presence stays the quad's real signal (the textless back has no OCR proof).
 /// Genuine removal (OCR empty + no quad) drops presence so the absent banner
 /// still shows on a truly removed document.
-const _frontText = 'DOCUMENTO NACIONAL DE IDENTIDAD\n'
-    'DNI 16793105\n'
-    'PRIMER APELLIDO\nMUÑOZ\n'
-    'SEGUNDO APELLIDO\nPEREZ\n'
-    'PRE NOMBRES\nJUAN CARLOS';
-
 /// A front frame that detects the side but has not yet filled enough distinct
 /// fields to stabilize: only the title anchor plus the document number, so the
 /// machine is in extractingFront emitting `none` — NOT capture-ready yet. This
@@ -31,14 +25,6 @@ const _frontText = 'DOCUMENTO NACIONAL DE IDENTIDAD\n'
 const _frontReadingText = 'DOCUMENTO NACIONAL DE IDENTIDAD\nDNI 16793105';
 
 const _autoCaptureMs = 3000;
-
-FrameInput _frontFrameAt(DateTime now, {bool quadFramingValid = false}) =>
-    FrameInput(
-      ocrText: _frontText,
-      quadFramingValid: quadFramingValid,
-      imuStill: true,
-      now: now,
-    );
 
 FrameInput _frontReadingFrameAt(DateTime now) => FrameInput(
       ocrText: _frontReadingText,

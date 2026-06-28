@@ -299,7 +299,6 @@ class DniScannerState extends State<DniScanner>
     _imageQualityGate = widget.imageQualityGate ?? ImageQualityGate();
     _quadDetector = selectQuadDetector();
     _cameraController = DniCameraController(
-      orchestrator: _orchestrator,
       isBackSide: widget.isBackSide ?? false,
       onValidCapture: (_, _) {},
     );

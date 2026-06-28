@@ -29,6 +29,19 @@
   replacement export. The unused `DniCameraController.processFrame` parallel
   capture path and its `DniTelemetry` companion are removed as part of the same
   dead-code cleanup, with no behavior change to the live capture flow.
+- **`DniCameraController`'s parallel capture-state subsystem is removed.** The
+  `captureState` notifier, the manual-fallback timer, and the `start` / `stop` /
+  `captureManually` / `activateManualFallback` / `restartManualFallbackTimer`
+  methods were a second, unreconciled source of capture truth that ran in
+  parallel to the live auto-capture and surfaced the manual button too soon. The
+  single capture-readiness owner is now the internal capture coordinator, which
+  owns the countdown, document presence, AND the manual fallback. The controller
+  is now scoped to its remaining job — the back-side OCR consensus accumulator,
+  the reliable lookup pipeline, capture delivery (`onCaptureDelivered`,
+  `recordOcrFrame`, `snapshotConsensus`, `onSideChanged`), and `dispose`. The
+  document-presence banner no longer false-fires on a held front DNI: presence
+  is now OCR-document-based (front) and quad-or-OCR-based (back), so a present
+  but not-yet-stabilized front card never shows a false "no document" warning.
 
 ### Notes
 - This release wires the dependency, native module trim, platform floor, and

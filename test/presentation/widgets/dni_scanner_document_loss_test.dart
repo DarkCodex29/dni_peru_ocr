@@ -28,12 +28,6 @@ class _FakeMotionGate implements MotionStillnessGate {
   }
 }
 
-class _PassQualityGate extends ImageQualityGate {
-  @override
-  Future<QualityCheckResult> validate(Uint8List bytes) async =>
-      QualityCheckResult.pass;
-}
-
 CameraValue _initializedCameraValue() => const CameraValue(
       isInitialized: true,
       previewSize: Size(640, 480),

@@ -54,4 +54,49 @@ void main() {
       );
     });
   });
+
+  group('capture-redesign PR5 — controller parallel capture-state removed', () {
+    // PR5 (final migration) moved the single capture-readiness ownership —
+    // countdown, presence, AND manual fallback — into CaptureCoordinator. The
+    // DniCameraController's parallel capture-STATE subsystem (the second,
+    // unreconciled source of truth #5494) had zero remaining readers and is
+    // removed: the captureState notifier, the manual-fallback timer, and the
+    // start / captureManually / activateManualFallback / restartManualFallbackTimer
+    // methods. This guard keeps that parallel state from creeping back in.
+    const controllerPath =
+        'lib/src/presentation/controllers/dni_camera_controller.dart';
+
+    test('controller no longer exposes the parallel captureState notifier', () {
+      final controller = File(controllerPath).readAsStringSync();
+      expect(
+        controller.contains('get captureState'),
+        isFalse,
+        reason: 'the parallel captureState notifier was the second source of '
+            'truth (#5494); CaptureCoordinator owns capture state now.',
+      );
+      expect(
+        controller.contains('ValueNotifier<DniCaptureState>'),
+        isFalse,
+        reason: 'no parallel DniCaptureState notifier remains in the controller.',
+      );
+    });
+
+    test('controller no longer carries the parallel manual-fallback subsystem',
+        () {
+      final controller = File(controllerPath).readAsStringSync();
+      for (final removed in const <String>[
+        'void activateManualFallback(',
+        'void captureManually(',
+        'void restartManualFallbackTimer(',
+        '_manualFallbackTimer',
+      ]) {
+        expect(
+          controller.contains(removed),
+          isFalse,
+          reason: 'the manual fallback is coordinator-owned now (#5536); '
+              '"$removed" was the parallel controller source.',
+        );
+      }
+    });
+  });
 }
