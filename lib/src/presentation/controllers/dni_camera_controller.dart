@@ -139,8 +139,19 @@ class DniCameraController {
     _manualFallbackTimer?.cancel();
   }
 
+  /// Restarts the manual-fallback window so it measures from the CURRENT side
+  /// rather than from scanner open (#5536). The live front->back handoff does
+  /// not route through [onSideChanged], so without this the back inherits the
+  /// front's already-elapsing timer and the manual button surfaces too soon.
+  /// Call it when a new side starts trying so the fallback gives auto-capture a
+  /// full per-side window before offering the manual escape.
+  void restartManualFallbackTimer() {
+    if (_isDisposed) return;
+    _startManualFallbackTimer();
+  }
+
   /// Surfaces manual-assisted capture on demand, reusing the same transition
-  /// as the 30s manual fallback. Used to escape a stuck waiting phase without
+  /// as the manual fallback. Used to escape a stuck waiting phase without
   /// auto-capturing an unconfirmed side.
   void activateManualFallback() {
     if (_isDisposed) return;

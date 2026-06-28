@@ -220,6 +220,47 @@ void main() {
         isFalse,
       );
     });
+
+    test(
+        'restartManualFallbackTimer restarts the window so the manual fallback '
+        'measures from the current side, not from scanner open (#5536)',
+        () async {
+      // Device truth (#5536): the live front->back handoff does NOT call
+      // onSideChanged, so the fallback timer kept measuring from scanner open
+      // and surfaced the back manual button too soon. A per-side restart at the
+      // handoff makes the back manual window start when the back starts trying.
+      final controller = DniCameraController(
+        orchestrator: _orchestrator(manualFallbackMs: 100),
+        isBackSide: false,
+        onValidCapture: (_, _) {},
+      );
+      addTearDown(controller.dispose);
+
+      await controller.start();
+
+      // Partway through the first window, restart it (as the front->back
+      // handoff would for the new side).
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      controller.restartManualFallbackTimer();
+
+      // The ORIGINAL window (100ms from start) would have elapsed by now, but
+      // the restart pushed it out, so manual mode must NOT be active yet.
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(
+        (controller.captureState.value as DniCaptureScanning).manualModeActive,
+        isFalse,
+        reason: 'restart must reset the window so the fallback measures from '
+            'the current side, not the original scanner-open instant',
+      );
+
+      // A full fresh window from the restart elapses -> manual mode activates.
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(
+        (controller.captureState.value as DniCaptureScanning).manualModeActive,
+        isTrue,
+        reason: 'the fallback must still fire after a full per-side window',
+      );
+    });
   });
 
   // ── Group 4: Dispose lifecycle ────────────────────────────────────────────

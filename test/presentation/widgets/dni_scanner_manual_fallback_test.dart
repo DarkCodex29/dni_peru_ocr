@@ -70,7 +70,7 @@ Future<void> _disposeWidget(WidgetTester tester) async {
 Widget _buildScanner({
   required CameraController cam,
   required GlobalKey<DniScannerState> key,
-  int manualFallbackMs = 30000,
+  int manualFallbackMs = CameraOverlayTuning.manualFallbackMs,
   bool? isBackSide,
 }) {
   return MaterialApp(
@@ -101,11 +101,14 @@ void main() {
 
   group('DniScanner manual fallback', () {
     testWidgets(
-        'default 30000ms fallback activates manual mode and shows the button',
+        'default (~15s named constant) fallback activates manual mode and '
+        'shows the button when no auto-capture is in progress (#5536)',
         (tester) async {
       final cam = _idleMockCamera();
       final key = GlobalKey<DniScannerState>();
 
+      // Uses the library default (CameraOverlayTuning.manualFallbackMs ~15s),
+      // raised from the prior 30s and made the named, host-tunable knob (#5536).
       await tester.pumpWidget(_buildScanner(cam: cam, key: key));
       await tester.pump();
 
@@ -115,7 +118,9 @@ void main() {
         findsNothing,
       );
 
-      await tester.pump(const Duration(milliseconds: 30000));
+      await tester.pump(
+        const Duration(milliseconds: CameraOverlayTuning.manualFallbackMs),
+      );
       await tester.pump();
 
       expect(key.currentState!.debugManualModeActive, isTrue);
@@ -135,7 +140,7 @@ void main() {
       await tester.pumpWidget(_buildScanner(cam: cam, key: key));
       await tester.pump();
 
-      await tester.pump(const Duration(milliseconds: 30000));
+      await tester.pump(const Duration(milliseconds: CameraOverlayTuning.manualFallbackMs));
       await tester.pump();
       expect(key.currentState!.debugManualModeActive, isTrue);
 
@@ -154,7 +159,7 @@ void main() {
       await tester.pumpWidget(_buildScanner(cam: cam, key: key));
       await tester.pump();
 
-      await tester.pump(const Duration(milliseconds: 30000));
+      await tester.pump(const Duration(milliseconds: CameraOverlayTuning.manualFallbackMs));
       await tester.pump();
       expect(key.currentState!.debugManualModeActive, isTrue);
 
@@ -162,6 +167,79 @@ void main() {
       await tester.pump();
 
       expect(key.currentState!.debugManualModeActive, isFalse);
+
+      await _disposeWidget(tester);
+    });
+
+    testWidgets(
+        'manual button is HIDDEN while an auto-capture countdown is active '
+        'even after manual mode is flagged (#5536)', (tester) async {
+      // Device truth (#5536): the manual-fallback flag flips true in parallel
+      // while the working auto-capture is still counting down, surfacing the
+      // button too soon. The button must be withheld while the 3-2-1 runs.
+      final cam = _idleMockCamera();
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(_buildScanner(cam: cam, key: key));
+      await tester.pump();
+
+      // The fallback flag is set (as the early recoverManual escape / timer
+      // would), AND a real auto-capture countdown is running concurrently.
+      await tester.pump(const Duration(milliseconds: CameraOverlayTuning.manualFallbackMs));
+      await tester.pump();
+      expect(key.currentState!.debugManualModeActive, isTrue);
+
+      key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
+      await tester.pump();
+      expect(
+        key.currentState!.debugCaptureState,
+        isA<DniCaptureCountingDown>(),
+        reason: 'precondition: an auto-capture countdown must be live',
+      );
+
+      expect(
+        find.byKey(const Key('dni_scanner_manual_capture')),
+        findsNothing,
+        reason: 'the manual button must not compete with a live 3-2-1 '
+            'auto-capture countdown',
+      );
+
+      await _disposeWidget(tester);
+    });
+
+    testWidgets(
+        'manual button reappears as a genuine fallback once the countdown '
+        'ends with manual mode still flagged (#5536)', (tester) async {
+      // The gate must not destroy the fallback: once the auto-capture is no
+      // longer in progress, the flagged manual affordance returns.
+      final cam = _idleMockCamera();
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(_buildScanner(cam: cam, key: key));
+      await tester.pump();
+
+      await tester.pump(const Duration(milliseconds: CameraOverlayTuning.manualFallbackMs));
+      await tester.pump();
+      key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
+      await tester.pump();
+      expect(
+        find.byKey(const Key('dni_scanner_manual_capture')),
+        findsNothing,
+      );
+
+      // Countdown collapses back to scanning (auto-capture stopped making
+      // progress); manual mode is still flagged, so the fallback returns.
+      key.currentState!.debugResetToScanning();
+      await tester.pump();
+      expect(key.currentState!.debugManualModeActive, isTrue);
+      expect(key.currentState!.debugCaptureState, isA<DniCaptureScanning>());
+
+      expect(
+        find.byKey(const Key('dni_scanner_manual_capture')),
+        findsOneWidget,
+        reason: 'the manual fallback must still appear when auto-capture is '
+            'not in progress',
+      );
 
       await _disposeWidget(tester);
     });

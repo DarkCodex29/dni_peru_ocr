@@ -93,7 +93,7 @@ class DniScanner extends StatefulWidget {
     this.autoCaptureMs = CameraOverlayTuning.autoCaptureMs,
     this.gracePeriodMs = 600,
     this.minStableFrames = 3,
-    this.manualFallbackMs = 30000,
+    this.manualFallbackMs = CameraOverlayTuning.manualFallbackMs,
     this.flipDocumentText = 'Voltea tu DNI',
     this.scanHints = const DniScanHints(),
   }) : assert(
@@ -150,6 +150,14 @@ class DniScanner extends StatefulWidget {
 
   final int minStableFrames;
 
+  /// Time a side may try to auto-capture before the manual-capture button is
+  /// offered as a fallback. Measured PER SIDE: the window restarts at the
+  /// front->back handoff so the back gets its own full window instead of
+  /// inheriting the front's elapsed time (#5536). The manual button is still
+  /// suppressed while an auto-capture is in progress (see [manualButtonVisible])
+  /// so it never competes with the live 3-2-1. Configurable so a published
+  /// library consumer can tune it; defaults to
+  /// [CameraOverlayTuning.manualFallbackMs] (~15s).
   final int manualFallbackMs;
 
   /// Guidance shown to the user during the front-to-back transition, telling
@@ -901,6 +909,12 @@ class DniScannerState extends State<DniScanner>
       // re-arms a capture during the live front; the in-flight re-entry guard
       // stays intact for frames arriving mid-shutter.
       _resetCaptureToScanning();
+      // Restart the manual-fallback window for the BACK so it measures from the
+      // moment the back starts trying, not from scanner open (#5536). The live
+      // handoff does not route through onSideChanged, so without this the back
+      // inherits the front's already-elapsing timer and the manual button
+      // surfaces before the back auto-capture gets a full window.
+      _cameraController.restartManualFallbackTimer();
     } on CameraException catch (e) {
       DniLogger.error('DniScanner', 'front capture failed: ${e.code}');
     } finally {
@@ -1259,7 +1273,11 @@ class DniScannerState extends State<DniScanner>
               left: 0,
               right: 0,
               child: widget.captureMode != DniCaptureMode.auto ||
-                      _manualModeActive
+                      manualButtonVisible(
+                        manualModeActive: _manualModeActive,
+                        countdownActive: _captureState is DniCaptureCountingDown,
+                        autoCaptureProgressing: _isExtracting(),
+                      )
                   ? Stack(
                       alignment: Alignment.center,
                       children: [
@@ -1658,6 +1676,33 @@ bool flipBannerVisible({
   return twoSided &&
       captureInFlight &&
       phase == HuntPhase.extractingFront;
+}
+
+/// Whether the manual-capture affordance should be shown in auto mode (#5536).
+///
+/// The manual button is driven by [DniCameraController]'s fallback flag
+/// (the early `recoverManual` escape or the per-side fallback timer), a source
+/// of truth that runs in PARALLEL to the widget auto-capture countdown and does
+/// not know an auto-capture is in progress. On device the button surfaced too
+/// soon — while the working auto-capture was still counting down or the side
+/// was dwelling toward capture — tempting the user to tap it instead of waiting
+/// for the auto-capture that fires on its own.
+///
+/// This gates the affordance on the auto-capture state so the manual stays a
+/// REAL fallback: it is withheld while the 3-2-1 [countdownActive] is on screen
+/// OR a side is actively dwelling toward capture ([autoCaptureProgressing]), and
+/// only appears once [manualModeActive] is flagged AND no auto-capture is in
+/// progress. It does not weaken the fallback — a side that never stabilizes
+/// still leaves both progress flags false, so the button appears after the
+/// fallback window as before.
+@visibleForTesting
+bool manualButtonVisible({
+  required bool manualModeActive,
+  required bool countdownActive,
+  required bool autoCaptureProgressing,
+}) {
+  if (!manualModeActive) return false;
+  return !countdownActive && !autoCaptureProgressing;
 }
 
 /// Honest side-progress ratio for the front/back indicator (#5494).
