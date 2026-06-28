@@ -41,6 +41,41 @@ const double _minAreaFraction = 0.10;
 /// approxPolyDP epsilon as a fraction of the contour perimeter.
 const double _approxEpsilonFactor = 0.02;
 
+// TEMP DIAG (#corners0): per-detection pipeline funnel captured INSIDE the
+// detector (where the native cv data lives) and carried out as plain values so
+// the scanner can log it on the MAIN isolate, where DniLogger is enabled. The
+// detector itself runs inside `Isolate.run`, whose fresh static memory leaves
+// DniLogger._enabled=false, so logging here would be silent. Trivially
+// removable: delete this class, the `diag` param on the pipeline functions, the
+// `detectQuadInFrameDiag` entry point, and the QUADPIPE log in dni_scanner.dart.
+class QuadPipeDiag {
+  QuadPipeDiag();
+
+  int frameWidth = 0;
+  int frameHeight = 0;
+  int matChannels = -1;
+  int matRows = -1;
+  int matCols = -1;
+  int edgePixels = -1;
+  int contourCount = -1;
+  double largestAreaFraction = 0;
+  int bestVertexCount = -1;
+  int quadsFound = 0;
+  bool cornersReturned = false;
+  String reject = 'none';
+
+  /// One concise line for logcat. Area fractions clamped to 2 decimals.
+  String format() {
+    final corners = cornersReturned ? 4 : 0;
+    return 'QUADPIPE in=${frameWidth}x$frameHeight '
+        'mat=${matChannels}ch/${matCols}x$matRows '
+        'edges=$edgePixels contours=$contourCount '
+        'largestArea=${largestAreaFraction.toStringAsFixed(2)} '
+        'verts=$bestVertexCount quadsFound=$quadsFound '
+        'reject=$reject corners=$corners';
+  }
+}
+
 /// Detects the best qualifying document quad in [frame].
 ///
 /// Pipeline on the Y-plane luminance: build a tight CV_8UC1 Mat (stripping any
@@ -48,8 +83,22 @@ const double _approxEpsilonFactor = 0.02;
 /// approxPolyDP per contour -> keep the largest convex 4-vertex polygon whose
 /// area meets [_minAreaFraction]. Corners are ordered TL, TR, BR, BL. Returns
 /// [QuadDetectionResult.invalid] when nothing qualifies. Never throws.
-QuadDetectionResult detectQuadInFrame(QuadFrame frame) {
+QuadDetectionResult detectQuadInFrame(QuadFrame frame) =>
+    _detectQuadInFrame(frame, null);
+
+// TEMP DIAG (#corners0): diagnostic entry point. Identical pipeline and result
+// to [detectQuadInFrame], but also fills [diag] with the per-stage funnel so
+// the caller can log it. Behaviour is unchanged — thresholds and gates are not
+// touched, this only observes. Remove with the rest of the QUADPIPE diag.
+QuadDetectionResult detectQuadInFrameDiag(QuadFrame frame, QuadPipeDiag diag) =>
+    _detectQuadInFrame(frame, diag);
+
+QuadDetectionResult _detectQuadInFrame(QuadFrame frame, QuadPipeDiag? diag) {
+  diag
+    ?..frameWidth = frame.width
+    ..frameHeight = frame.height;
   if (frame.width <= 0 || frame.height <= 0 || frame.luminance.isEmpty) {
+    diag?.reject = 'empty-frame';
     return const QuadDetectionResult.invalid();
   }
 
@@ -58,19 +107,36 @@ QuadDetectionResult detectQuadInFrame(QuadFrame frame) {
   cv.Mat? edges;
   try {
     gray = _matFromLuminance(frame);
-    if (gray == null) return const QuadDetectionResult.invalid();
+    if (gray == null) {
+      diag?.reject = 'null-mat';
+      return const QuadDetectionResult.invalid();
+    }
+    if (diag != null) {
+      diag
+        ..matChannels = gray.channels
+        ..matRows = gray.rows
+        ..matCols = gray.cols;
+    }
 
     blurred = cv.gaussianBlur(gray, (5, 5), 0);
     edges = cv.canny(blurred, 50, 150);
+    if (diag != null) {
+      // TEMP DIAG: is there ANY edge after Canny? 0 here means low-contrast
+      // back vs background -> no closed contour downstream.
+      diag.edgePixels = cv.countNonZero(edges);
+    }
 
     final (contours, hierarchy) =
         cv.findContours(edges, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
     try {
       final frameArea = (frame.width * frame.height).toDouble();
       final minArea = frameArea * _minAreaFraction;
+      diag?.contourCount = contours.length;
 
       List<QuadCorner>? best;
       var bestArea = 0.0;
+      var bestRawArea = 0.0; // largest contour area regardless of vertex count
+      var quadsFound = 0;
 
       for (var i = 0; i < contours.length; i++) {
         final contour = contours[i];
@@ -79,10 +145,24 @@ QuadDetectionResult detectQuadInFrame(QuadFrame frame) {
         final approx =
             cv.approxPolyDP(contour, _approxEpsilonFactor * perimeter, true);
         try {
+          // TEMP DIAG: track the largest raw contour and its vertex count so we
+          // can tell "no edges" from "edges but polygon != 4 verts" from
+          // "4-vert quad too small". Read-only, gate logic below is unchanged.
+          if (diag != null) {
+            final rawArea = cv.contourArea(approx).abs();
+            if (rawArea > bestRawArea) {
+              bestRawArea = rawArea;
+              diag
+                ..bestVertexCount = approx.length
+                ..largestAreaFraction =
+                    frameArea > 0 ? rawArea / frameArea : 0.0;
+            }
+          }
           if (approx.length != 4) continue;
           if (!cv.isContourConvex(approx)) continue;
           final area = cv.contourArea(approx).abs();
           if (area < minArea) continue;
+          quadsFound++;
           if (area <= bestArea) continue;
           bestArea = area;
           best = _orderCorners([
@@ -94,19 +174,40 @@ QuadDetectionResult detectQuadInFrame(QuadFrame frame) {
         }
       }
 
-      if (best == null) return const QuadDetectionResult.invalid();
+      diag?.quadsFound = quadsFound;
+      if (best == null) {
+        diag?.reject = _diagReject(diag, minArea, frameArea);
+        return const QuadDetectionResult.invalid();
+      }
+      diag
+        ?..cornersReturned = true
+        ..reject = 'none';
       return QuadDetectionResult(framingValid: true, corners: best);
     } finally {
       contours.dispose();
       hierarchy.dispose();
     }
   } on Object {
+    diag?.reject = 'native-throw';
     return const QuadDetectionResult.invalid();
   } finally {
     edges?.dispose();
     blurred?.dispose();
     gray?.dispose();
   }
+}
+
+// TEMP DIAG (#corners0): classify WHY no quad survived, using only data already
+// captured in [diag]. Pure read of counters — no native calls, no behaviour.
+String _diagReject(QuadPipeDiag diag, double minArea, double frameArea) {
+  if (diag.edgePixels == 0) return 'no-edges';
+  if (diag.contourCount == 0) return 'no-contours';
+  if (diag.bestVertexCount != 4) return 'verts!=4';
+  final minFraction = frameArea > 0 ? minArea / frameArea : _minAreaFraction;
+  if (diag.largestAreaFraction < minFraction) {
+    return 'area<${minFraction.toStringAsFixed(2)}';
+  }
+  return 'not-convex-or-smaller';
 }
 
 /// Rectifies [imageBytes] using the four [corners] via perspective transform.

@@ -400,6 +400,13 @@ class DniScannerState extends State<DniScanner>
         if (_disposed) return;
         _lightingValid = result.lighting.isValid;
         if (detectQuad) {
+          // TEMP DIAG (#corners0): emit the per-detection pipeline funnel on the
+          // MAIN isolate, where DniLogger is enabled. Grep `QUADPIPE` on device
+          // to see WHERE the quad is lost. Remove with the rest of the diag.
+          final diag = result.quadPipeDiag;
+          if (diag != null) {
+            DniLogger.warn('QUADPIPE', diag.format());
+          }
           _framingValid = result.framingValid;
           _quadCorners = result.corners;
           _quadFrameWidth = request.width;
@@ -1425,11 +1432,16 @@ class _FrameAnalysisResult {
     required this.lighting,
     required this.framingValid,
     required this.corners,
+    this.quadPipeDiag, // TEMP DIAG (#corners0): null on the fallback path
   });
 
   final LightingResult lighting;
   final bool framingValid;
   final List<QuadCorner> corners;
+
+  // TEMP DIAG (#corners0): per-detection pipeline funnel carried OUT of the
+  // isolate so it can be logged on the main isolate where DniLogger is live.
+  final QuadPipeDiag? quadPipeDiag;
 }
 
 /// Runs lighting evaluation and, when requested, native quad detection on the
@@ -1446,7 +1458,11 @@ _FrameAnalysisResult _analyzeFrame(_FrameAnalysisRequest request) {
       corners: const <QuadCorner>[],
     );
   }
-  final quad = detectQuadInFrame(
+  // TEMP DIAG (#corners0): use the diag-aware entry point so the per-stage
+  // funnel travels back out of the isolate. Swap back to detectQuadInFrame and
+  // drop quadPipeDiag to remove. Behaviour/result is identical either way.
+  final diag = QuadPipeDiag();
+  final quad = detectQuadInFrameDiag(
     QuadFrame(
       luminance: Uint8List.fromList(request.luminancePlane),
       width: request.width,
@@ -1454,11 +1470,13 @@ _FrameAnalysisResult _analyzeFrame(_FrameAnalysisRequest request) {
       bytesPerRow: request.bytesPerRow,
       rotationDegrees: request.rotationDegrees,
     ),
+    diag,
   );
   return _FrameAnalysisResult(
     lighting: lighting,
     framingValid: quad.framingValid,
     corners: quad.corners,
+    quadPipeDiag: diag,
   );
 }
 
