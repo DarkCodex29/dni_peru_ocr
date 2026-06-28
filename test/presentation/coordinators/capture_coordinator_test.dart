@@ -126,7 +126,14 @@ void main() {
       expect((lastFire! as CaptureFire).side, CaptureSide.back);
     });
 
-    test('a genuine removal (empty OCR, no quad) resets to scanning', () {
+    test('a genuine removal (empty OCR, no quad) surfaces the absent banner',
+        () {
+      // PR5 (presence migration, deliberate approval update): a blank frame with
+      // no quad in the back phase has NO document in view, so the coordinator
+      // now surfaces [CaptureAbsentBanner] instead of a silent Scanning. It
+      // still does not fire and still claims no presence — the banner IS the
+      // "no false presence" outcome, made explicit so the widget can warn the
+      // user the document left the frame (#5540/#5543).
       final coordinator = CaptureCoordinator(
         fields: DniFields.minimal(),
         idleFramesThreshold: 4,
@@ -138,10 +145,11 @@ void main() {
 
       expect(
         decision,
-        isA<CaptureScanning>(),
-        reason: 'a blank frame with no quad in the back phase is skipped — '
-            'no fire, no false presence',
+        isA<CaptureAbsentBanner>(),
+        reason: 'a blank frame with no quad in the back phase is absent — '
+            'no fire, no false presence, an explicit no-document banner',
       );
+      expect(coordinator.documentPresent, isFalse);
     });
 
     test('a stuck waiting phase offers manual through the real machine', () {

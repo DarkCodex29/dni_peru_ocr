@@ -60,6 +60,7 @@ class CaptureCoordinator {
     DniCaptureOrchestrator? orchestrator,
   })  : _isBackSide = isBackSide,
         _minStableFrames = minStableFrames,
+        _manualFallbackMs = manualFallbackMs,
         _hunter = hunter ?? FieldHunter.standard(fields: fields),
         _orchestrator = orchestrator ??
             DniCaptureOrchestrator(
@@ -114,6 +115,31 @@ class CaptureCoordinator {
   /// signal exactly as `DniScannerState._frameCaptureable` was.
   bool _frameCaptureable = false;
 
+  /// Whether a document is present and framed in the latest processed frame
+  /// (PR5). Side-aware (#5543): the FRONT trusts OCR-document presence (a front
+  /// DNI being read is present even before it stabilizes and even with the quad
+  /// degraded to `corners=0`), the BACK trusts the quad (its only proof). This
+  /// is the single coordinator-owned presence source the widget renders the
+  /// no-document banner from.
+  bool _documentPresent = false;
+
+  /// The minimum per-side fallback window before manual-assisted capture is
+  /// offered (PR5 — the migrated `DniCameraController` ~15s timer / #5536). The
+  /// window is measured against the injectable [FrameInput.now] clock, so it
+  /// needs no real `Timer`: the live widget feeds wall-clock time and the
+  /// harness feeds deterministic time.
+  final int _manualFallbackMs;
+
+  /// The clock instant the CURRENT side's fallback window started measuring
+  /// from. Set on the first processed frame and restarted at the front->back
+  /// handoff so the back gets its own full window (#5536) instead of inheriting
+  /// the front's elapsed time.
+  DateTime? _manualWindowStartedAt;
+
+  /// Whether a waiting phase handed off to manual-assisted capture this cycle
+  /// (the `recoverManual` escape: the side anchor was never confirmed).
+  bool _recoverManualLatched = false;
+
   /// The current hunt phase, exposed so the seam and the harness can observe
   /// the real machine progressing (waitingFront → extractingFront → … → done).
   HuntPhase get phase => _stateMachine.phase;
@@ -121,6 +147,27 @@ class CaptureCoordinator {
   /// The owned capture state, exposed so the live widget can render the 3-2-1
   /// counter / flash from the single coordinator-owned source.
   DniCaptureState get captureState => _captureState;
+
+  /// Whether a document is present and framed in the latest processed frame
+  /// (PR5). Side-aware: front presence is OCR-document-based (cures the device
+  /// false-absent banner #5543), back presence is quad-based. The widget renders
+  /// the no-document banner from this single source.
+  bool get documentPresent => _documentPresent;
+
+  /// Whether manual-assisted capture should be offered (PR5 single source). True
+  /// when EITHER the per-side fallback window elapsed without the side
+  /// stabilizing OR a waiting phase handed off to manual (`recoverManual`), AND
+  /// no auto-capture countdown is currently running — so the manual button never
+  /// competes with the live 3-2-1 (#5536). This replaces the parallel
+  /// `DniCameraController.captureState.manualModeActive` source (#5494).
+  bool get manualAvailable {
+    if (_captureState is DniCaptureCountingDown) return false;
+    return _recoverManualLatched || _manualWindowElapsed;
+  }
+
+  /// Whether the current side's fallback window has elapsed against the latest
+  /// processed clock instant.
+  bool _manualWindowElapsed = false;
 
   /// Runs one frame through the REAL readiness path and returns the decision.
   ///
@@ -131,6 +178,7 @@ class CaptureCoordinator {
   /// `HuntStateMachine` emits the readiness signal. An empty-OCR frame routes
   /// through the same empty-OCR back trigger the live widget uses.
   CaptureDecision onFrame(FrameInput input) {
+    _startManualWindowIfNeeded(input.now);
     if (input.ocrText.isEmpty) {
       return _handleEmptyOcrFrame(input);
     }
@@ -184,6 +232,29 @@ class CaptureCoordinator {
     );
   }
 
+  /// Updates the coordinator-owned document-present / manual-fallback state from
+  /// one LIVE frame, WITHOUT re-running the hunt machine (the live widget already
+  /// recorded that frame on the SHARED machine, so re-recording here would
+  /// double-count). This is the presence/manual analogue of [tickCountdown]: the
+  /// widget supplies the per-frame signals it already computed
+  /// ([ocrTextPresent], the live [quadFramingValid] flag, the wall-clock [now]),
+  /// and the coordinator derives the SINGLE side-aware presence + manual source
+  /// the widget renders the no-document banner and manual button from. This is
+  /// the PR5 migration that removes the widget's own `_documentPresent` field and
+  /// the parallel `DniCameraController` manual state (#5494/#5536).
+  void recordPresence({
+    required bool ocrTextPresent,
+    required bool quadFramingValid,
+    required DateTime now,
+    bool recoverManual = false,
+  }) {
+    _startManualWindowIfNeeded(now);
+    if (recoverManual) _recoverManualLatched = true;
+    _documentPresent = _isFrontPhase
+        ? ocrTextPresent
+        : (quadFramingValid || ocrTextPresent);
+  }
+
   /// Mirrors the post-capture handoff `DniScannerState._captureFront` /
   /// `_captureBack` drive on the real machine: the front advances to the back
   /// phase, the back advances to done. The harness calls this after a
@@ -199,6 +270,9 @@ class CaptureCoordinator {
           // from a clean scanning state (#5535: the InFlight latch that hung
           // the two-sided back when it was never reset after the front fired).
           _resetCountdown();
+          // Restart the per-side manual fallback window so the back gets its own
+          // full window instead of inheriting the front's elapsed time (#5536).
+          _restartManualWindow();
         } else {
           _stateMachine.advanceToDone();
         }
@@ -215,6 +289,8 @@ class CaptureCoordinator {
     _hunter.reset();
     _stateMachine.reset();
     _resetCountdown();
+    _documentPresent = false;
+    _restartManualWindow();
   }
 
   /// Clears ONLY the owned countdown/capture state back to scanning, leaving the
@@ -222,6 +298,25 @@ class CaptureCoordinator {
   /// `_resetCaptureToScanning` (a disturbed-out-of-grace countdown, a blur
   /// reject, or the post-front-capture handoff) — the migrated countdown reset.
   void resetCountdown() => _resetCountdown();
+
+  /// Restarts the per-side manual fallback window (PR5). The live widget calls
+  /// this at the front->back handoff (which does not route through [onFrame]'s
+  /// handoff path) so the back gets its own full window instead of inheriting
+  /// the front's elapsed time (#5536) — the migrated
+  /// `DniCameraController.restartManualFallbackTimer`.
+  void restartManualWindow() => _restartManualWindow();
+
+  /// Advances the per-side manual fallback window against the wall-clock [now]
+  /// WITHOUT processing a frame (PR5). The live widget drives this from a
+  /// periodic ticker so the fallback window elapses on real time even between
+  /// camera frames — the migrated `DniCameraController` ~15s timer (#5536).
+  /// Returns true when [manualAvailable] just became true so the widget can
+  /// rebuild only on a real change.
+  bool tickManualWindow(DateTime now) {
+    final wasAvailable = manualAvailable;
+    _startManualWindowIfNeeded(now);
+    return !wasAvailable && manualAvailable;
+  }
 
   /// Routes an empty-OCR frame exactly as `DniScannerState._handleEmptyOcrFrame`
   /// does (#5523): a quad-confirmed side-safe back drives the back trigger; a
@@ -241,7 +336,11 @@ class CaptureCoordinator {
     // No readiness this frame. If a countdown is running it must keep ticking
     // against the clock so a sustained empty/disturbed stream aborts it.
     _frameCaptureable = false;
-    return _advanceCountdown(input);
+    // An empty-OCR frame with no quad has no document in view, side-aware:
+    // (#5543) the front proves presence via OCR (now empty -> absent), the back
+    // proves it via the quad (false here -> absent).
+    _documentPresent = false;
+    return _withPresence(_advanceCountdown(input));
   }
 
   /// Records one frame through `HuntStateMachine`, maps the emitted signal to a
@@ -275,9 +374,12 @@ class CaptureCoordinator {
       case HuntSignal.recoverManual:
         // A waiting phase stayed stuck because the side anchor was never
         // confirmed. Escape the latch by offering manual-assisted capture
-        // instead of auto-capturing an unconfirmed side. (Manual ownership
-        // reconciliation is PR5; the coordinator surfaces the decision today.)
+        // instead of auto-capturing an unconfirmed side. PR5: latch the manual
+        // flag so [manualAvailable] surfaces it as the SINGLE source the widget
+        // reads, instead of the parallel controller state.
         _frameCaptureable = false;
+        _recoverManualLatched = true;
+        _documentPresent = _computePresence(input);
         _advanceCountdown(input);
         return const CaptureManualAvailable();
       case HuntSignal.frontDetected:
@@ -286,7 +388,13 @@ class CaptureCoordinator {
         _frameCaptureable = false;
     }
 
-    return _advanceCountdown(input);
+    // Side-aware presence (#5543, the device cure): the FRONT is present
+    // whenever a front document is being READ this frame (OCR text present in a
+    // front phase) — independent of capture-readiness and of the degraded quad,
+    // so a present-but-not-yet-stable front DNI (corners=0) never false-flags
+    // absent. The BACK is present only when the quad confirms framing.
+    _documentPresent = _computePresence(input);
+    return _withPresence(_advanceCountdown(input));
   }
 
   /// Advances the owned countdown one tick against the per-frame clock and maps
@@ -349,6 +457,74 @@ class CaptureCoordinator {
         isFrontPhase: _stateMachine.phase == HuntPhase.waitingFront ||
             _stateMachine.phase == HuntPhase.extractingFront,
       ).fireFramingValid;
+
+  /// Whether the machine is scanning a front side this frame.
+  bool get _isFrontPhase =>
+      _stateMachine.phase == HuntPhase.waitingFront ||
+      _stateMachine.phase == HuntPhase.extractingFront;
+
+  /// Side-aware document presence (#5543, the device CURE). Presence answers
+  /// "is a document in the frame this frame?", NOT "is it capture-ready?" — that
+  /// distinction is the whole bug fix.
+  ///
+  /// The FRONT is text-dense, so its presence proof is OCR text: a front DNI
+  /// being read carries OCR even before the readiness signal fires and even when
+  /// the quad degrades to `corners=0`. Gating front presence on the quad (the
+  /// failed 34ba2b8) cried false-absent on a present card; gating it on the
+  /// capture-ready flag cried false-absent mid-extraction. Front presence is
+  /// therefore simply OCR text present.
+  ///
+  /// The BACK is textless, so its strongest proof is the quad — but a back can
+  /// still carry incidental OCR text ("PERU 2024") while no clean quad is found,
+  /// and that card IS present. So the back is present when EITHER the quad
+  /// confirms framing OR OCR text is in view. Only a genuinely removed document
+  /// (empty OCR AND no quad) reads absent on both sides, which is exactly the
+  /// case the no-document banner must surface.
+  bool _computePresence(FrameInput input) {
+    if (_isFrontPhase) {
+      return input.ocrText.isNotEmpty;
+    }
+    return input.quadFramingValid || input.ocrText.isNotEmpty;
+  }
+
+  /// Wraps a base countdown decision with the side-aware presence override
+  /// (PR5). When a document is genuinely absent while a side is still being
+  /// scanned, a plain idle [CaptureScanning] frame becomes a
+  /// [CaptureAbsentBanner] so the widget surfaces the no-document warning. The
+  /// transient [CaptureReset] (a countdown aborted this frame) passes through
+  /// unchanged so the widget still clears the 3-2-1 counter on the abort frame;
+  /// the very next still-absent frame is a Scanning that this override turns into
+  /// the banner. [CaptureFire] / [CaptureCountingDown] also pass through so the
+  /// banner never masks an active capture. The [HuntPhase.done] phase is exempt:
+  /// after both sides are captured a missing document is expected.
+  CaptureDecision _withPresence(CaptureDecision base) {
+    if (_documentPresent) return base;
+    if (_stateMachine.phase == HuntPhase.done) return base;
+    if (base is CaptureScanning) {
+      return const CaptureAbsentBanner();
+    }
+    return base;
+  }
+
+  /// Starts the per-side manual fallback window the first time a frame is seen
+  /// (or after a handoff cleared it). The window is measured against the
+  /// injectable clock, so it needs no real `Timer`.
+  void _startManualWindowIfNeeded(DateTime now) {
+    _manualWindowStartedAt ??= now;
+    final startedAt = _manualWindowStartedAt;
+    if (startedAt != null) {
+      _manualWindowElapsed =
+          now.difference(startedAt).inMilliseconds >= _manualFallbackMs;
+    }
+  }
+
+  /// Restarts the per-side manual fallback window so the next side measures from
+  /// now instead of inheriting the previous side's elapsed time (#5536).
+  void _restartManualWindow() {
+    _manualWindowStartedAt = null;
+    _manualWindowElapsed = false;
+    _recoverManualLatched = false;
+  }
 
   void _resetCountdown() {
     _captureState = const DniCaptureScanning(

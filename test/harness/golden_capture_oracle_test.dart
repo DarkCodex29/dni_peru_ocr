@@ -37,11 +37,13 @@ import 'capture_frame_sequence_harness.dart';
 ///  - PINNED-FOREVER goldens (the sacred both-sides oracle, front/back happy
 ///    paths, the motion-blip rejection) describe behavior that MUST be
 ///    preserved across the migration.
-///  - "CURRENT BEHAVIOR — to be changed in PR4/PR5" goldens describe behavior
-///    that is a KNOWN device bug today (false-absent presence, stuck-after-
-///    removal). The remaining one (front stuck-after-removal) belongs to the
-///    PRESENCE migration (PR5), so it stays frozen here with its marker; PR4
-///    does not touch presence.
+///  - CURED-IN-PR5 goldens were the known device bugs (false-absent presence,
+///    front stuck-after-removal). PR5 migrated presence into the coordinator
+///    (OCR-based front presence + the coordinator-owned absent banner) and
+///    FLIPPED these goldens, as deliberate approval-test updates, to the new
+///    correct behavior: a removed document now surfaces CaptureAbsentBanner
+///    instead of staying silently stuck. They carry a "CURED in PR5" marker so
+///    a regression that reverts the fix is caught.
 ///
 /// Asserts the migrated countdown structure: the leading [latchFrames] latch
 /// frames are Scanning, every frame after that until the last is CountingDown,
@@ -244,25 +246,21 @@ void main() {
     );
 
     test(
-      'CURRENT BEHAVIOR — to be changed in PR5 (presence): a front document '
-      'removed mid-sequence (front frame latched, then empty frames) stays '
-      'stuck in extractingFront emitting Scanning forever — it does NOT reset '
-      'and does NOT surface an absent decision',
+      'CURED in PR5 (presence): a front document removed mid-sequence (front '
+      'frame latched, then empty frames) surfaces the absent banner instead of '
+      'staying stuck in extractingFront emitting Scanning forever',
       () {
-        // PR4 EVALUATED this golden and deliberately left it UNCHANGED: it is a
-        // PRESENCE symptom, not a countdown/dwell one. The empty-OCR FRONT route
-        // is skipped (only a quad-confirmed back drives the empty-OCR trigger),
-        // so once the front has latched extractingFront — but BEFORE the
-        // readiness signal started a countdown — a genuine removal cannot reset
-        // the machine. No countdown is running here, so the PR4 countdown-reset
-        // path (CaptureReset on a disturbed running countdown) does not apply;
-        // the fix is the eligibility-based presence migration, which moves the
-        // presence-banner / reset logic out of DniScannerState in PR5.
-        //
-        // This golden stays FROZEN with its "to be changed in PR4/PR5" marker
-        // so PR5 must flip it to a Reset/AbsentBanner decision INTENTIONALLY (as
-        // an approval test update), never silently. (Note the marker phrase is
-        // retained verbatim for the structural guard that enforces it.)
+        // DEVICE CURE (#5543), flipped from the PR3b/PR4 frozen golden as a
+        // DELIBERATE approval-test update. Pre-PR5 this golden documented the
+        // KNOWN BUG: once the front latched extractingFront, a genuine removal
+        // (empty OCR, no quad) could not reset the machine — it stayed silently
+        // stuck emitting Scanning forever and never surfaced a no-document
+        // warning. PR5 migrated presence into the coordinator: front presence is
+        // now OCR-document-based, so empty frames after the front latches read
+        // ABSENT and the coordinator emits CaptureAbsentBanner. The widget then
+        // shows the no-document banner and the user learns the card left the
+        // frame. The shutter still never fires on a removed document. (Earlier
+        // PRs deferred this presence symptom to the final migration; PR5 is it.)
         final coordinator = _twoSidedCoordinator();
         final harness = CaptureFrameSequenceHarness(coordinator);
 
@@ -274,20 +272,19 @@ void main() {
         expect(
           harness.decisionLabels,
           <String>[
-            'Scanning',
-            'Scanning',
-            'Scanning',
-            'Scanning',
-            'Scanning',
-            'Scanning',
-            'Scanning',
+            'Scanning', // the front frame latches extractingFront (present)
+            'AbsentBanner',
+            'AbsentBanner',
+            'AbsentBanner',
+            'AbsentBanner',
+            'AbsentBanner',
+            'AbsentBanner',
           ],
-          reason: 'CURRENT (to be changed in PR4/PR5 — PR5 presence): removal '
-              'after the front latches but before a countdown starts never '
-              'resets; the machine stays in extractingFront. PR5 must update '
-              'this golden to a reset/absent decision.',
+          reason: 'CURED (PR5 presence): removal after the front latches now '
+              'surfaces the absent banner every empty frame instead of staying '
+              'silently stuck in extractingFront.',
         );
-        expect(coordinator.phase, HuntPhase.extractingFront);
+        expect(coordinator.documentPresent, isFalse);
         expect(harness.firedFor(CaptureSide.front), isFalse);
       },
     );
@@ -396,9 +393,15 @@ void main() {
 
   group('GOLDEN — removed document (empty OCR, no quad)', () {
     test(
-      'a removed document in the back phase never fires and stays Scanning '
-      'every frame',
+      'a removed document in the back phase never fires and surfaces the absent '
+      'banner every frame (PR5 presence)',
       () {
+        // PR5 (presence migration, deliberate approval update): an empty-OCR
+        // frame with no quad in the back phase has NO document in view, so the
+        // coordinator now surfaces CaptureAbsentBanner instead of a silent
+        // Scanning. The invariant the golden protects is unchanged — the shutter
+        // never fires and there is no false presence — but the absence is now
+        // EXPLICIT so the widget can warn the user the document is gone (#5540).
         final coordinator = CaptureCoordinator(
           fields: DniFields.minimal(),
           idleFramesThreshold: _idleThreshold,
@@ -413,10 +416,12 @@ void main() {
 
         expect(
           harness.decisionLabels,
-          List<String>.filled(10, 'Scanning'),
-          reason: 'GOLDEN: empty OCR with no quad in the back phase is skipped '
-              'every frame — no fire, no false presence.',
+          List<String>.filled(10, 'AbsentBanner'),
+          reason: 'GOLDEN (PR5): empty OCR with no quad in the back phase is '
+              'absent every frame — no fire, no false presence, an explicit '
+              'no-document banner.',
         );
+        expect(coordinator.documentPresent, isFalse);
         expect(harness.firedFor(CaptureSide.back), isFalse);
         expect(harness.firedFor(CaptureSide.front), isFalse);
       },

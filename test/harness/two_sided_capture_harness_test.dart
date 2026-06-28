@@ -163,8 +163,14 @@ void main() {
     );
 
     test(
-      'a removed document (empty OCR, no quad) never fires and stays scanning',
+      'a removed document (empty OCR, no quad) never fires and surfaces the '
+      'absent banner (PR5 presence)',
       () {
+        // PR5 (presence migration): a removed document — empty OCR with no quad
+        // — has nothing in view, so the coordinator now surfaces
+        // CaptureAbsentBanner instead of a silent Scanning. It still never fires
+        // the shutter; the absence is now explicit so the widget can warn the
+        // user the document left the frame (#5540/#5543).
         final coordinator = CaptureCoordinator(
           fields: DniFields.minimal(),
           idleFramesThreshold: 4,
@@ -175,9 +181,10 @@ void main() {
 
         for (var i = 0; i < 10; i++) {
           final decision = harness.feed(_removedFrame());
-          expect(decision, isA<CaptureScanning>());
+          expect(decision, isA<CaptureAbsentBanner>());
         }
 
+        expect(coordinator.documentPresent, isFalse);
         expect(harness.firedFor(CaptureSide.back), isFalse);
         expect(harness.firedFor(CaptureSide.front), isFalse);
       },

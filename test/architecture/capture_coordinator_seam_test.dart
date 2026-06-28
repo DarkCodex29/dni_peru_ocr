@@ -170,18 +170,27 @@ void main() {
     });
 
     test(
-      'the golden oracle marks the known-bug behaviors deferred to PR4/PR5',
+      'the golden oracle records the known-bug behaviors as CURED in PR5',
       () {
-        // A migration that flips a known-bug behavior must update a golden that
-        // ANNOUNCES it is to-be-changed, never a silently-frozen one. This guard
-        // ensures those goldens carry the explicit marker so PR4/PR5 update them
-        // as deliberate approval tests.
+        // The PR3b/PR4 deferral marker ('to be changed in PR4/PR5') flagged the
+        // known-bug behaviors (false-absent presence / stuck-after-removal) for
+        // the final migration to flip. PR5 is that migration: it cures them via
+        // OCR-based presence and the coordinator-owned absent banner. The frozen
+        // 'to be changed' goldens were flipped to CURED approval tests, so the
+        // deferral marker is gone — by design. This guard now pins the CURE
+        // markers so a regression that silently reverts the fix is caught.
         final source = File(goldenFile).readAsStringSync();
         expect(
           source.contains('to be changed in PR4'),
+          isFalse,
+          reason: 'PR5 cured the deferred behaviors; the deferral marker must '
+              'be gone now that the goldens are flipped to CURED approval tests.',
+        );
+        expect(
+          source.contains('CURED in PR5'),
           isTrue,
-          reason: 'the current-but-buggy behaviors (false-absent / stuck-after-'
-              'removal) must be flagged for the PR4/PR5 migration to update.',
+          reason: 'the flipped goldens must announce the PR5 cure so the '
+              'approval-test change is explicit, never silent.',
         );
       },
     );

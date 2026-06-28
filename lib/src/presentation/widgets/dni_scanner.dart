@@ -219,7 +219,6 @@ class DniScannerState extends State<DniScanner>
 
   late final DocumentQuadDetector _quadDetector;
   bool _framingValid = true;
-  bool _documentPresent = false;
   List<QuadCorner> _quadCorners = const <QuadCorner>[];
   int _quadFrameWidth = 0;
   int _quadFrameHeight = 0;
@@ -235,6 +234,17 @@ class DniScannerState extends State<DniScanner>
   Timer? _focusIndicatorTimer;
   Timer? _hintRotationTimer;
   int _hintIndex = 0;
+
+  /// Drives the coordinator-owned manual-fallback window so the fallback elapses
+  /// between camera frames (PR5 — the migrated controller timer #5536). Ticks at
+  /// a coarse cadence and feeds a MONOTONIC anchor+elapsed clock (not
+  /// `DateTime.now()`) so the window advances deterministically under the test
+  /// fake-async clock, exactly like the countdown anchor.
+  Timer? _manualWindowTicker;
+  DateTime? _manualWindowAnchor;
+  int _manualWindowElapsedMs = 0;
+
+  static const int _manualWindowTickMs = 250;
 
   @override
   void initState() {
@@ -280,6 +290,7 @@ class DniScannerState extends State<DniScanner>
     _coordinator = CaptureCoordinator(
       isBackSide: widget.isBackSide,
       minStableFrames: widget.minStableFrames,
+      manualFallbackMs: widget.manualFallbackMs,
       hunter: _hunter,
       stateMachine: _stateMachine,
       orchestrator: _orchestrator,
@@ -292,7 +303,6 @@ class DniScannerState extends State<DniScanner>
       isBackSide: widget.isBackSide ?? false,
       onValidCapture: (_, _) {},
     );
-    _cameraController.captureState.addListener(_onControllerStateChanged);
     _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
     _lifecycle = DetectorLifecycle(
       stopStream: () => _safeStopStream(widget.controller),
@@ -314,33 +324,66 @@ class DniScannerState extends State<DniScanner>
       if (!mounted) return;
       setState(() => _hintIndex++);
     });
+    _manualWindowAnchor = DateTime.now();
+    // Seed the coordinator's window start at the anchor instant so the threshold
+    // measures from scanner-open, not from the first tick (#5536).
+    _coordinator.tickManualWindow(_manualWindowAnchor!);
+    _manualWindowTicker = Timer.periodic(
+      const Duration(milliseconds: _manualWindowTickMs),
+      (_) {
+        if (!mounted || _disposed) return;
+        _manualWindowElapsedMs += _manualWindowTickMs;
+        final anchor = _manualWindowAnchor ?? DateTime.now();
+        final now = anchor.add(Duration(milliseconds: _manualWindowElapsedMs));
+        if (_coordinator.tickManualWindow(now)) setState(() {});
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_startStream());
-      unawaited(_cameraController.start());
     });
   }
 
-  void _onControllerStateChanged() {
-    if (!mounted) return;
-    setState(() {});
+  /// Feeds one live frame's presence signals into the coordinator-owned presence
+  /// source (PR5 migration) and rebuilds only on a real change so the
+  /// no-document banner (#5540) appears/dismisses without per-frame churn. The
+  /// presence DECISION now lives in [_coordinator]; the widget only supplies the
+  /// per-frame signals it already computed and renders the result.
+  void _recordPresence({
+    required bool ocrTextPresent,
+    bool recoverManual = false,
+  }) {
+    final wasPresent = _coordinator.documentPresent;
+    final wasManual = _coordinator.manualAvailable;
+    _coordinator.recordPresence(
+      ocrTextPresent: ocrTextPresent,
+      quadFramingValid: _framingValid,
+      now: _manualClock(),
+      recoverManual: recoverManual,
+    );
+    if (mounted &&
+        (_coordinator.documentPresent != wasPresent ||
+            _coordinator.manualAvailable != wasManual)) {
+      setState(() {});
+    }
   }
 
-  /// Updates the live document-presence flag, rebuilding only on a real change
-  /// so the no-document banner (#5540) appears/dismisses without per-frame
-  /// churn.
-  void _setDocumentPresent(bool present) {
-    if (_documentPresent == present) return;
-    _documentPresent = present;
-    if (mounted) setState(() {});
+  /// The monotonic anchor+elapsed clock shared by the manual-window ticker and
+  /// the per-frame presence calls so the fallback window measures consistent
+  /// time under both the live stream and the test fake-async clock (PR5).
+  DateTime _manualClock() {
+    final anchor = _manualWindowAnchor ?? DateTime.now();
+    return anchor.add(Duration(milliseconds: _manualWindowElapsedMs));
   }
 
   @visibleForTesting
-  bool get debugDocumentPresent => _documentPresent;
+  bool get debugDocumentPresent => _coordinator.documentPresent;
 
-  bool get _manualModeActive {
-    final state = _cameraController.captureState.value;
-    return state is DniCaptureScanning && state.manualModeActive;
-  }
+  /// Whether manual-assisted capture should be offered (PR5 single source). Now
+  /// reads the coordinator's [CaptureCoordinator.manualAvailable] flag — the
+  /// single owner of the fallback decision — instead of the parallel
+  /// `DniCameraController.captureState.manualModeActive` source it competed with
+  /// before (#5494/#5536).
+  bool get _manualModeActive => _coordinator.manualAvailable;
 
   Future<void> _startStream() async {
     if (!widget.controller.value.isInitialized) {
@@ -479,7 +522,7 @@ class DniScannerState extends State<DniScanner>
       );
     }
     _frameCaptureable = false;
-    _setDocumentPresent(false);
+    _recordPresence(ocrTextPresent: false);
     DniLogger.debug('DniScanner', 'frame skipped — empty OCR');
     return _captureState;
   }
@@ -527,9 +570,10 @@ class DniScannerState extends State<DniScanner>
       case HuntSignal.recoverManual:
         // A waiting phase stayed stuck because the side anchor was never
         // confirmed. Escape the latch by offering manual-assisted capture
-        // instead of auto-capturing an unconfirmed side.
+        // instead of auto-capturing an unconfirmed side. PR5: the manual flag
+        // is owned by the coordinator (the SINGLE source), latched via
+        // [_recordPresence] below — no parallel controller state.
         _frameCaptureable = false;
-        _cameraController.activateManualFallback();
         _markCaptureReady();
       case HuntSignal.frontDetected:
       case HuntSignal.backDetected:
@@ -537,12 +581,15 @@ class DniScannerState extends State<DniScanner>
         _frameCaptureable = false;
         break;
     }
-    // A frame's document-presence is side-aware (#5540/#5543): the front trusts
-    // the OCR-eligibility signal (its quad degrades to false on the text-dense
-    // card), the back trusts the quad. A stale flag alone never keeps it
-    // "present", so removing the DNI mid-count drops presence and the countdown
-    // grace window resets it instead of capturing empty air.
-    _setDocumentPresent(_framingSignal().documentPresent);
+    // Document-presence + manual fallback are now coordinator-owned (PR5). The
+    // widget feeds the per-frame signals it already computed — this frame
+    // carried OCR text (the empty-OCR branch is handled separately), the live
+    // quad flag, and the recoverManual escape — and the coordinator derives the
+    // single side-aware presence + manual source the widget renders.
+    _recordPresence(
+      ocrTextPresent: true,
+      recoverManual: signal == HuntSignal.recoverManual,
+    );
     return _captureState;
   }
 
@@ -742,6 +789,30 @@ class DniScannerState extends State<DniScanner>
     if (mounted) setState(() {});
   }
 
+  /// Drives the coordinator-owned presence source for a live frame (PR5). Tests
+  /// that previously toggled `_frameCaptureable`/`_framingValid` to mean
+  /// "document present/absent" now feed the per-frame presence signal through
+  /// the SINGLE coordinator source the banner renders from.
+  @visibleForTesting
+  void debugSetDocumentPresent(bool present) {
+    _recordPresence(ocrTextPresent: present);
+    if (mounted) setState(() {});
+  }
+
+  /// Forces the coordinator-owned manual fallback to surface (PR5), the single
+  /// source the manual button reads. Replaces the old controller
+  /// `activateManualFallback`/timer hooks in widget tests.
+  @visibleForTesting
+  void debugActivateManualFallback() {
+    _coordinator.recordPresence(
+      ocrTextPresent: false,
+      quadFramingValid: false,
+      now: _manualClock(),
+      recoverManual: true,
+    );
+    if (mounted) setState(() {});
+  }
+
   @visibleForTesting
   bool get debugManualModeActive => _manualModeActive;
 
@@ -749,9 +820,16 @@ class DniScannerState extends State<DniScanner>
   void debugResetToScanning() => _resetCaptureToScanning();
 
   @visibleForTesting
-  void debugTriggerSideToggle() => _cameraController.onSideChanged(
-        isBackSide: !_cameraController.isBackSide,
-      );
+  void debugTriggerSideToggle() {
+    // A side change starts a fresh per-side scan, so the coordinator-owned
+    // manual fallback window restarts and any pending manual flag clears (PR5 —
+    // the migrated controller onSideChanged manual reset).
+    _coordinator.restartManualWindow();
+    _cameraController.onSideChanged(
+      isBackSide: !_cameraController.isBackSide,
+    );
+    if (mounted) setState(() {});
+  }
 
   void _safeInvoke(String label, void Function() invoke) {
     try {
@@ -916,9 +994,10 @@ class DniScannerState extends State<DniScanner>
       // Restart the manual-fallback window for the BACK so it measures from the
       // moment the back starts trying, not from scanner open (#5536). The live
       // handoff does not route through onSideChanged, so without this the back
-      // inherits the front's already-elapsing timer and the manual button
-      // surfaces before the back auto-capture gets a full window.
-      _cameraController.restartManualFallbackTimer();
+      // inherits the front's already-elapsing window and the manual button
+      // surfaces before the back auto-capture gets a full window. PR5: the
+      // window is coordinator-owned now (the single manual source).
+      _coordinator.restartManualWindow();
     } on CameraException catch (e) {
       DniLogger.error('DniScanner', 'front capture failed: ${e.code}');
     } finally {
@@ -1073,7 +1152,7 @@ class DniScannerState extends State<DniScanner>
     _countdownTicker?.cancel();
     _focusIndicatorTimer?.cancel();
     _hintRotationTimer?.cancel();
-    _cameraController.captureState.removeListener(_onControllerStateChanged);
+    _manualWindowTicker?.cancel();
     unawaited(_cameraController.dispose());
     _motionGate.dispose();
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -1337,7 +1416,7 @@ class DniScannerState extends State<DniScanner>
                       twoSided: widget.isBackSide == null,
                     ) &&
                     documentAbsentBannerVisible(
-                      documentPresent: _framingSignal().documentPresent,
+                      documentPresent: _coordinator.documentPresent,
                       phase: _stateMachine.phase,
                     ),
                 guidanceText: widget.scanHints.documentAbsent,

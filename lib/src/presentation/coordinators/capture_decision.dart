@@ -10,8 +10,18 @@ enum CaptureSide { front, back }
 /// capture state + the wall-clock anchor), so a readiness signal starts a
 /// countdown that emits [CaptureCountingDown] each held frame and [CaptureFire]
 /// only when the dwell completes; a disturbance past the grace window emits
-/// [CaptureReset]. The manual-fallback and presence-banner state still live in
-/// the widget (their migration is PR5).
+/// [CaptureReset].
+///
+/// PR5 (final migration) widened it with [CaptureAbsentBanner]: the coordinator
+/// now also owns the document-present/absent decision. A frame that drops to no
+/// document present while a side is still being scanned emits
+/// [CaptureAbsentBanner] so the widget surfaces the no-document warning and
+/// resets — instead of staying silently stuck. Front presence is OCR-document-
+/// based (a front DNI being read is present even before it stabilizes and even
+/// with `corners=0`), curing the device false-absent banner (#5543). Manual
+/// fallback availability is also coordinator-owned now (see
+/// [CaptureCoordinator.manualAvailable]); the widget reads it as a flag rather
+/// than from a parallel controller state.
 sealed class CaptureDecision {
   const CaptureDecision();
 }
@@ -53,4 +63,15 @@ class CaptureReset extends CaptureDecision {
 /// an unconfirmed side. The widget surfaces the manual control.
 class CaptureManualAvailable extends CaptureDecision {
   const CaptureManualAvailable();
+}
+
+/// No document is present in the frame while a side is still being scanned: the
+/// card left the view (OCR went empty and no quad frames it) for longer than the
+/// grace window. The widget surfaces the no-document warning banner and clears
+/// any running countdown. Presence is computed side-aware in the coordinator —
+/// FRONT presence is OCR-document-based so a present-but-not-yet-stable front
+/// DNI (corners=0) never false-fires this; only a genuinely removed document
+/// does (#5543, the device cure).
+class CaptureAbsentBanner extends CaptureDecision {
+  const CaptureAbsentBanner();
 }

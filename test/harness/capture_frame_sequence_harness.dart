@@ -102,4 +102,5 @@ String captureDecisionLabel(CaptureDecision decision) => switch (decision) {
       CaptureFire(side: final side) => 'Fire(${side.name})',
       CaptureReset() => 'Reset',
       CaptureManualAvailable() => 'Manual',
+      CaptureAbsentBanner() => 'AbsentBanner',
     };

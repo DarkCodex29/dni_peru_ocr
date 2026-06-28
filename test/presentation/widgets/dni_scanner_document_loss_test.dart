@@ -253,9 +253,9 @@ void main() {
       );
       await tester.pump();
 
-      // No document framed: explicitly mark framing invalid (card not in view).
-      key.currentState!.debugSetFramingValid(false);
-      key.currentState!.debugSetFrameCaptureable(false);
+      // No document in view: presence is coordinator-owned now (PR5), so drive
+      // the single presence source to absent.
+      key.currentState!.debugSetDocumentPresent(false);
       await tester.pump(const Duration(milliseconds: 200));
 
       expect(
@@ -284,8 +284,7 @@ void main() {
       );
       await tester.pump();
 
-      key.currentState!.debugSetFramingValid(false);
-      key.currentState!.debugSetFrameCaptureable(false);
+      key.currentState!.debugSetDocumentPresent(false);
       await tester.pump(const Duration(milliseconds: 200));
 
       expect(find.text('Coloca tu DNI'), findsWidgets);
@@ -310,10 +309,9 @@ void main() {
       );
       await tester.pump();
 
-      // Document present: framed AND capture-eligible. The banner must be
+      // Document present (coordinator-owned presence, PR5). The banner must be
       // collapsed so the warning never shows when there is nothing wrong.
-      key.currentState!.debugSetFramingValid(true);
-      key.currentState!.debugSetFrameCaptureable(true);
+      key.currentState!.debugSetDocumentPresent(true);
       await tester.pump(const Duration(milliseconds: 350));
 
       final bannerFinder = find.ancestor(
