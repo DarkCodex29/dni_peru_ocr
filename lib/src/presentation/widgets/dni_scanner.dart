@@ -895,6 +895,12 @@ class DniScannerState extends State<DniScanner>
         return;
       }
       _stateMachine.advanceToWaitingBack();
+      // Clear the leftover front DniCaptureInFlight so the back's
+      // _onCaptureReady guard passes and its countdown can start (#5535). The
+      // front shutter has already completed (post-await), so this never
+      // re-arms a capture during the live front; the in-flight re-entry guard
+      // stays intact for frames arriving mid-shutter.
+      _resetCaptureToScanning();
     } on CameraException catch (e) {
       DniLogger.error('DniScanner', 'front capture failed: ${e.code}');
     } finally {

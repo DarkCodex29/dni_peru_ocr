@@ -249,8 +249,9 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 300));
         await tester.pump();
 
-        key.currentState!.debugResetToScanning();
-        await tester.pump();
+        // No manual debugResetToScanning here: the production front->back
+        // handoff now clears the front InFlight on its own (#5535), so the back
+        // countdown starts from a clean state exactly as on the device.
         key.currentState!.debugFeedCaptureReady(HuntSignal.backCaptureReady);
         await _runCountdown(tester);
         await Future<void>.delayed(const Duration(milliseconds: 700));
