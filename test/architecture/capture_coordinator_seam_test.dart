@@ -125,4 +125,64 @@ void main() {
       );
     });
   });
+
+  group('capture-redesign PR3b — golden capture oracle', () {
+    const goldenFile = '$harnessDir/golden_capture_oracle_test.dart';
+
+    test('the golden oracle file exists', () {
+      expect(File(goldenFile).existsSync(), isTrue);
+    });
+
+    test('the golden oracle injects no readiness flag — it runs the real path',
+        () {
+      final source = File(goldenFile).readAsStringSync();
+      for (final token in bannedInjectionTokens) {
+        expect(
+          source.contains('.$token('),
+          isFalse,
+          reason: 'the golden oracle must FREEZE behavior through the real '
+              'readiness path; "$token" is a below-OCR injection that would '
+              'pin a fake decision sequence (#5545).',
+        );
+      }
+    });
+
+    test('the golden oracle drives the real harness and two-sided path', () {
+      final source = File(goldenFile).readAsStringSync();
+      expect(
+        source.contains('CaptureFrameSequenceHarness'),
+        isTrue,
+        reason: 'the golden oracle drives the device-faithful harness.',
+      );
+      expect(
+        source.contains('decisionLabels'),
+        isTrue,
+        reason: 'the golden oracle pins the exact decision sequence, not just '
+            'a fire count.',
+      );
+      expect(
+        source.contains('isBackSide:null'),
+        isTrue,
+        reason: 'the sacred both-sides oracle is the two-sided isBackSide:null '
+            'sequence — the centerpiece golden.',
+      );
+    });
+
+    test(
+      'the golden oracle marks the known-bug behaviors deferred to PR4/PR5',
+      () {
+        // A migration that flips a known-bug behavior must update a golden that
+        // ANNOUNCES it is to-be-changed, never a silently-frozen one. This guard
+        // ensures those goldens carry the explicit marker so PR4/PR5 update them
+        // as deliberate approval tests.
+        final source = File(goldenFile).readAsStringSync();
+        expect(
+          source.contains('to be changed in PR4'),
+          isTrue,
+          reason: 'the current-but-buggy behaviors (false-absent / stuck-after-'
+              'removal) must be flagged for the PR4/PR5 migration to update.',
+        );
+      },
+    );
+  });
 }

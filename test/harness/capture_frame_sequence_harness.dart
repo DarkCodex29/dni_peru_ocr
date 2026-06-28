@@ -58,4 +58,19 @@ class CaptureFrameSequenceHarness {
       .whereType<CaptureFire>()
       .where((fire) => fire.side == side)
       .length;
+
+  /// The recorded decisions mapped to stable, human-readable labels in frame
+  /// order. Golden characterization tests assert this exact sequence so a later
+  /// migration that changes the timing, order, or kind of any decision trips a
+  /// golden immediately — not just a changed fire count.
+  List<String> get decisionLabels =>
+      decisions.map(captureDecisionLabel).toList();
 }
+
+/// Maps a [CaptureDecision] to the stable label the golden oracle pins.
+/// A [CaptureFire] carries its side so a front/back swap is caught.
+String captureDecisionLabel(CaptureDecision decision) => switch (decision) {
+      CaptureScanning() => 'Scanning',
+      CaptureFire(side: final side) => 'Fire(${side.name})',
+      CaptureManualAvailable() => 'Manual',
+    };
