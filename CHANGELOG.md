@@ -20,6 +20,15 @@
   2.x relies on Dart hooks (Native Assets), which are stable only from Dart
   3.10. Consumers on older toolchains must upgrade. This is the MAJOR `1.0.0`
   bump.
+- **`CaptureDecider` and `CaptureSignal` (with `CapturePhase`) are removed
+  from the public API.** These were exported from `package:dni_peru_ocr/dni_peru_ocr.dart`
+  but had zero callers in the library or example — an orphan capture engine
+  superseded by `HuntStateMachine`. They were internal-intended yet technically
+  part of the exported surface, so their deletion is a breaking removal.
+  Capture readiness is driven entirely by `HuntStateMachine`; there is no
+  replacement export. The unused `DniCameraController.processFrame` parallel
+  capture path and its `DniTelemetry` companion are removed as part of the same
+  dead-code cleanup, with no behavior change to the live capture flow.
 
 ### Notes
 - This release wires the dependency, native module trim, platform floor, and
