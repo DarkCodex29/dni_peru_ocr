@@ -617,7 +617,7 @@ class DniScannerState extends State<DniScanner>
       now: now,
       imuStill: _motionGate.isStill,
       lightingValid: _lightingValid,
-      framingValid: _framingValid,
+      framingValid: _fireFramingValid(),
     );
     if (!identical(next, _captureState)) {
       final firedNow =
@@ -626,6 +626,26 @@ class DniScannerState extends State<DniScanner>
       if (firedNow) _triggerCaptureFlash();
     }
   }
+
+  /// Side-aware framing value fed to the capture orchestrator (#5543).
+  ///
+  /// The FRONT readiness is OCR-sourced ([HuntSignal.frontCaptureReady] comes
+  /// from field stability, not the quad), so a running front countdown already
+  /// implies an OCR-confirmed framed document. The text-dense Peru DNI front
+  /// held still makes the native quad find text edges, not a clean 4-corner
+  /// card boundary, so [_framingValid] frequently degrades to false at the
+  /// completion tick and the strict gate vetoes the shutter until motion yields
+  /// a momentarily clean quad — the "captures only when I move" regression
+  /// introduced when commit 08a32e4 wired the live quad into the front gate. On
+  /// the front, framing degrades OPEN so it never vetoes the fire; document
+  /// removal is still caught by the capture-eligibility gate (OCR-derived
+  /// `isCaptureable`), so #5540 document-removed protection is preserved.
+  ///
+  /// The BACK has no OCR readiness signal — its only proof of a framed document
+  /// is the quad itself — so it keeps the strict live [_framingValid] gate: a
+  /// degrade-closed quad at completion correctly blocks the back, and the
+  /// wrong-side guard (#5495/#5499) stays intact.
+  bool _fireFramingValid() => _isFrontPhase() ? true : _framingValid;
 
   void _triggerCaptureFlash() {
     if (_disposed || !mounted) return;

@@ -133,7 +133,8 @@ void main() {
       await _disposeWidget(tester);
     });
 
-    testWidgets('invalid quad framing blocks front countdown entry',
+    testWidgets('invalid quad framing does NOT block front countdown entry '
+        '(front readiness is OCR-sourced, not quad-gated) (#5543)',
         (tester) async {
       final cam = _idleMockCamera();
       when(() => cam.takePicture())
@@ -145,16 +146,22 @@ void main() {
       );
       await tester.pump();
 
+      // The text-dense front rarely yields a clean quad. Because the front
+      // countdown is driven by OCR readiness (which already implies a framed
+      // document), the degrade-closed quad must NOT veto it: the countdown
+      // starts and the shutter fires on completion.
       key.currentState!.debugSetFramingValid(false);
       key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 1600));
 
       expect(
         key.currentState!.debugCaptureState,
-        isA<DniCaptureScanning>(),
+        isA<DniCaptureCountingDown>(),
       );
-      verifyNever(() => cam.takePicture());
+
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      verify(() => cam.takePicture()).called(1);
       await _disposeWidget(tester);
     });
 
@@ -185,25 +192,38 @@ void main() {
       await _disposeWidget(tester);
     });
 
-    testWidgets('quad loss beyond grace during countdown resets to scanning',
-        (tester) async {
+    testWidgets('quad loss beyond grace during the BACK countdown resets to '
+        'scanning (the back keeps the strict quad gate)', (tester) async {
+      // The strict quad gate lives on the BACK path: the quad is the back's
+      // only readiness proof, so a sustained quad loss beyond the grace window
+      // must reset its countdown. The FRONT countdown is OCR-driven and is
+      // proven NOT to reset on quad loss by the #5543 group below.
       final cam = _idleMockCamera();
       when(() => cam.takePicture())
-          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+          .thenAnswer((_) async => XFile('/nonexistent/fake_back.jpg'));
       final key = GlobalKey<DniScannerState>();
 
       await tester.pumpWidget(
-        _buildScanner(cam: cam, key: key, isBackSide: false),
+        _buildScanner(
+          cam: cam,
+          key: key,
+          isBackSide: true,
+          backQuadDwellFrames: 3,
+        ),
       );
       await tester.pump();
 
       key.currentState!.debugSetFramingValid(true);
-      key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
-      await tester.pump();
-      expect(
-        key.currentState!.debugCaptureState,
-        isA<DniCaptureCountingDown>(),
-      );
+      DniCaptureState? state;
+      for (var i = 0; i < 6; i++) {
+        state = key.currentState!.debugProcessFrameForTest(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+        );
+        await tester.pump();
+      }
+      expect(state, isA<DniCaptureCountingDown>());
 
       key.currentState!.debugSetFramingValid(false);
       await tester.pump(const Duration(milliseconds: 800));
@@ -258,6 +278,157 @@ void main() {
       key.currentState!.debugSetFrameCaptureable(false);
       key.currentState!.debugResetToScanning();
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(
+        key.currentState!.debugCaptureState,
+        isA<DniCaptureScanning>(),
+      );
+      verifyNever(() => cam.takePicture());
+      await _disposeWidget(tester);
+    });
+  });
+
+  // The FRONT readiness is OCR-sourced (frontCaptureReady comes from field
+  // stability, independent of the quad), so once the front countdown is running
+  // the document is already OCR-confirmed framed. The text-dense Peru DNI front
+  // held still makes the native quad find text edges, not a clean 4-corner card
+  // boundary, so framingValid frequently reads FALSE at the completion tick.
+  // The front shutter must NOT be vetoed by that degrade-closed quad — it fired
+  // on completion before commit 08a32e4 wired the live quad into the front
+  // gate. The BACK has no OCR readiness signal, so the quad stays its only
+  // proof and keeps a strict gate. These tests cover the at-completion device
+  // case the entry-only tests above never exercised (#5543).
+  group('front fires on countdown completion without a clean quad (#5543)', () {
+    testWidgets('FRONT held still: quad invalid AT completion still fires the '
+        'shutter (OCR readiness already implies a framed document)',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, key: key, isBackSide: false),
+      );
+      await tester.pump();
+
+      // The front countdown starts on OCR readiness with a momentarily clean
+      // quad, then the text-dense card held still degrades the quad to invalid
+      // right as the dwell completes.
+      key.currentState!.debugSetFramingValid(true);
+      key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
+      await tester.pump();
+      expect(
+        key.currentState!.debugCaptureState,
+        isA<DniCaptureCountingDown>(),
+      );
+
+      key.currentState!.debugSetFramingValid(false);
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      verify(() => cam.takePicture()).called(1);
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('FRONT entry with no clean quad still starts and completes the '
+        'countdown (front never requires a quad)', (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, key: key, isBackSide: false),
+      );
+      await tester.pump();
+
+      // The text-dense front never yields a clean quad: framing stays invalid
+      // from entry through completion. The OCR-confirmed front must still fire.
+      key.currentState!.debugSetFramingValid(false);
+      key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
+      await tester.pump();
+      expect(
+        key.currentState!.debugCaptureState,
+        isA<DniCaptureCountingDown>(),
+      );
+
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      verify(() => cam.takePicture()).called(1);
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('SAFETY: the BACK keeps a strict quad gate — quad invalid AT '
+        'completion does NOT fire (the quad is the back\'s only readiness)',
+        (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_back.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(
+          cam: cam,
+          key: key,
+          isBackSide: true,
+          backQuadDwellFrames: 3,
+        ),
+      );
+      await tester.pump();
+
+      // A sustained valid quad latches the back into extractingBack and starts
+      // the back countdown through the REAL dispatch chain.
+      key.currentState!.debugSetFramingValid(true);
+      DniCaptureState? state;
+      for (var i = 0; i < 6; i++) {
+        state = key.currentState!.debugProcessFrameForTest(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+        );
+        await tester.pump();
+      }
+      expect(state, isA<DniCaptureCountingDown>());
+
+      // The quad is lost right as the dwell completes. The back has no OCR
+      // readiness to fall back on, so the strict quad gate must veto the
+      // shutter — unlike the front, the back stays blocked.
+      key.currentState!.debugSetFramingValid(false);
+      await tester.pump(const Duration(milliseconds: 1600));
+
+      expect(
+        key.currentState!.debugCaptureState,
+        isA<DniCaptureScanning>(),
+      );
+      verifyNever(() => cam.takePicture());
+      await _disposeWidget(tester);
+    });
+
+    testWidgets('SAFETY (#5540): sustained document removal beyond grace still '
+        'aborts the FRONT countdown (no capture of empty air)', (tester) async {
+      final cam = _idleMockCamera();
+      when(() => cam.takePicture())
+          .thenAnswer((_) async => XFile('/nonexistent/fake_front.jpg'));
+      final key = GlobalKey<DniScannerState>();
+
+      await tester.pumpWidget(
+        _buildScanner(cam: cam, key: key, isBackSide: false),
+      );
+      await tester.pump();
+
+      key.currentState!.debugSetFramingValid(true);
+      key.currentState!.debugFeedCaptureReady(HuntSignal.frontCaptureReady);
+      await tester.pump();
+      expect(
+        key.currentState!.debugCaptureState,
+        isA<DniCaptureCountingDown>(),
+      );
+
+      // The DNI leaves the frame: OCR goes empty so the frame is no longer
+      // captureable. Degrade-open framing must NOT mask a removed document —
+      // the capture-eligibility (OCR) gate still aborts past the grace window.
+      key.currentState!.debugSetFrameCaptureable(false);
       await tester.pump(const Duration(milliseconds: 1600));
 
       expect(

@@ -126,7 +126,7 @@ void main() {
   group('DniScanner cancels the countdown when the document is removed (#5540)',
       () {
     testWidgets(
-        'document removed (framing drops) for the full dwell resets the '
+        'document removed (OCR goes empty) for the full dwell resets the front '
         'countdown and does NOT fire the shutter', (tester) async {
       final cam = _idleMockCamera();
       when(() => cam.takePicture())
@@ -147,11 +147,13 @@ void main() {
         isA<DniCaptureCountingDown>(),
       );
 
-      // The user REMOVES the DNI: the quad framing signal drops. The capture
-      // eligibility flag may still be stale-true from the last good frame, so
-      // ONLY the framing drop must be enough to cancel the count — this is the
-      // bug the owner saw (countdown kept running and captured empty air).
-      key.currentState!.debugSetFramingValid(false);
+      // The user REMOVES the DNI. The front shutter is NOT quad-gated (#5543):
+      // its framing degrades open because the text-dense card never yields a
+      // clean quad. The real removal detector on the front is OCR going empty,
+      // which drops capture eligibility — that gate must abort the count past
+      // the grace window so the front never captures empty air (#5540). The
+      // quad-only removal of the textless BACK is covered by its own test.
+      key.currentState!.debugSetFrameCaptureable(false);
       await tester.pump(const Duration(milliseconds: 1600));
 
       verifyNever(() => cam.takePicture());
