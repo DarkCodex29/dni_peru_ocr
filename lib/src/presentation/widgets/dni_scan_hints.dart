@@ -16,6 +16,7 @@ class DniScanHints {
     this.waitingBack = _defaultWaitingBack,
     this.extractingBack = _defaultExtractingBack,
     this.processing = _defaultProcessing,
+    this.documentAbsent = _defaultDocumentAbsent,
   });
 
   /// Hints while waiting to detect the front side.
@@ -32,6 +33,12 @@ class DniScanHints {
 
   /// Hint shown once both sides are captured and processing.
   final String processing;
+
+  /// Top-banner warning shown when no document is detected in the frame while
+  /// scanning a side — e.g. the user removed the DNI mid-countdown, which
+  /// cancels the auto-capture (#5540). Configurable so a published-library
+  /// consumer can localize or reword it. Default is neutral Spanish.
+  final String documentAbsent;
 
   static const List<String> _defaultWaitingFront = [
     'Coloca el documento dentro del marco',
@@ -58,4 +65,6 @@ class DniScanHints {
   ];
 
   static const String _defaultProcessing = 'Procesando…';
+
+  static const String _defaultDocumentAbsent = 'No se detecta el documento';
 }

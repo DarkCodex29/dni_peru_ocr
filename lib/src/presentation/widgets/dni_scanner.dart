@@ -225,6 +225,7 @@ class DniScannerState extends State<DniScanner>
 
   late final DocumentQuadDetector _quadDetector;
   bool _framingValid = true;
+  bool _documentPresent = false;
   List<QuadCorner> _quadCorners = const <QuadCorner>[];
   int _quadFrameWidth = 0;
   int _quadFrameHeight = 0;
@@ -318,6 +319,18 @@ class DniScannerState extends State<DniScanner>
     if (!mounted) return;
     setState(() {});
   }
+
+  /// Updates the live document-presence flag, rebuilding only on a real change
+  /// so the no-document banner (#5540) appears/dismisses without per-frame
+  /// churn.
+  void _setDocumentPresent(bool present) {
+    if (_documentPresent == present) return;
+    _documentPresent = present;
+    if (mounted) setState(() {});
+  }
+
+  @visibleForTesting
+  bool get debugDocumentPresent => _documentPresent;
 
   bool get _manualModeActive {
     final state = _cameraController.captureState.value;
@@ -465,6 +478,7 @@ class DniScannerState extends State<DniScanner>
       );
     }
     _frameCaptureable = false;
+    _setDocumentPresent(false);
     // TEMP DIAG (#5517/#5523): an empty-OCR back frame was DROPPED before
     // reaching the trigger because the quad signal was not valid at this
     // instant. On the textless reverso this is the most likely on-device
@@ -556,6 +570,16 @@ class DniScannerState extends State<DniScanner>
         _frameCaptureable = false;
         break;
     }
+    // A frame's document-presence is the conjunction of a confirmed framing
+    // quad and a capture-eligible signal (#5540): a stale flag alone never
+    // keeps it "present", so removing the DNI mid-count drops presence and the
+    // countdown grace window resets it instead of capturing empty air.
+    _setDocumentPresent(
+      documentPresent(
+        framingValid: _framingValid,
+        captureEligible: _frameCaptureable,
+      ),
+    );
     return _captureState;
   }
 
@@ -711,7 +735,10 @@ class DniScannerState extends State<DniScanner>
   void debugSetLightingValid(bool value) => _lightingValid = value;
 
   @visibleForTesting
-  void debugSetFramingValid(bool value) => _framingValid = value;
+  void debugSetFramingValid(bool value) {
+    _framingValid = value;
+    if (mounted) setState(() {});
+  }
 
   @visibleForTesting
   void debugSetQuad(
@@ -729,7 +756,10 @@ class DniScannerState extends State<DniScanner>
   List<QuadCorner> get debugQuadCorners => _quadCorners;
 
   @visibleForTesting
-  void debugSetFrameCaptureable(bool value) => _frameCaptureable = value;
+  void debugSetFrameCaptureable(bool value) {
+    _frameCaptureable = value;
+    if (mounted) setState(() {});
+  }
 
   @visibleForTesting
   bool get debugManualModeActive => _manualModeActive;
@@ -1319,6 +1349,29 @@ class DniScannerState extends State<DniScanner>
                 guidanceText: widget.flipDocumentText,
               ),
             ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _DocumentAbsentBanner(
+                // The flip banner owns the top slot during the front->back
+                // hand-off (where a missing document is expected), so the
+                // no-document warning yields to it to avoid overlap.
+                visible: !flipBannerVisible(
+                      phase: _stateMachine.phase,
+                      captureInFlight: _captureState is DniCaptureInFlight,
+                      twoSided: widget.isBackSide == null,
+                    ) &&
+                    documentAbsentBannerVisible(
+                      documentPresent: documentPresent(
+                        framingValid: _framingValid,
+                        captureEligible: _frameCaptureable,
+                      ),
+                      phase: _stateMachine.phase,
+                    ),
+                guidanceText: widget.scanHints.documentAbsent,
+              ),
+            ),
           ],
         );
       },
@@ -1703,6 +1756,48 @@ bool manualButtonVisible({
 }) {
   if (!manualModeActive) return false;
   return !countdownActive && !autoCaptureProgressing;
+}
+
+/// Whether a document is actually present and framed this frame (#5540).
+///
+/// The 3-2-1 countdown must abort if the user REMOVES the DNI mid-count instead
+/// of counting down on empty air and capturing nothing. Document-presence is the
+/// conjunction of two live per-frame signals already tracked by the scanner:
+/// - [framingValid]: the quad detector confirms a well-framed document quad.
+///   With the native detector this is the reliable presence proof — it drops to
+///   false the moment the card leaves the frame.
+/// - [captureEligible]: the latest processed frame yielded a capture-ready /
+///   side-detected signal from [HuntStateMachine] (so OCR/quad confirmed a
+///   document), as opposed to a `none`/dropped frame.
+///
+/// Requiring BOTH means a stale flag alone never keeps the document "present":
+/// removing the card drops framing (native regime) or stops the capture-ready
+/// confirmation (front OCR), so the countdown's grace window (#5504/#5532) sees
+/// the disturbance and resets. The same hysteresis is preserved — a single
+/// dropped frame within the grace window does not reset, only a sustained loss.
+@visibleForTesting
+bool documentPresent({
+  required bool framingValid,
+  required bool captureEligible,
+}) {
+  return framingValid && captureEligible;
+}
+
+/// Whether the top banner should warn that no document is detected (#5540).
+///
+/// Shown while a side is being scanned ([HuntPhase.waitingFront],
+/// [HuntPhase.extractingFront], [HuntPhase.waitingBack],
+/// [HuntPhase.extractingBack]) and no document is present in the frame, so the
+/// user learns the countdown stopped because the DNI left the frame. Suppressed
+/// in [HuntPhase.done]: both sides are captured and the scanner is processing,
+/// where a missing document is expected and must not raise the warning.
+@visibleForTesting
+bool documentAbsentBannerVisible({
+  required bool documentPresent,
+  required HuntPhase phase,
+}) {
+  if (documentPresent) return false;
+  return phase != HuntPhase.done;
 }
 
 /// Honest side-progress ratio for the front/back indicator (#5494).
@@ -2117,6 +2212,82 @@ class _FlipDocumentBannerState extends State<_FlipDocumentBanner>
                   Flexible(
                     child: Text(
                       widget.guidanceText,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Top banner shown when no document is detected in the frame while a side is
+/// being scanned (#5540). It tells the user the auto-capture stopped because
+/// the DNI left the frame. Mounted permanently and shown/hidden via the same
+/// slide+fade pattern as [_FlipDocumentBanner] so it animates in and out.
+class _DocumentAbsentBanner extends StatelessWidget {
+  const _DocumentAbsentBanner({
+    required this.visible,
+    required this.guidanceText,
+  });
+
+  final bool visible;
+  final String guidanceText;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedSlide(
+        offset: visible ? Offset.zero : const Offset(0, -1.0),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+        child: AnimatedOpacity(
+          opacity: visible ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 280),
+          child: Padding(
+            padding: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 16,
+              left: 20,
+              right: 20,
+            ),
+            child: Container(
+              key: const Key('dni_scanner_document_absent_banner'),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xE6212121),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.document_scanner_outlined,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      guidanceText,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Colors.white,
