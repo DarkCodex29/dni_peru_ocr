@@ -6,7 +6,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 class CameraOverlayTuning {
   const CameraOverlayTuning._();
 
-  static const int autoCaptureMs = 1500;
+  static const int autoCaptureMs = 3000;
   static const int gracePeriodMs = 600;
   static const int minStableFrames = 2;
   static const int requiredBlinks = 1;
@@ -46,7 +46,7 @@ Widget animatedSwitcherDedupeLayout(
     alignment: Alignment.center,
     children: [
       ...filtered,
-      if (current != null) current,
+      ?current,
     ],
   );
 }

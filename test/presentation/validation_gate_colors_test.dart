@@ -65,6 +65,8 @@ void main() {
         ValidationGate.fillLow,
         ValidationGate.lineCount,
         ValidationGate.tilt,
+        ValidationGate.lighting,
+        ValidationGate.glare,
       ];
       for (final gate in failureGates) {
         final color = ValidationGateColors.colorFor(gate, theme);

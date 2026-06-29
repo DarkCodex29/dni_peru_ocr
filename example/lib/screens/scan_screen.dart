@@ -14,6 +14,7 @@ DniLookupService? _lookupService;
 
 DniLookupService? _resolveLookupService() {
   if (_lookupService != null) return _lookupService;
+  if (!dotenv.isInitialized) return null;
   final token = dotenv.maybeGet('APISPERU_TOKEN')?.trim();
   if (token == null || token.isEmpty) {
     debugPrint(
@@ -187,6 +188,9 @@ class _ScanScreenState extends State<ScanScreen> {
       body: DniScanner(
         controller: controller,
         fields: widget.fields ?? DniFields.full(),
+        manualFallbackMs: 30000,
+        flipDocumentText: 'Voltea tu DNI',
+        scanHints: const DniScanHints(),
         onScanComplete: _onScanComplete,
       ),
     );

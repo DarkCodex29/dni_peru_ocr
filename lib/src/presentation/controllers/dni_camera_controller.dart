@@ -1,11 +1,5 @@
-import 'dart:async';
-
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart';
 
-import '../document_validator.dart';
-import '../orchestrators/dni_capture_orchestrator.dart';
-import '../orchestrators/dni_capture_state.dart';
 import '../../data/ocr_consensus.dart';
 import '../../data/ocr_field_extractor.dart';
 import '../../domain/interfaces/ocr_logger.dart';
@@ -14,59 +8,29 @@ import '../../lookup/reliable/dni_data_merger.dart';
 import '../../lookup/reliable/reliable_dni_pipeline.dart';
 import '../../lookup/services/dni_lookup_service.dart';
 
-/// Diagnostic telemetry emitted each time a camera frame is processed.
-@immutable
-class DniTelemetry {
-  const DniTelemetry({
-    required this.stableFrames,
-    required this.failingGate,
-    this.tiltDegrees = 0.0,
-    this.rawBlockCount = 0,
-    this.filteredBlockCount = 0,
-  });
-
-  final int stableFrames;
-  final String? failingGate;
-  final double tiltDegrees;
-  final int rawBlockCount;
-  final int filteredBlockCount;
-
-  @override
-  bool operator ==(Object other) {
-    if (identical(this, other)) return true;
-    return other is DniTelemetry &&
-        other.stableFrames == stableFrames &&
-        other.failingGate == failingGate &&
-        other.tiltDegrees == tiltDegrees &&
-        other.rawBlockCount == rawBlockCount &&
-        other.filteredBlockCount == filteredBlockCount;
-  }
-
-  @override
-  int get hashCode => Object.hash(
-        stableFrames,
-        failingGate,
-        tiltDegrees,
-        rawBlockCount,
-        filteredBlockCount,
-      );
-}
-
 /// Pure Dart lifecycle controller for the DNI camera capture flow.
+///
+/// PR5 (capture-redesign final migration) removed this controller's parallel
+/// capture-STATE subsystem — the `captureState` notifier, the manual-fallback
+/// timer, and the `captureManually` / `activateManualFallback` /
+/// `restartManualFallbackTimer` / `start` methods. That state was the second,
+/// unreconciled source of truth (#5494): it ran in parallel to the live
+/// auto-capture and the manual button read it, surfacing the manual fallback
+/// too soon (#5536). The single capture-readiness owner is now
+/// `CaptureCoordinator` (countdown, presence, AND manual fallback). This
+/// controller is now scoped to its remaining job: the back-side OCR consensus
+/// accumulator + the reliable lookup pipeline + capture delivery. (Breaking
+/// public removal noted in CHANGELOG, mirroring PR1's CaptureDecider removal.)
 class DniCameraController {
   DniCameraController({
-    required DniCaptureOrchestrator orchestrator,
     required bool isBackSide,
     required void Function(XFile file, OcrConsensusResult? consensus) onValidCapture,
-    void Function(DateTime expirationDate)? onDocumentExpired,
     OcrLogger logger = const NoOpOcrLogger(),
     DniLookupService? lookupService,
     void Function(DniData)? onDniReady,
     Duration lookupTimeout = const Duration(milliseconds: 1500),
-  })  : _orchestrator = orchestrator,
-        _isBackSide = isBackSide,
+  })  : _isBackSide = isBackSide,
         _onValidCapture = onValidCapture,
-        _onDocumentExpired = onDocumentExpired,
         _logger = logger,
         _onDniReady = onDniReady,
         _pipeline = lookupService != null
@@ -75,22 +39,7 @@ class DniCameraController {
                 merger: const DniDataMerger(),
                 timeout: lookupTimeout,
               )
-            : null,
-        _captureStateNotifier = ValueNotifier(
-          const DniCaptureScanning(
-            guideText: '',
-            failingGate: null,
-            validationProgress: 0,
-            stableFrames: 0,
-            userDataMatch: null,
-            manualModeActive: false,
-          ),
-        ),
-        _telemetryNotifier = ValueNotifier(
-          const DniTelemetry(stableFrames: 0, failingGate: null),
-        );
-
-  final DniCaptureOrchestrator _orchestrator;
+            : null;
 
   final OcrLogger _logger;
 
@@ -110,46 +59,12 @@ class DniCameraController {
 
   final void Function(XFile file, OcrConsensusResult? consensus) _onValidCapture;
 
-  final void Function(DateTime expirationDate)? _onDocumentExpired;
-
-  final ValueNotifier<DniCaptureState> _captureStateNotifier;
-  final ValueNotifier<DniTelemetry> _telemetryNotifier;
-
   bool _isDisposed = false;
-  bool _expiredHandled = false;
   bool _pipelineFired = false;
-  Timer? _manualFallbackTimer;
 
   OcrConsensusAccumulator? _accumulator;
 
-  ValueListenable<DniCaptureState> get captureState => _captureStateNotifier;
-
-  ValueListenable<DniTelemetry> get telemetry => _telemetryNotifier;
-
   bool get isBackSide => _isBackSide;
-
-  /// Starts the manual-fallback timer.
-  Future<void> start() async {
-    if (_isDisposed) return;
-    _startManualFallbackTimer();
-  }
-
-  /// Stops any in-progress frame work. Does NOT dispose the controller.
-  void stop() {
-    _manualFallbackTimer?.cancel();
-  }
-
-  /// Triggers a manual capture.
-  void captureManually() {
-    if (_isDisposed) return;
-    final current = _captureStateNotifier.value;
-    if (current is DniCaptureInFlight ||
-        current is DniCaptureExpired ||
-        current is DniCaptureDone) {
-      return;
-    }
-    _updateState(const DniCaptureInFlight(showFlash: true));
-  }
 
   /// Called when the user toggles between front and back side.
   void onSideChanged({
@@ -157,8 +72,6 @@ class DniCameraController {
     OcrExtractedFields? frontSideFields,
   }) {
     if (_isDisposed) return;
-    _manualFallbackTimer?.cancel();
-    _expiredHandled = false;
     _pipelineFired = false;
 
     _isBackSide = isBackSide;
@@ -199,9 +112,6 @@ class DniCameraController {
         }
       }
     }
-
-    _updateState(_orchestrator.onSideToggle(_captureStateNotifier.value));
-    _startManualFallbackTimer();
   }
 
   /// Records a processed OCR frame in the active consensus accumulator.
@@ -256,46 +166,6 @@ class DniCameraController {
   /// Emits the current consensus snapshot, or `null` when no accumulator is active.
   OcrConsensusResult? snapshotConsensus() => _accumulator?.snapshot();
 
-  /// Processes a single camera frame.
-  void processFrame({
-    required DocumentValidationResult validation,
-    required int stableFrames,
-    required bool? userDataMatch,
-    DateTime? expirationDate,
-    String? failingGate,
-    double tiltDegrees = 0.0,
-    int rawBlockCount = 0,
-    int filteredBlockCount = 0,
-  }) {
-    if (_isDisposed) return;
-
-    if (expirationDate != null && !_expiredHandled) {
-      if (expirationDate.isBefore(DateTime.now())) {
-        _expiredHandled = true;
-        _updateState(DniCaptureExpired(expirationDate));
-        _onDocumentExpired?.call(expirationDate);
-        return;
-      }
-    }
-
-    final next = _orchestrator.onFrame(
-      current: _captureStateNotifier.value,
-      validation: validation,
-      stableFrames: stableFrames,
-      userDataMatch: userDataMatch,
-      now: DateTime.now(),
-    );
-    _updateState(next);
-
-    _telemetryNotifier.value = DniTelemetry(
-      stableFrames: stableFrames,
-      failingGate: failingGate,
-      tiltDegrees: tiltDegrees,
-      rawBlockCount: rawBlockCount,
-      filteredBlockCount: filteredBlockCount,
-    );
-  }
-
   /// Notifies the controller that the widget has completed a capture.
   void onCaptureDelivered({
     required XFile file,
@@ -303,19 +173,14 @@ class DniCameraController {
   }) {
     if (_isDisposed) return;
     _onValidCapture(file, _isBackSide ? consensus : null);
-    _updateState(const DniCaptureDone());
   }
 
   /// Disposes the controller. Idempotent.
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
-    _manualFallbackTimer?.cancel();
-    _captureStateNotifier.value = const DniCaptureDone();
     _accumulator?.dispose();
     _accumulator = null;
-    _captureStateNotifier.dispose();
-    _telemetryNotifier.dispose();
   }
 
   void _resolveAndDeliver(DniData ocrData) {
@@ -336,26 +201,5 @@ class DniCameraController {
         snapshot.secondLastName.value ?? '',
       ].where((s) => s.isNotEmpty).join(' '),
     );
-  }
-
-  void _updateState(DniCaptureState next) {
-    if (_isDisposed) return;
-    _captureStateNotifier.value = next;
-  }
-
-  void _startManualFallbackTimer() {
-    _manualFallbackTimer?.cancel();
-    _manualFallbackTimer = Timer(
-      Duration(milliseconds: _orchestrator.manualFallbackMs),
-      _onManualFallbackTimeout,
-    );
-  }
-
-  void _onManualFallbackTimeout() {
-    if (_isDisposed) return;
-    final next = _orchestrator.onManualFallbackTimeout(
-      _captureStateNotifier.value,
-    );
-    _updateState(next);
   }
 }

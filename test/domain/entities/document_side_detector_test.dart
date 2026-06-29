@@ -5,19 +5,7 @@ void main() {
   group('DocumentSideDetector', () {
     const detector = DocumentSideDetector();
 
-    group('front anchors (any one is enough)', () {
-      test('CUI alone marks front (Modelo 2020)', () {
-        expect(detector.detect('CUI 1234567890'), DocumentSide.front);
-      });
-
-      test('DNI + 8 digits marks front (azul booklet)', () {
-        expect(detector.detect('DNI 16793105'), DocumentSide.front);
-      });
-
-      test('DNI + 8 digits + check digit marks front', () {
-        expect(detector.detect('DNI 16793105-2'), DocumentSide.front);
-      });
-
+    group('front anchors (title-block only — exclusive to the front)', () {
       test('REPUBLICA DEL PERU marks front', () {
         expect(detector.detect('REPÚBLICA DEL PERÚ'), DocumentSide.front);
       });
@@ -37,6 +25,43 @@ void main() {
         expect(
           detector.detect('REGISTRO NACIONAL DE IDENTIFICACIÓN'),
           DocumentSide.front,
+        );
+      });
+    });
+
+    group('bare document number is NOT front-exclusive (corrected contract)',
+        () {
+      // The Peru DNI BACK also prints the RENIEC `DNI` label + the 8-digit
+      // document number near the MRZ, and a garbled `C.U.I` token. A bare
+      // number without the front title block is therefore AMBIGUOUS, not a
+      // front signal. Treating it as front inverted the flipped signal on the
+      // data-rich back and killed the back auto-capture latch (#5498).
+      test('CUI number alone (no title block) is unknown, not front', () {
+        expect(detector.detect('CUI 1234567890'), DocumentSide.unknown);
+      });
+
+      test('DNI + 8 digits alone (no title block) is unknown, not front', () {
+        expect(detector.detect('DNI 16793105'), DocumentSide.unknown);
+      });
+
+      test('DNI + 8 digits + check digit alone is unknown, not front', () {
+        expect(detector.detect('DNI 16793105-2'), DocumentSide.unknown);
+      });
+
+      test('realistic back OCR (Grupo de Votación + DNI number near MRZ + '
+          'address, NO front title block, NO back anchor) is NOT front', () {
+        const text =
+            'Grupo de Votación 083966\n'
+            'Dirección AMPLC. TUPAC AMARU SICUANI 215\n'
+            'DNI 71542895\n'
+            'I<PER7154289<<<<<<<<<<<<<<<';
+        expect(detector.detect(text), isNot(DocumentSide.front));
+      });
+
+      test('garbled C.U.I token on the back (no title block) is NOT front', () {
+        expect(
+          detector.detect('C.U.I 74984331 14/01/01'),
+          isNot(DocumentSide.front),
         );
       });
     });

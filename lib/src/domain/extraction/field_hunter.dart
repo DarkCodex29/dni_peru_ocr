@@ -68,7 +68,17 @@ class FieldHunter {
   final OcrTextSanitizer _sanitizer;
   final FieldValueCleaner _valueCleaner;
 
+  /// Distinct consistent reads of the same value required before a field's
+  /// winner is treated as confidently captured and LOCKED. A locked field is
+  /// fixed: it is never re-voted, never re-processed, and never surfaced as
+  /// missing. The side a field belongs to is not knowable across DNI versions,
+  /// so a confident winner is the only reliable signal that its data is done
+  /// (#5486). Defaults to 4 — enough agreement to rule out a one-off OCR misread
+  /// without waiting for an unreachable field count.
+  static const int lockVoteThreshold = 4;
+
   final Map<_FieldKey, Map<String, _Vote>> _votes = {};
+  final Set<_FieldKey> _locked = {};
   bool _frontDetected = false;
   bool _backDetected = false;
   DocumentSide _lastSeen = DocumentSide.unknown;
@@ -148,6 +158,7 @@ class FieldHunter {
 
   void reset() {
     _votes.clear();
+    _locked.clear();
     _frontDetected = false;
     _backDetected = false;
     _lastSeen = DocumentSide.unknown;
@@ -155,9 +166,12 @@ class FieldHunter {
   }
 
   bool _vote(_FieldKey key, String? value) {
+    // A locked field is fixed: ignore any further reads so it is never
+    // re-processed or overturned (#5486).
+    if (_locked.contains(key)) return false;
     if (_fields != null) {
       final dniField = _fieldKeyToDniField[key];
-      if (dniField != null && !_fields!.contains(dniField)) return false;
+      if (dniField != null && !_fields.contains(dniField)) return false;
     }
     final cleaned = _shouldClean(key) ? _valueCleaner.clean(value) : value;
     if (cleaned == null || cleaned.isEmpty) return false;
@@ -173,21 +187,35 @@ class FieldHunter {
     final existing = bucket[normalized];
     if (existing == null) {
       bucket[normalized] = _Vote(display: cleaned, count: 1);
-      DniLogger.info(
+      DniLogger.verbose(
         'FieldHunter',
         'NEW ${key.name} = "$cleaned" (vote 1)',
       );
+      _maybeLock(key, 1);
       return true;
     }
     existing.count++;
     if (_preferDisplay(key, existing.display, cleaned)) {
       existing.display = cleaned;
     }
-    DniLogger.debug(
+    DniLogger.verbose(
       'FieldHunter',
       '+1 ${key.name} = "${existing.display}" (votes=${existing.count})',
     );
+    _maybeLock(key, existing.count);
     return false;
+  }
+
+  /// Locks [key] once its winning value reaches [lockVoteThreshold] votes.
+  void _maybeLock(_FieldKey key, int winningCount) {
+    if (winningCount >= lockVoteThreshold) _locked.add(key);
+  }
+
+  /// Whether [field] has been confidently captured and locked. A locked field
+  /// is fixed: it is never re-requested, re-processed, or reported as missing.
+  bool isLocked(DniField field) {
+    final key = _dniFieldToFieldKey[field];
+    return key != null && _locked.contains(key);
   }
 
   bool _isCrossFieldCollision(_FieldKey key, String normalized) {
@@ -222,7 +250,7 @@ class FieldHunter {
   }
 
   void _logPartial(FieldExtractor extractor, ExtractedFields p) {
-    if (!DniLogger.isEnabled) return;
+    if (!DniLogger.isVerbose) return;
     final found = <String>[];
     if (p.documentNumber != null) found.add('docNum=${p.documentNumber}');
     if (p.firstName != null) found.add('firstName=${p.firstName}');
@@ -250,7 +278,7 @@ class FieldHunter {
       found.add('birthUbigeo=${p.birthUbigeoCode}');
     }
     if (found.isEmpty) return;
-    DniLogger.debug(
+    DniLogger.verbose(
       'FieldHunter',
       '${extractor.runtimeType} -> ${found.join(', ')}',
     );
@@ -431,6 +459,28 @@ const _fieldKeyToDniField = <_FieldKey, DniField>{
   _FieldKey.organDonor: DniField.organDonor,
   _FieldKey.votingGroup: DniField.votingGroup,
   _FieldKey.birthUbigeoCode: DniField.birthUbigeoCode,
+};
+
+const _dniFieldToFieldKey = <DniField, _FieldKey>{
+  DniField.documentNumber: _FieldKey.documentNumber,
+  DniField.firstName: _FieldKey.firstName,
+  DniField.lastName: _FieldKey.lastName,
+  DniField.secondLastName: _FieldKey.secondLastName,
+  DniField.dateOfBirth: _FieldKey.dateOfBirth,
+  DniField.expirationDate: _FieldKey.expirationDate,
+  DniField.emissionDate: _FieldKey.emissionDate,
+  DniField.inscriptionDate: _FieldKey.inscriptionDate,
+  DniField.sex: _FieldKey.sex,
+  DniField.nationality: _FieldKey.nationality,
+  DniField.address: _FieldKey.address,
+  DniField.department: _FieldKey.department,
+  DniField.province: _FieldKey.province,
+  DniField.district: _FieldKey.district,
+  DniField.stateCivil: _FieldKey.stateCivil,
+  DniField.cardNumber: _FieldKey.cardNumber,
+  DniField.organDonor: _FieldKey.organDonor,
+  DniField.votingGroup: _FieldKey.votingGroup,
+  DniField.birthUbigeoCode: _FieldKey.birthUbigeoCode,
 };
 
 class _Vote {

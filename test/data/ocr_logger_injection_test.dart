@@ -136,16 +136,9 @@ void main() {
       'DniCameraController can be constructed with an OcrLogger',
       () {
         final spy = _SpyOcrLogger();
-        final orchestrator = DniCaptureOrchestrator(
-          autoCaptureMs: 5000,
-          gracePeriodMs: 1000,
-          manualFallbackMs: 30000,
-          minStableFrames: 10,
-        );
         final controller = DniCameraController(
-          orchestrator: orchestrator,
           isBackSide: false,
-          onValidCapture: (_, __) {},
+          onValidCapture: (_, _) {},
           logger: spy,
         );
         expect(controller, isNotNull);

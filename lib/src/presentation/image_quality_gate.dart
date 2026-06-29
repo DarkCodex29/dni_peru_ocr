@@ -24,19 +24,16 @@ class ImageQualityException implements Exception {
   String toString() => 'ImageQualityException: $message';
 }
 
-/// Project-owned liveness result.
 class LivenessResult {
   const LivenessResult({required this.isLive, required this.laplacianScore});
   final bool isLive;
   final double laplacianScore;
 }
 
-/// Injectable liveness analyzer interface.
 abstract class LivenessAnalyzer {
   Future<LivenessResult> analyze(Uint8List bytes);
 }
 
-/// Validates image quality: sharpness and liveness.
 class ImageQualityGate {
   ImageQualityGate({LivenessAnalyzer? analyzer})
       : _analyzer = analyzer ?? _DartLivenessAnalyzer();
@@ -69,7 +66,6 @@ class ImageQualityGate {
     return result.isLive;
   }
 
-  /// Runs blur + liveness checks and returns a single verdict.
   Future<QualityCheckResult> validate(Uint8List bytes) async {
     imglib.Image? decoded;
     try {

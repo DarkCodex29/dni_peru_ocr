@@ -7,8 +7,8 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import '../domain/entities/document_side.dart';
 import '../domain/entities/validation_gate.dart';
 import '../infrastructure/tilt_calculator.dart';
+import 'lighting_gate.dart';
 
-/// Result of evaluating a document frame against quality gates.
 class DocumentValidationResult {
   const DocumentValidationResult._({
     required this.message,
@@ -22,6 +22,16 @@ class DocumentValidationResult {
           message: '',
           isCaptureable: isCaptureable,
         );
+
+  const DocumentValidationResult.captureable()
+      : message = '',
+        isCaptureable = true,
+        failingGate = null;
+
+  const DocumentValidationResult.notCaptureable()
+      : message = '',
+        isCaptureable = false,
+        failingGate = ValidationGate.minBlocks;
 
   final String message;
   final bool isCaptureable;
@@ -39,13 +49,13 @@ class DocumentValidationResult {
 
   static const double _maxTiltDegrees = 15.0;
 
-  /// Evaluates document framing from [recognizedText] against [imageSize].
   static DocumentValidationResult evaluate({
     required RecognizedText recognizedText,
     required Size imageSize,
     bool ocrMatchesUser = false,
     bool isBackSide = false,
     double Function(RecognizedText) tiltCalculator = computeMedianTiltDegrees,
+    LightingResult? lighting,
   }) {
     final blocks = recognizedText.blocks;
     final requiredBlocks = isBackSide ? _minBlocksBack : _minBlocks;
@@ -162,6 +172,16 @@ class DocumentValidationResult {
       );
     }
 
+    if (lighting != null && !lighting.isValid) {
+      return DocumentValidationResult._(
+        message: lighting.failing == ValidationGate.glare
+            ? 'Evita el reflejo sobre el documento'
+            : 'Mejora la iluminación del documento',
+        isCaptureable: false,
+        failingGate: lighting.failing ?? ValidationGate.lighting,
+      );
+    }
+
     return DocumentValidationResult._(
       message: ocrMatchesUser
           ? '¡DNI verificado! Mantén quieto'
@@ -169,5 +189,4 @@ class DocumentValidationResult {
       isCaptureable: true,
     );
   }
-
 }

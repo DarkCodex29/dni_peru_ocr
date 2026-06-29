@@ -9,6 +9,8 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
+import '../../domain/capture/document_quad_detector.dart';
+import '../../domain/capture/motion_stillness_gate.dart';
 import '../../domain/entities/document_side.dart';
 import '../../domain/extraction/dni_fields.dart';
 import '../../domain/extraction/extracted_fields.dart';
@@ -18,22 +20,28 @@ import '../../domain/extraction/hunt_state_machine.dart';
 import '../../infrastructure/detector_lifecycle.dart';
 import '../../infrastructure/dni_logger.dart';
 import '../../infrastructure/input_image_converter.dart';
+import '../../infrastructure/opencv_quad_detector.dart';
 import '../../lookup/models/dni_data.dart';
 import '../../lookup/models/dni_lookup_result.dart';
 import '../../lookup/services/dni_lookup_service.dart';
+import '../../infrastructure/sensors_motion_gate.dart';
+import '../camera_overlay_logic.dart';
+import '../controllers/dni_camera_controller.dart';
+import '../coordinators/capture_coordinator.dart';
+import '../coordinators/capture_decision.dart';
+import '../coordinators/frame_input.dart';
+import '../framing/framing_signal.dart';
+import '../image_quality_gate.dart';
+import '../lighting_gate.dart';
+import '../orchestrators/dni_capture_orchestrator.dart';
+import '../orchestrators/dni_capture_state.dart';
 import '../theme/kyc_theme.dart';
+import 'dni_scan_hints.dart';
+import 'quad_overlay_painter.dart';
 
-/// How [DniScanner] decides when to take the picture.
-///
-/// - [auto]: the hunt state machine fires the capture when the OCR signal
-///   stabilizes (legacy behavior, default).
-/// - [manual]: the scanner keeps hunting OCR fields (consensus and RENIEC
-///   lookup still work) but the picture is only taken when the user taps
-///   the capture button.
-/// - [hybrid]: auto-capture stays active AND the capture button is shown,
-///   so the user can shoot immediately when the auto trigger is slow
-///   (poor lighting, hard-to-read documents).
 enum DniCaptureMode { auto, manual, hybrid }
+
+enum _BlurGateOutcome { accept, retry, reject }
 
 class DniScanResult {
   const DniScanResult({
@@ -49,7 +57,6 @@ class DniScanResult {
   final DniData? reniecData;
 }
 
-/// Result emitted by [DniScanner] in single-side mode.
 class DniSideScanResult {
   const DniSideScanResult({
     required this.photo,
@@ -77,10 +84,21 @@ class DniScanner extends StatefulWidget {
     this.lookupService,
     this.lookupTimeout = const Duration(milliseconds: 2500),
     this.onDniReady,
+    this.onError,
     this.idleFramesBeforeCapture = 18,
+    this.backQuadDwellFrames = 6,
     this.holeWidth = 300,
     this.holeHeight = 220,
     this.captureMode = DniCaptureMode.auto,
+    this.orchestrator,
+    this.motionGate,
+    this.imageQualityGate,
+    this.autoCaptureMs = CameraOverlayTuning.autoCaptureMs,
+    this.gracePeriodMs = 600,
+    this.minStableFrames = 3,
+    this.manualFallbackMs = CameraOverlayTuning.manualFallbackMs,
+    this.flipDocumentText = 'Voltea tu DNI',
+    this.scanHints = const DniScanHints(),
   }) : assert(
           (isBackSide == null && onScanComplete != null) ||
               (isBackSide != null && onSideCaptured != null),
@@ -90,19 +108,10 @@ class DniScanner extends StatefulWidget {
 
   final CameraController controller;
 
-  /// Fires when both sides have been captured. Used in two-sided mode
-  /// (when [isBackSide] is null).
   final void Function(DniScanResult result)? onScanComplete;
 
-  /// Fires when the active single-side capture completes. Used in
-  /// single-side mode (when [isBackSide] is set).
   final void Function(DniSideScanResult result)? onSideCaptured;
 
-  /// Single-side mode selector.
-  /// - `null` (default): two-sided mode — scanner orchestrates front then back
-  ///   and emits a single [onScanComplete].
-  /// - `false`: scan only the front side, emit [onSideCaptured].
-  /// - `true`: scan only the back side, emit [onSideCaptured].
   final bool? isBackSide;
 
   final FieldHunter? hunter;
@@ -110,39 +119,110 @@ class DniScanner extends StatefulWidget {
 
   final DniFields? fields;
 
-  /// When provided, fires a RENIEC lookup against [lookupService] as soon
-  /// as the active capture exposes a `documentNumber`. The resolved data
-  /// is delivered via [onDniReady] and bundled into the appropriate result.
   final DniLookupService? lookupService;
 
-  /// Timeout for the RENIEC lookup. Defaults to 2500ms.
   final Duration lookupTimeout;
 
-  /// Fires once when the RENIEC lookup resolves with a successful payload.
   final void Function(DniData data)? onDniReady;
 
+  final void Function(Object error, StackTrace stack)? onError;
+
   final int idleFramesBeforeCapture;
+
+  /// Sustained-frame dwell for a quad-confirmed TEXTLESS back before
+  /// auto-capture. Forwarded to [HuntStateMachine.backQuadDwellFrames] and
+  /// scoped to the back quad-latch path only; the front and the manual escape
+  /// keep using [idleFramesBeforeCapture]. Defaults to 6 (~0.7s at the camera
+  /// cadence), calibrated from device truth (#5525) so the reverso
+  /// auto-captures in a human hold instead of falling to manual.
+  final int backQuadDwellFrames;
   final double holeWidth;
   final double holeHeight;
 
-  /// Capture trigger strategy. Defaults to [DniCaptureMode.auto].
   final DniCaptureMode captureMode;
 
+  final DniCaptureOrchestrator? orchestrator;
+
+  final MotionStillnessGate? motionGate;
+
+  final ImageQualityGate? imageQualityGate;
+
+  final int autoCaptureMs;
+
+  final int gracePeriodMs;
+
+  final int minStableFrames;
+
+  /// Time a side may try to auto-capture before the manual-capture button is
+  /// offered as a fallback. Measured PER SIDE: the window restarts at the
+  /// front->back handoff so the back gets its own full window instead of
+  /// inheriting the front's elapsed time (#5536). The manual button is still
+  /// suppressed while an auto-capture is in progress (see [manualButtonVisible])
+  /// so it never competes with the live 3-2-1. Configurable so a published
+  /// library consumer can tune it; defaults to
+  /// [CameraOverlayTuning.manualFallbackMs] (~15s).
+  final int manualFallbackMs;
+
+  /// Guidance shown to the user during the front-to-back transition, telling
+  /// them to flip the document. Configurable so a published-library consumer
+  /// can localize or reword it. Defaults to neutral Spanish.
+  final String flipDocumentText;
+
+  /// Rotating bottom-of-screen guidance hints per scanning phase. The copy is
+  /// generic action guidance only (focus, hold still, flip) and never names a
+  /// specific DNI field. Configurable so a published-library consumer can
+  /// localize or reword it. Defaults to neutral Spanish.
+  final DniScanHints scanHints;
+
   @override
-  State<DniScanner> createState() => _DniScannerState();
+  State<DniScanner> createState() => DniScannerState();
 }
 
-class _DniScannerState extends State<DniScanner>
+class DniScannerState extends State<DniScanner>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late final FieldHunter _hunter;
   late final HuntStateMachine _stateMachine;
   late final TextRecognizer _recognizer;
   late final DetectorLifecycle _lifecycle;
   late final AnimationController _pulse;
+  late final AnimationController _captureFlash;
+  late final DniCaptureOrchestrator _orchestrator;
+  late final CaptureCoordinator _coordinator;
+  late final DniCameraController _cameraController;
+  late final MotionStillnessGate _motionGate;
+  late final ImageQualityGate _imageQualityGate;
+
+  static const int maxBlurRetries = 2;
+  int _blurRetries = 0;
+
+  /// The capture/countdown state is now OWNED by [_coordinator] (PR4 migration);
+  /// the widget reads it through this getter to render the 3-2-1 counter and
+  /// flash from the single coordinator-owned source.
+  DniCaptureState get _captureState => _coordinator.captureState;
+
+  Timer? _countdownTicker;
+  DateTime? _countdownAnchor;
+  int _countdownElapsedMs = 0;
+
+  static const int _countdownTickMs = 100;
+
+  static const int _captureFlashMs = 180;
 
   bool _processing = false;
   bool _disposed = false;
   bool _capturing = false;
+  bool _frameCaptureable = false;
+  bool _lightingValid = true;
+  bool _analyzingLighting = false;
+  int _lastLightingMs = 0;
+
+  static const int _lightingIntervalMs = 350;
+
+  late final DocumentQuadDetector _quadDetector;
+  bool _framingValid = true;
+  List<QuadCorner> _quadCorners = const <QuadCorner>[];
+  int _quadFrameWidth = 0;
+  int _quadFrameHeight = 0;
   bool _torchOn = false;
   bool _captureReady = false;
   XFile? _frontPhoto;
@@ -156,6 +236,17 @@ class _DniScannerState extends State<DniScanner>
   Timer? _hintRotationTimer;
   int _hintIndex = 0;
 
+  /// Drives the coordinator-owned manual-fallback window so the fallback elapses
+  /// between camera frames (PR5 — the migrated controller timer #5536). Ticks at
+  /// a coarse cadence and feeds a MONOTONIC anchor+elapsed clock (not
+  /// `DateTime.now()`) so the window advances deterministically under the test
+  /// fake-async clock, exactly like the countdown anchor.
+  Timer? _manualWindowTicker;
+  DateTime? _manualWindowAnchor;
+  int _manualWindowElapsedMs = 0;
+
+  static const int _manualWindowTickMs = 250;
+
   @override
   void initState() {
     super.initState();
@@ -165,11 +256,20 @@ class _DniScannerState extends State<DniScanner>
         ? HuntPhase.waitingBack
         : HuntPhase.waitingFront;
     final selectedCount = widget.fields?.length ?? 19;
+    // Auto-capture fires on DATA STABILITY rather than on extracting every
+    // selected field, because some printed fields are physically absent or
+    // illegible on a given DNI and can never be reached (#5471). The stable
+    // floor is the smallest meaningful identity set (4, the size of
+    // DniFields.minimal), clamped so tiny custom selections still work. Fast
+    // advance keys off the same floor so any stabilized plateau above it uses
+    // the fast path instead of dropping onto the slow idle path at e.g. 11/19.
+    final stableFloor = 4.clamp(2, selectedCount);
     _stateMachine = widget.stateMachine ??
         HuntStateMachine(
           idleFramesThreshold: widget.idleFramesBeforeCapture,
-          minFieldsForFastAdvance:
-              (selectedCount * 0.66).round().clamp(2, selectedCount),
+          backQuadDwellFrames: widget.backQuadDwellFrames,
+          minFieldsForFastAdvance: stableFloor,
+          minFieldsForStableCapture: stableFloor,
           frontCompleteFieldsCount: widget.fields?.frontCount,
           backCompleteFieldsCount: widget.isBackSide == true
               ? widget.fields?.backCount
@@ -177,6 +277,32 @@ class _DniScannerState extends State<DniScanner>
           initialPhase: initialPhase,
         );
     _lastPhaseRendered = initialPhase;
+    _orchestrator = widget.orchestrator ??
+        DniCaptureOrchestrator(
+          autoCaptureMs: widget.autoCaptureMs,
+          gracePeriodMs: widget.gracePeriodMs,
+          manualFallbackMs: widget.manualFallbackMs,
+          minStableFrames: widget.minStableFrames,
+        );
+    // The coordinator OWNS the countdown/dwell decision (PR4). It SHARES this
+    // widget's hunt machine, hunter and orchestrator so there is a single
+    // source of truth — the widget renders from the same machine the
+    // coordinator decides from, with no duplicated/divergent state.
+    _coordinator = CaptureCoordinator(
+      isBackSide: widget.isBackSide,
+      minStableFrames: widget.minStableFrames,
+      manualFallbackMs: widget.manualFallbackMs,
+      hunter: _hunter,
+      stateMachine: _stateMachine,
+      orchestrator: _orchestrator,
+    );
+    _motionGate = widget.motionGate ?? SensorsMotionGate();
+    _imageQualityGate = widget.imageQualityGate ?? ImageQualityGate();
+    _quadDetector = selectQuadDetector();
+    _cameraController = DniCameraController(
+      isBackSide: widget.isBackSide ?? false,
+      onValidCapture: (_, _) {},
+    );
     _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
     _lifecycle = DetectorLifecycle(
       stopStream: () => _safeStopStream(widget.controller),
@@ -187,6 +313,10 @@ class _DniScannerState extends State<DniScanner>
       duration: const Duration(milliseconds: 1100),
     );
     unawaited(_pulse.repeat(reverse: true));
+    _captureFlash = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: _captureFlashMs),
+    );
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
@@ -194,10 +324,66 @@ class _DniScannerState extends State<DniScanner>
       if (!mounted) return;
       setState(() => _hintIndex++);
     });
+    _manualWindowAnchor = DateTime.now();
+    // Seed the coordinator's window start at the anchor instant so the threshold
+    // measures from scanner-open, not from the first tick (#5536).
+    _coordinator.tickManualWindow(_manualWindowAnchor!);
+    _manualWindowTicker = Timer.periodic(
+      const Duration(milliseconds: _manualWindowTickMs),
+      (_) {
+        if (!mounted || _disposed) return;
+        _manualWindowElapsedMs += _manualWindowTickMs;
+        final anchor = _manualWindowAnchor ?? DateTime.now();
+        final now = anchor.add(Duration(milliseconds: _manualWindowElapsedMs));
+        if (_coordinator.tickManualWindow(now)) setState(() {});
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_startStream());
     });
   }
+
+  /// Feeds one live frame's presence signals into the coordinator-owned presence
+  /// source (PR5 migration) and rebuilds only on a real change so the
+  /// no-document banner (#5540) appears/dismisses without per-frame churn. The
+  /// presence DECISION now lives in [_coordinator]; the widget only supplies the
+  /// per-frame signals it already computed and renders the result.
+  void _recordPresence({
+    required bool ocrTextPresent,
+    bool recoverManual = false,
+  }) {
+    final wasPresent = _coordinator.documentPresent;
+    final wasManual = _coordinator.manualAvailable;
+    _coordinator.recordPresence(
+      ocrTextPresent: ocrTextPresent,
+      quadFramingValid: _framingValid,
+      now: _manualClock(),
+      recoverManual: recoverManual,
+    );
+    if (mounted &&
+        (_coordinator.documentPresent != wasPresent ||
+            _coordinator.manualAvailable != wasManual)) {
+      setState(() {});
+    }
+  }
+
+  /// The monotonic anchor+elapsed clock shared by the manual-window ticker and
+  /// the per-frame presence calls so the fallback window measures consistent
+  /// time under both the live stream and the test fake-async clock (PR5).
+  DateTime _manualClock() {
+    final anchor = _manualWindowAnchor ?? DateTime.now();
+    return anchor.add(Duration(milliseconds: _manualWindowElapsedMs));
+  }
+
+  @visibleForTesting
+  bool get debugDocumentPresent => _coordinator.documentPresent;
+
+  /// Whether manual-assisted capture should be offered (PR5 single source). Now
+  /// reads the coordinator's [CaptureCoordinator.manualAvailable] flag — the
+  /// single owner of the fallback decision — instead of the parallel
+  /// `DniCameraController.captureState.manualModeActive` source it competed with
+  /// before (#5494/#5536).
+  bool get _manualModeActive => _coordinator.manualAvailable;
 
   Future<void> _startStream() async {
     if (!widget.controller.value.isInitialized) {
@@ -227,11 +413,56 @@ class _DniScannerState extends State<DniScanner>
   }
 
   void _onCameraImage(CameraImage image) {
-    if (_disposed || _processing || _capturing) return;
+    if (_disposed || _capturing) return;
+    _maybeAnalyzeFrame(image);
+    if (_processing) return;
     _processing = true;
     unawaited(
       _lifecycle.trackInflight(() => _processImage(image)).whenComplete(() {
         _processing = false;
+      }),
+    );
+  }
+
+  /// Runs lighting and (when native is available) quad detection on the same
+  /// Y-plane inside a single isolate hop, reusing one throttle interval and one
+  /// in-flight guard so per-frame analysis never spawns a second isolate or
+  /// outpaces the camera.
+  void _maybeAnalyzeFrame(CameraImage image) {
+    if (_analyzingLighting) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (nowMs - _lastLightingMs < _lightingIntervalMs) return;
+    _lastLightingMs = nowMs;
+    final detectQuad = _quadDetector.isNativeAvailable;
+    final request = _FrameAnalysisRequest(
+      luminancePlane: image.planes.first.bytes,
+      bytesPerRow: image.planes.first.bytesPerRow,
+      width: image.width,
+      height: image.height,
+      rotationDegrees: widget.controller.description.sensorOrientation,
+      detectQuad: detectQuad,
+    );
+    _analyzingLighting = true;
+    unawaited(
+      Isolate.run(() => _analyzeFrame(request)).then((result) {
+        if (_disposed) return;
+        _lightingValid = result.lighting.isValid;
+        if (detectQuad) {
+          _framingValid = result.framingValid;
+          _quadCorners = result.corners;
+          _quadFrameWidth = request.width;
+          _quadFrameHeight = request.height;
+          if (mounted) setState(() {});
+        }
+      }).catchError((_) {
+        if (_disposed) return;
+        _lightingValid = true;
+        if (detectQuad) {
+          _framingValid = true;
+          _quadCorners = const <QuadCorner>[];
+        }
+      }).whenComplete(() {
+        _analyzingLighting = false;
       }),
     );
   }
@@ -247,60 +478,477 @@ class _DniScannerState extends State<DniScanner>
     if (!mounted) return;
 
     final text = recognized.blocks.map((b) => b.text).join('\n');
-    if (text.isEmpty) {
-      DniLogger.debug('DniScanner', 'frame skipped — empty OCR');
-      return;
+    if (text.isNotEmpty) {
+      DniLogger.verbose(
+        'DniScanner',
+        'raw OCR (${text.length} chars, ${recognized.blocks.length} blocks):\n$text',
+      );
     }
+    // Route the per-frame readiness through the coordinator's tested seam
+    // (#5562): the same DocumentSideDetector.detect -> FieldHunter.process ->
+    // HuntStateMachine.recordFrame chain the harness golden drives, so the
+    // device path IS the tested path. The widget no longer runs its own
+    // duplicate detect()/recordFrame.
+    _dispatchFrame(text);
+  }
 
-    DniLogger.info(
-      'DniScanner',
-      'raw OCR (${text.length} chars, ${recognized.blocks.length} blocks):\n$text',
+  /// Feeds one recognized OCR frame through [CaptureCoordinator.onFrame] — the
+  /// REAL detect -> hunt -> recordFrame -> decision chain the harness golden
+  /// pins — and applies the returned [CaptureDecision] to the widget's render
+  /// and shutter. This is the device path routed through the tested coordinator
+  /// seam (#5562): the side is detected from [text] inside the coordinator (no
+  /// duplicate detect() in the widget), and the empty-OCR textless-back trigger
+  /// (#5523) is handled by the coordinator too.
+  void _dispatchFrame(String text) {
+    final phaseBefore = _stateMachine.phase;
+    final decision = _coordinator.onFrame(
+      FrameInput(
+        ocrText: text,
+        quadFramingValid: _framingValid,
+        imuStill: _motionGate.isStill,
+        now: _captureClock(),
+      ),
     );
+    if (mounted &&
+        (_stateMachine.phase != _lastPhaseRendered ||
+            _stateMachine.phase != phaseBefore)) {
+      _lastPhaseRendered = _stateMachine.phase;
+    }
+    _applyDecision(decision);
+  }
 
-    final DocumentSide detectedSide = switch (widget.isBackSide) {
-      null => const DocumentSideDetector().detect(text),
-      true => DocumentSide.back,
-      false => DocumentSide.front,
-    };
-    final addedNew = _hunter.process(text);
-    final snapshot = _hunter.snapshot;
-    final filled = _countFilled(snapshot.fields);
+  /// Translates one coordinator [CaptureDecision] into the widget's render and
+  /// shutter actions. The coordinator OWNS the readiness + countdown decision;
+  /// the widget starts/keeps its smooth periodic ticker on a running countdown
+  /// (so the 3-2-1 stays smooth between sparse camera frames), fires the shutter
+  /// on completion, clears on a reset, and rebuilds for scanning/manual/absent.
+  void _applyDecision(CaptureDecision decision) {
+    switch (decision) {
+      case CaptureFire(side: final side):
+        _frameCaptureable = true;
+        _countdownTicker?.cancel();
+        _countdownTicker = null;
+        if (mounted) setState(() {});
+        unawaited(
+          _fireCapture(
+            side == CaptureSide.back
+                ? HuntSignal.backCaptureReady
+                : HuntSignal.frontCaptureReady,
+          ),
+        );
+      case CaptureCountingDown():
+        _frameCaptureable = true;
+        if (widget.captureMode == DniCaptureMode.manual) {
+          _markCaptureReady();
+        } else {
+          _ensureCountdownTicker();
+        }
+        if (mounted) setState(() {});
+      case CaptureReset():
+        _resetCaptureToScanning();
+      case CaptureManualAvailable():
+        _frameCaptureable = false;
+        _markCaptureReady();
+        if (mounted) setState(() {});
+      case CaptureScanning():
+      case CaptureAbsentBanner():
+        _frameCaptureable = false;
+        if (mounted) setState(() {});
+    }
+  }
+
+  /// Starts the smooth countdown ticker if a countdown is running but the timer
+  /// is not yet armed. The coordinator already advanced the dwell this frame;
+  /// the ticker keeps it advancing during the camera-stream cadence so the 3-2-1
+  /// renders smoothly between sparse OCR frames. Idempotent: a running ticker is
+  /// left alone so re-entry never collapses progress.
+  void _ensureCountdownTicker() {
+    if (_capturing || _disposed) return;
+    if (_countdownTicker != null) return;
+    final side = _captureState is DniCaptureCountingDown
+        ? (_coordinatorCountdownSide() ?? HuntSignal.frontCaptureReady)
+        : HuntSignal.frontCaptureReady;
+    _countdownAnchor = _captureClock();
+    _countdownElapsedMs = 0;
+    _startCountdownTicker(side);
+  }
+
+  /// The hunt phase resolves which side the running countdown targets so the
+  /// ticker fires the correct shutter. Front phases -> front, otherwise back.
+  HuntSignal? _coordinatorCountdownSide() => _isFrontPhase()
+      ? HuntSignal.frontCaptureReady
+      : HuntSignal.backCaptureReady;
+
+  /// The monotonic wall-clock the coordinator measures the dwell and the
+  /// manual-fallback window against. On device this is real time; under the test
+  /// fake-async clock the routed real-text path runs inside `runAsync`, so real
+  /// time advances consistently for both the per-frame [onFrame] and the
+  /// countdown ticker.
+  DateTime _captureClock() => DateTime.now();
+
+  /// Legacy debug-only empty-OCR routing (#5523), retained for
+  /// [debugProcessEmptyOcrForTest]. The LIVE device path no longer calls this:
+  /// [_processImage] feeds every frame — including empty-OCR textless-back
+  /// frames — through [CaptureCoordinator.onFrame], which owns the identical
+  /// empty-OCR back trigger (#5562). This mirror exists only so existing tests
+  /// can exercise the empty-OCR routing in isolation.
+  DniCaptureState _handleEmptyOcrFrame() {
+    if (_framingSignal().dispatchEmptyOcrBackTrigger) {
+      return _recordAndDispatch(
+        detectedSide: DocumentSide.unknown,
+        addedNewField: false,
+        filledFields: _countFilled(_hunter.snapshot.fields),
+      );
+    }
+    _frameCaptureable = false;
+    _recordPresence(ocrTextPresent: false);
+    DniLogger.debug('DniScanner', 'frame skipped — empty OCR');
+    return _captureState;
+  }
+
+  /// Legacy debug-only readiness dispatch, retained for
+  /// [debugProcessFrameForTest]. The LIVE device path no longer calls this:
+  /// [_processImage] routes every frame through [CaptureCoordinator.onFrame],
+  /// the tested seam that runs the real `detect -> hunt -> recordFrame ->
+  /// decision` chain and owns the countdown (#5562). This mirror records a
+  /// pre-resolved frame on the shared machine so existing tests that drive the
+  /// back with a fixed side/field count keep working; it is never reached from
+  /// a live camera frame.
+  DniCaptureState _recordAndDispatch({
+    required DocumentSide detectedSide,
+    required bool addedNewField,
+    required int filledFields,
+  }) {
     final signal = _stateMachine.recordFrame(
       detectedSide: detectedSide,
-      addedNewField: addedNew,
-      filledFields: filled,
+      addedNewField: addedNewField,
+      filledFields: filledFields,
+      quadFramingValid: _framingValid,
     );
 
     final total = widget.fields?.length ?? 19;
-    DniLogger.info(
+    DniLogger.verbose(
       'DniScanner',
-      'side=$detectedSide addedNew=$addedNew phase=${_stateMachine.phase} '
-          'signal=$signal filled=$filled/$total',
+      'side=$detectedSide addedNew=$addedNewField phase=${_stateMachine.phase} '
+          'signal=$signal filled=$filledFields/$total framing=$_framingValid',
     );
 
     if (mounted &&
-        (_stateMachine.phase != _lastPhaseRendered || addedNew)) {
+        (_stateMachine.phase != _lastPhaseRendered || addedNewField)) {
       setState(() => _lastPhaseRendered = _stateMachine.phase);
     }
 
     switch (signal) {
       case HuntSignal.frontCaptureReady:
-        if (widget.captureMode == DniCaptureMode.manual) {
-          _markCaptureReady();
-        } else {
-          await _captureFront();
-        }
       case HuntSignal.backCaptureReady:
+        _frameCaptureable = true;
         if (widget.captureMode == DniCaptureMode.manual) {
           _markCaptureReady();
         } else {
-          await _captureBack();
+          _onCaptureReady(signal);
         }
+      case HuntSignal.recoverManual:
+        // A waiting phase stayed stuck because the side anchor was never
+        // confirmed. Escape the latch by offering manual-assisted capture
+        // instead of auto-capturing an unconfirmed side. PR5: the manual flag
+        // is owned by the coordinator (the SINGLE source), latched via
+        // [_recordPresence] below — no parallel controller state.
+        _frameCaptureable = false;
+        _markCaptureReady();
       case HuntSignal.frontDetected:
       case HuntSignal.backDetected:
       case HuntSignal.none:
+        _frameCaptureable = false;
         break;
     }
+    // Document-presence + manual fallback are now coordinator-owned (PR5). The
+    // widget feeds the per-frame signals it already computed — this frame
+    // carried OCR text (the empty-OCR branch is handled separately), the live
+    // quad flag, and the recoverManual escape — and the coordinator derives the
+    // single side-aware presence + manual source the widget renders.
+    _recordPresence(
+      ocrTextPresent: true,
+      recoverManual: signal == HuntSignal.recoverManual,
+    );
+    return _captureState;
+  }
+
+  /// Starts (or continues) the coordinator-owned countdown for [signal]'s side
+  /// and drives the dwell through the widget's periodic ticker (PR4 migration).
+  ///
+  /// The countdown DECISION + state now live in [_coordinator]; the widget only
+  /// supplies the camera-pause ticker that advances the dwell clock and renders
+  /// the returned [CaptureDecision]. Idempotent: re-entry while a countdown runs
+  /// keeps the live anchor instead of collapsing progress back to ~0.
+  void _onCaptureReady(HuntSignal signal) {
+    if (_capturing || _disposed) return;
+    if (_captureState is DniCaptureInFlight ||
+        _captureState is DniCaptureDone) {
+      return;
+    }
+    final side = signal == HuntSignal.backCaptureReady
+        ? CaptureSide.back
+        : CaptureSide.front;
+    // The readiness signal makes this frame capture-eligible — the blocking
+    // signal the coordinator's countdown reads on the next tick. (Set here too
+    // for the debugFeedCaptureReady path, which enters without _recordAndDispatch.)
+    _frameCaptureable = true;
+    _coordinator.beginCountdown(side);
+    if (_captureState is CountingDownWithAnchor) {
+      _advanceCapture();
+      if (mounted) setState(() {});
+      return;
+    }
+    _countdownAnchor = DateTime.now();
+    _countdownElapsedMs = 0;
+    _advanceCapture();
+    if (mounted) setState(() {});
+    _startCountdownTicker(signal);
+  }
+
+  void _startCountdownTicker(HuntSignal signal) {
+    _countdownTicker?.cancel();
+    _countdownTicker = Timer.periodic(
+      const Duration(milliseconds: _countdownTickMs),
+      (_) => _tickCountdown(signal),
+    );
+  }
+
+  void _tickCountdown(HuntSignal signal) {
+    if (_disposed) {
+      _countdownTicker?.cancel();
+      return;
+    }
+    _countdownElapsedMs += _countdownTickMs;
+    final decision = _advanceCapture();
+    if (decision is CaptureFire) {
+      _countdownTicker?.cancel();
+      _countdownTicker = null;
+      if (mounted) setState(() {});
+      unawaited(_fireCapture(signal));
+      return;
+    }
+    if (decision is CaptureReset || decision is CaptureScanning) {
+      _resetCaptureToScanning();
+      return;
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _fireCapture(HuntSignal signal) async {
+    if (signal == HuntSignal.frontCaptureReady) {
+      await _captureFront();
+    } else if (signal == HuntSignal.backCaptureReady) {
+      await _captureBack();
+    }
+  }
+
+  /// Advances the coordinator-owned countdown one tick. The widget feeds the
+  /// monotonic countdown clock (anchor + elapsed) and the live gate readings;
+  /// the coordinator runs the dwell/grace math and returns the decision. The
+  /// flash fires on the transition into the shutter instant.
+  CaptureDecision _advanceCapture() {
+    final anchor = _countdownAnchor ?? DateTime.now();
+    final now = anchor.add(Duration(milliseconds: _countdownElapsedMs));
+    final wasInFlight = _captureState is DniCaptureInFlight;
+    final decision = _coordinator.tickCountdown(
+      now: now,
+      imuStill: _motionGate.isStill,
+      quadFramingValid: _framingValid,
+      lightingValid: _lightingValid,
+      captureEligible: _frameCaptureable,
+    );
+    if (decision is CaptureFire && !wasInFlight) {
+      _triggerCaptureFlash();
+    }
+    return decision;
+  }
+
+  /// The single unified read of the live quad framing flag, capture-eligibility,
+  /// and side context (#5543). All four side-aware quad forks — fire gate,
+  /// presence, overlay annotation, empty-OCR routing — derive from this one
+  /// value so they can never drift apart. The quad annotates but never vetoes;
+  /// the OCR-derived [_frameCaptureable] is the blocking signal.
+  FramingSignal _framingSignal() => FramingSignal(
+        framingValid: _framingValid,
+        captureEligible: _frameCaptureable,
+        isFrontPhase: _isFrontPhase(),
+      );
+
+  void _triggerCaptureFlash() {
+    if (_disposed || !mounted) return;
+    _captureFlash.forward(from: 0).whenComplete(() {
+      if (_disposed) return;
+      _captureFlash.reset();
+    });
+  }
+
+  @visibleForTesting
+  void debugFeedCaptureReady(HuntSignal signal) => _onCaptureReady(signal);
+
+  /// Drives the REAL record-and-dispatch chain a live frame uses: feeds the
+  /// OCR-derived [detectedSide]/[addedNewField]/[filledFields] plus the current
+  /// quad framing flag into [HuntStateMachine.recordFrame] and dispatches the
+  /// EMITTED signal. Unlike [debugFeedCaptureReady] it never injects a capture
+  /// signal directly, so a test can prove the machine actually emits
+  /// backCaptureReady from realistic textless-back inputs (#5517). Returns the
+  /// resulting capture state.
+  @visibleForTesting
+  DniCaptureState debugProcessFrameForTest({
+    required DocumentSide detectedSide,
+    required bool addedNewField,
+    required int filledFields,
+  }) =>
+      _recordAndDispatch(
+        detectedSide: detectedSide,
+        addedNewField: addedNewField,
+        filledFields: filledFields,
+      );
+
+  /// Drives the REAL empty-OCR branch a textless device frame triggers (#5523):
+  /// runs the exact [_handleEmptyOcrFrame] routing (text.isEmpty ->
+  /// [resolveEmptyOcrRoute] -> dispatch or skip) against the current framing
+  /// flag and phase, WITHOUT pre-resolving a side/field count for the dispatch.
+  /// This proves an empty frame actually routes to the back trigger (or is
+  /// safely skipped) — the layer the device log fingered.
+  @visibleForTesting
+  DniCaptureState debugProcessEmptyOcrForTest() => _handleEmptyOcrFrame();
+
+  /// Drives the REAL routed device frame path a live camera frame takes (#5562):
+  /// the recognized [ocrText] flows through [CaptureCoordinator.onFrame] — the
+  /// SAME `DocumentSideDetector.detect -> FieldHunter.process ->
+  /// HuntStateMachine.recordFrame` chain the harness golden pins — with NO
+  /// pre-set side and NO injected signal. Unlike [debugProcessFrameForTest] it
+  /// never receives a resolved side/field count, so a test can prove the device
+  /// path does NOT confuse the front for the back from real OCR text across the
+  /// handoff. Returns the resulting capture state.
+  @visibleForTesting
+  DniCaptureState debugProcessTextForTest(String ocrText) {
+    _dispatchFrame(ocrText);
+    return _captureState;
+  }
+
+  @visibleForTesting
+  DniCaptureState get debugCaptureState => _captureState;
+
+  @visibleForTesting
+  HuntPhase get debugHuntPhase => _stateMachine.phase;
+
+  /// Auto-capture countdown progress (0 → 1) currently fed to the hole
+  /// overlay. Zero whenever no countdown is running, so the ring is hidden.
+  double get _countdownProgress {
+    final state = _captureState;
+    return state is DniCaptureCountingDown ? state.progress : 0;
+  }
+
+  @visibleForTesting
+  double get debugCountdownProgress => _countdownProgress;
+
+  @visibleForTesting
+  CustomPainter debugBuildHolePainter() => _HolePainter(
+        holeSize: Size(widget.holeWidth, widget.holeHeight),
+        pulse: _pulse,
+        borderColor: Colors.white,
+        accentColor: Colors.white,
+        overlayColor: const Color(0x99000000),
+      );
+
+  @visibleForTesting
+  void debugSetLightingValid(bool value) => _lightingValid = value;
+
+  @visibleForTesting
+  void debugSetFramingValid(bool value) {
+    _framingValid = value;
+    if (mounted) setState(() {});
+  }
+
+  @visibleForTesting
+  void debugSetQuad(
+    List<QuadCorner> corners, {
+    int frameWidth = 640,
+    int frameHeight = 480,
+  }) {
+    _quadCorners = corners;
+    _quadFrameWidth = frameWidth;
+    _quadFrameHeight = frameHeight;
+    if (mounted) setState(() {});
+  }
+
+  @visibleForTesting
+  List<QuadCorner> get debugQuadCorners => _quadCorners;
+
+  @visibleForTesting
+  void debugSetFrameCaptureable(bool value) {
+    _frameCaptureable = value;
+    if (mounted) setState(() {});
+  }
+
+  /// Drives the coordinator-owned presence source for a live frame (PR5). Tests
+  /// that previously toggled `_frameCaptureable`/`_framingValid` to mean
+  /// "document present/absent" now feed the per-frame presence signal through
+  /// the SINGLE coordinator source the banner renders from.
+  @visibleForTesting
+  void debugSetDocumentPresent(bool present) {
+    _recordPresence(ocrTextPresent: present);
+    if (mounted) setState(() {});
+  }
+
+  /// Forces the coordinator-owned manual fallback to surface (PR5), the single
+  /// source the manual button reads. Replaces the old controller
+  /// `activateManualFallback`/timer hooks in widget tests.
+  @visibleForTesting
+  void debugActivateManualFallback() {
+    _coordinator.recordPresence(
+      ocrTextPresent: false,
+      quadFramingValid: false,
+      now: _manualClock(),
+      recoverManual: true,
+    );
+    if (mounted) setState(() {});
+  }
+
+  @visibleForTesting
+  bool get debugManualModeActive => _manualModeActive;
+
+  @visibleForTesting
+  void debugResetToScanning() => _resetCaptureToScanning();
+
+  @visibleForTesting
+  void debugTriggerSideToggle() {
+    // A side change starts a fresh per-side scan, so the coordinator-owned
+    // manual fallback window restarts and any pending manual flag clears (PR5 —
+    // the migrated controller onSideChanged manual reset).
+    _coordinator.restartManualWindow();
+    _cameraController.onSideChanged(
+      isBackSide: !_cameraController.isBackSide,
+    );
+    if (mounted) setState(() {});
+  }
+
+  void _safeInvoke(String label, void Function() invoke) {
+    try {
+      invoke();
+    } catch (error, stack) {
+      _reportCallbackError(label, error, stack);
+    }
+  }
+
+  void _reportCallbackError(String label, Object error, StackTrace stack) {
+    final onError = widget.onError;
+    if (onError != null) {
+      onError(error, stack);
+      return;
+    }
+    DniLogger.error('DniScanner', 'host callback $label threw', error, stack);
+  }
+
+  void _resetCaptureToScanning() {
+    _countdownTicker?.cancel();
+    _countdownTicker = null;
+    _countdownAnchor = null;
+    _countdownElapsedMs = 0;
+    _coordinator.resetCountdown();
+    if (mounted) setState(() {});
   }
 
   void _markCaptureReady() {
@@ -344,10 +992,6 @@ class _DniScannerState extends State<DniScanner>
     return n;
   }
 
-  /// Locks focus and exposure before the shutter so the camera cannot
-  /// re-focus mid-capture (main cause of blurry document stills), then
-  /// restores continuous auto modes. Lock failures are ignored — some
-  /// devices do not support locking and the capture must proceed anyway.
   Future<XFile> _takeLockedPicture() async {
     // Lock failures must never block the capture. CameraController does not
     // normalize platform errors for these calls: iOS surfaces FlutterError
@@ -370,12 +1014,48 @@ class _DniScannerState extends State<DniScanner>
     }
   }
 
+  Future<_BlurGateOutcome> _evaluateBlurGate(XFile raw) async {
+    Uint8List bytes;
+    try {
+      bytes = await raw.readAsBytes();
+    } on Object {
+      return _BlurGateOutcome.reject;
+    }
+    QualityCheckResult verdict;
+    try {
+      verdict = await _imageQualityGate.validate(bytes);
+    } on Object {
+      return _BlurGateOutcome.accept;
+    }
+    switch (verdict) {
+      case QualityCheckResult.pass:
+        _blurRetries = 0;
+        return _BlurGateOutcome.accept;
+      case QualityCheckResult.blurry:
+        if (_blurRetries >= maxBlurRetries) {
+          _blurRetries = 0;
+          return _BlurGateOutcome.accept;
+        }
+        _blurRetries++;
+        return _BlurGateOutcome.retry;
+      case QualityCheckResult.spoofed:
+      case QualityCheckResult.error:
+        return _BlurGateOutcome.reject;
+    }
+  }
+
   Future<void> _captureFront() async {
     if (_capturing || _frontPhoto != null) return;
     _capturing = true;
     final preview = context.size;
     try {
       final raw = await _takeLockedPicture();
+      final outcome = await _evaluateBlurGate(raw);
+      if (_disposed) return;
+      if (outcome != _BlurGateOutcome.accept) {
+        _resetCaptureToScanning();
+        return;
+      }
       unawaited(_playStepFeedback());
       final cropped =
           await _cropToHole(raw, suffix: 'front', preview: preview) ?? raw;
@@ -385,17 +1065,32 @@ class _DniScannerState extends State<DniScanner>
       if (widget.isBackSide == false) {
         _stateMachine.advanceToDone();
         if (_reniecLookup != null) await _reniecLookup;
-        widget.onSideCaptured?.call(
-          DniSideScanResult(
-            photo: cropped,
-            isBackSide: false,
-            hunt: _hunter.snapshot,
-            reniecData: _reniecData,
+        _safeInvoke(
+          'onSideCaptured',
+          () => widget.onSideCaptured?.call(
+            DniSideScanResult(
+              photo: cropped,
+              isBackSide: false,
+              hunt: _hunter.snapshot,
+              reniecData: _reniecData,
+            ),
           ),
         );
         return;
       }
-      _stateMachine.advanceToWaitingBack();
+      // The front->back handoff now routes through the coordinator's tested
+      // seam (#5562): advanceToWaitingBack snapshots the back-phase field
+      // baseline so cached front fields cannot latch the back, clears the
+      // leftover front countdown so the back guard passes (#5535), and restarts
+      // the per-side manual window so the back gets its own full window (#5536).
+      // The widget only cancels its own countdown timer; the coordinator owns
+      // the rest.
+      _countdownTicker?.cancel();
+      _countdownTicker = null;
+      _countdownAnchor = null;
+      _countdownElapsedMs = 0;
+      _coordinator.advanceAfterCapture();
+      if (mounted) setState(() {});
     } on CameraException catch (e) {
       DniLogger.error('DniScanner', 'front capture failed: ${e.code}');
     } finally {
@@ -422,7 +1117,10 @@ class _DniScannerState extends State<DniScanner>
       if (!mounted) return;
       if (result is DniLookupSuccess && result.data.dni == dni) {
         _reniecData = result.data;
-        widget.onDniReady?.call(result.data);
+        _safeInvoke(
+          'onDniReady',
+          () => widget.onDniReady?.call(result.data),
+        );
       }
     } catch (_) {
       // graceful: missing data is acceptable, OCR remains source of truth
@@ -435,6 +1133,12 @@ class _DniScannerState extends State<DniScanner>
     final preview = context.size;
     try {
       final raw = await _takeLockedPicture();
+      final outcome = await _evaluateBlurGate(raw);
+      if (_disposed) return;
+      if (outcome != _BlurGateOutcome.accept) {
+        _resetCaptureToScanning();
+        return;
+      }
       unawaited(_playCompletionFeedback());
       final cropped =
           await _cropToHole(raw, suffix: 'back', preview: preview) ?? raw;
@@ -445,24 +1149,30 @@ class _DniScannerState extends State<DniScanner>
         await _reniecLookup;
       }
       if (widget.isBackSide == true) {
-        widget.onSideCaptured?.call(
-          DniSideScanResult(
-            photo: cropped,
-            isBackSide: true,
-            hunt: _hunter.snapshot,
-            reniecData: _reniecData,
+        _safeInvoke(
+          'onSideCaptured',
+          () => widget.onSideCaptured?.call(
+            DniSideScanResult(
+              photo: cropped,
+              isBackSide: true,
+              hunt: _hunter.snapshot,
+              reniecData: _reniecData,
+            ),
           ),
         );
         return;
       }
       if (_frontPhoto != null) {
         final finalSnapshot = _hunter.snapshot;
-        widget.onScanComplete?.call(
-          DniScanResult(
-            frontPhoto: _frontPhoto!,
-            backPhoto: cropped,
-            hunt: finalSnapshot,
-            reniecData: _reniecData,
+        _safeInvoke(
+          'onScanComplete',
+          () => widget.onScanComplete?.call(
+            DniScanResult(
+              frontPhoto: _frontPhoto!,
+              backPhoto: cropped,
+              hunt: finalSnapshot,
+              reniecData: _reniecData,
+            ),
           ),
         );
       }
@@ -532,11 +1242,16 @@ class _DniScannerState extends State<DniScanner>
   @override
   void dispose() {
     _disposed = true;
+    _countdownTicker?.cancel();
     _focusIndicatorTimer?.cancel();
     _hintRotationTimer?.cancel();
+    _manualWindowTicker?.cancel();
+    unawaited(_cameraController.dispose());
+    _motionGate.dispose();
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     WidgetsBinding.instance.removeObserver(this);
     _pulse.dispose();
+    _captureFlash.dispose();
     unawaited(_lifecycle.safeDispose());
     super.dispose();
   }
@@ -575,35 +1290,16 @@ class _DniScannerState extends State<DniScanner>
     }
   }
 
-  static const List<String> _waitingFrontHints = [
-    'Coloque el frente del DNI dentro del marco',
-    'Verifique que los nombres y las fechas sean visibles',
-    'Use buena iluminación y evite reflejos',
-  ];
-  static const List<String> _extractingFrontHints = [
-    'Mantenga el documento quieto',
-    'Acerque el documento si los datos pequeños no se ven',
-    'No cubra la zona inferior con los dedos',
-  ];
-  static const List<String> _waitingBackHints = [
-    'Voltee el documento',
-    'Centre la dirección y los datos del reverso',
-    'La cuadrícula de sufragio debe verse completa',
-  ];
-  static const List<String> _extractingBackHints = [
-    'Mantenga el documento quieto',
-    'Muestre el grupo de votación y la donación',
-    'Si demora, acerque un poco más el documento',
-  ];
-
   String _sideHint() {
+    final hints = widget.scanHints;
     final list = switch (_stateMachine.phase) {
-      HuntPhase.waitingFront => _waitingFrontHints,
-      HuntPhase.extractingFront => _extractingFrontHints,
-      HuntPhase.waitingBack => _waitingBackHints,
-      HuntPhase.extractingBack => _extractingBackHints,
-      HuntPhase.done => const ['Procesando…'],
+      HuntPhase.waitingFront => hints.waitingFront,
+      HuntPhase.extractingFront => hints.extractingFront,
+      HuntPhase.waitingBack => hints.waitingBack,
+      HuntPhase.extractingBack => hints.extractingBack,
+      HuntPhase.done => [hints.processing],
     };
+    if (list.isEmpty) return '';
     return list[_hintIndex % list.length];
   }
 
@@ -628,6 +1324,24 @@ class _DniScannerState extends State<DniScanner>
     } on CameraException catch (e) {
       debugPrint('DniScanner: torch toggle failed: ${e.code} ${e.description}');
     }
+  }
+
+  List<Offset> _quadPreviewPoints(Size previewSize) {
+    if (_quadCorners.isEmpty ||
+        _quadFrameWidth <= 0 ||
+        _quadFrameHeight <= 0) {
+      return const <Offset>[];
+    }
+    final mirror = widget.controller.description.lensDirection ==
+        CameraLensDirection.front;
+    return mapQuadToPreview(
+      corners: _quadCorners,
+      frameWidth: _quadFrameWidth,
+      frameHeight: _quadFrameHeight,
+      rotationDegrees: widget.controller.description.sensorOrientation,
+      previewSize: previewSize,
+      mirror: mirror,
+    );
   }
 
   @override
@@ -659,6 +1373,31 @@ class _DniScannerState extends State<DniScanner>
                 ),
               ),
             ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: QuadOverlayPainter(
+                    points: _quadPreviewPoints(previewSize),
+                    color: theme.white,
+                  ),
+                ),
+              ),
+            ),
+            if (_captureState is DniCaptureCountingDown)
+              Positioned.fill(
+                key: const Key('dni_scanner_countdown_counter'),
+                child: IgnorePointer(
+                  child: Center(
+                    child: _CountdownCounter(
+                      digit: countdownDigitFromProgress(
+                        _countdownProgress,
+                        widget.autoCaptureMs,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            _CaptureFlash(animation: _captureFlash),
             if (_focusIndicator != null)
               Positioned(
                 left: _focusIndicator!.dx - 36,
@@ -709,7 +1448,12 @@ class _DniScannerState extends State<DniScanner>
               bottom: MediaQuery.of(context).padding.bottom + 32,
               left: 0,
               right: 0,
-              child: widget.captureMode != DniCaptureMode.auto
+              child: widget.captureMode != DniCaptureMode.auto ||
+                      manualButtonVisible(
+                        manualModeActive: _manualModeActive,
+                        countdownActive: _captureState is DniCaptureCountingDown,
+                        autoCaptureProgressing: _isExtracting(),
+                      )
                   ? Stack(
                       alignment: Alignment.center,
                       children: [
@@ -743,7 +1487,32 @@ class _DniScannerState extends State<DniScanner>
               left: 0,
               right: 0,
               child: _FlipDocumentBanner(
-                visible: _stateMachine.phase == HuntPhase.waitingBack,
+                visible: flipBannerVisible(
+                  phase: _stateMachine.phase,
+                  captureInFlight: _captureState is DniCaptureInFlight,
+                  twoSided: widget.isBackSide == null,
+                ),
+                guidanceText: widget.flipDocumentText,
+              ),
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _DocumentAbsentBanner(
+                // The flip banner owns the top slot during the front->back
+                // hand-off (where a missing document is expected), so the
+                // no-document warning yields to it to avoid overlap.
+                visible: !flipBannerVisible(
+                      phase: _stateMachine.phase,
+                      captureInFlight: _captureState is DniCaptureInFlight,
+                      twoSided: widget.isBackSide == null,
+                    ) &&
+                    documentAbsentBannerVisible(
+                      documentPresent: _coordinator.documentPresent,
+                      phase: _stateMachine.phase,
+                    ),
+                guidanceText: widget.scanHints.documentAbsent,
               ),
             ),
           ],
@@ -774,10 +1543,140 @@ class _CropRequest {
 const int _cropMaxDimension = 3000;
 const int _cropJpegQuality = 97;
 
-/// Runs inside an isolate: decode → resize guard → crop → JPEG q97 encode.
-/// Heavy `package:image` work off the UI thread keeps the preview smooth
-/// right after the shutter. q97 is visually lossless for document text
-/// while encoding an order of magnitude faster than PNG.
+const int _lightingTargetSamples = 64;
+
+class _FrameAnalysisRequest {
+  const _FrameAnalysisRequest({
+    required this.luminancePlane,
+    required this.bytesPerRow,
+    required this.width,
+    required this.height,
+    required this.rotationDegrees,
+    required this.detectQuad,
+  });
+
+  final List<int> luminancePlane;
+  final int bytesPerRow;
+  final int width;
+  final int height;
+  final int rotationDegrees;
+  final bool detectQuad;
+}
+
+class _FrameAnalysisResult {
+  const _FrameAnalysisResult({
+    required this.lighting,
+    required this.framingValid,
+    required this.corners,
+  });
+
+  final LightingResult lighting;
+  final bool framingValid;
+  final List<QuadCorner> corners;
+}
+
+/// Runs lighting evaluation and, when requested, native quad detection on the
+/// same luminance buffer. Executed inside `Isolate.run`; only plain values
+/// cross the boundary. When quad detection is not requested (fallback path),
+/// [_FrameAnalysisResult.framingValid] stays true so framing degrades to the
+/// OCR-block gate and capture is never blocked.
+_FrameAnalysisResult _analyzeFrame(_FrameAnalysisRequest request) {
+  final lighting = LightingGate.evaluate(_downscaleLuminance(request));
+  if (!request.detectQuad) {
+    return _FrameAnalysisResult(
+      lighting: lighting,
+      framingValid: true,
+      corners: const <QuadCorner>[],
+    );
+  }
+  final quad = detectQuadInFrame(
+    QuadFrame(
+      luminance: Uint8List.fromList(request.luminancePlane),
+      width: request.width,
+      height: request.height,
+      bytesPerRow: request.bytesPerRow,
+      rotationDegrees: request.rotationDegrees,
+    ),
+  );
+  return _FrameAnalysisResult(
+    lighting: lighting,
+    framingValid: quad.framingValid,
+    corners: quad.corners,
+  );
+}
+
+List<int> _downscaleLuminance(_FrameAnalysisRequest request) {
+  final width = request.width;
+  final height = request.height;
+  if (width <= 0 || height <= 0 || request.luminancePlane.isEmpty) {
+    return const <int>[];
+  }
+  final stepX = (width / _lightingTargetSamples).floor().clamp(1, width);
+  final stepY = (height / _lightingTargetSamples).floor().clamp(1, height);
+  final samples = <int>[];
+  for (var y = 0; y < height; y += stepY) {
+    final rowStart = y * request.bytesPerRow;
+    for (var x = 0; x < width; x += stepX) {
+      final index = rowStart + x;
+      if (index < request.luminancePlane.length) {
+        samples.add(request.luminancePlane[index]);
+      }
+    }
+  }
+  return samples;
+}
+
+@visibleForTesting
+LightingResult analyzeLuminancePlaneForTest({
+  required List<int> luminancePlane,
+  required int bytesPerRow,
+  required int width,
+  required int height,
+}) =>
+    LightingGate.evaluate(
+      _downscaleLuminance(
+        _FrameAnalysisRequest(
+          luminancePlane: luminancePlane,
+          bytesPerRow: bytesPerRow,
+          width: width,
+          height: height,
+          rotationDegrees: 0,
+          detectQuad: false,
+        ),
+      ),
+    );
+
+@visibleForTesting
+class CropRequestForTest {
+  const CropRequestForTest({
+    required this.sourcePath,
+    required this.outPath,
+    required this.previewWidth,
+    required this.previewHeight,
+    required this.holeWidth,
+    required this.holeHeight,
+  });
+
+  final String sourcePath;
+  final String outPath;
+  final double previewWidth;
+  final double previewHeight;
+  final double holeWidth;
+  final double holeHeight;
+}
+
+@visibleForTesting
+String? cropAndEncodeForTest(CropRequestForTest request) => _cropAndEncode(
+      _CropRequest(
+        sourcePath: request.sourcePath,
+        outPath: request.outPath,
+        previewWidth: request.previewWidth,
+        previewHeight: request.previewHeight,
+        holeWidth: request.holeWidth,
+        holeHeight: request.holeHeight,
+      ),
+    );
+
 String? _cropAndEncode(_CropRequest request) {
   final bytes = File(request.sourcePath).readAsBytesSync();
   var decoded = img.decodeImage(bytes);
@@ -929,6 +1828,275 @@ class _ScannerFlashToggle extends StatelessWidget {
           size: 20,
         ),
       ),
+    );
+  }
+}
+
+/// Maps the auto-capture countdown [progress] (0 → 1) to the digit shown in
+/// the centered 3-2-1 counter. [totalMs] is the dwell duration, so the
+/// remaining time is `totalMs * (1 - progress)` and the digit is the ceiling
+/// of the remaining whole seconds, clamped to 1..3 so the user always sees a
+/// digit through the final tick before the shutter fires.
+@visibleForTesting
+int countdownDigitFromProgress(double progress, int totalMs) {
+  final clamped = progress.clamp(0.0, 1.0);
+  // Round to whole ms first so exact-second boundaries (e.g. 2000ms remaining)
+  // are not pushed up a digit by floating-point dust from the progress ratio.
+  final remainingMs = (totalMs * (1 - clamped)).round();
+  final digit = (remainingMs / 1000).ceil();
+  return digit.clamp(1, 3);
+}
+
+/// Whether the flip-document guidance banner should be visible (#5494).
+///
+/// The banner used to be gated only on `phase == waitingBack`, but that phase
+/// is reached only AFTER the slow Camera2 `takePicture`/crop completes. Between
+/// the front capture flash and `waitingBack` there is a DEAD WINDOW (the
+/// in-flight processing time) during which the user received no guidance — the
+/// paso1->paso2 gap (#5491). This widens the visibility so the flip guidance is
+/// also shown while the FRONT capture is in flight, giving continuous guidance
+/// from the flash through to back scanning.
+///
+/// It stays a pure visual gate: only [HuntPhase.waitingBack], or a front
+/// capture in flight ([HuntPhase.extractingFront] + [captureInFlight]) in
+/// two-sided mode, shows the banner. Single-side mode ([twoSided] == false) has
+/// no front-to-back transition, and an in-flight BACK capture is past the flip,
+/// so neither shows it.
+@visibleForTesting
+bool flipBannerVisible({
+  required HuntPhase phase,
+  required bool captureInFlight,
+  required bool twoSided,
+}) {
+  if (phase == HuntPhase.waitingBack) return true;
+  return twoSided &&
+      captureInFlight &&
+      phase == HuntPhase.extractingFront;
+}
+
+/// Whether the manual-capture affordance should be shown in auto mode (#5536).
+///
+/// The manual button is driven by [DniCameraController]'s fallback flag
+/// (the early `recoverManual` escape or the per-side fallback timer), a source
+/// of truth that runs in PARALLEL to the widget auto-capture countdown and does
+/// not know an auto-capture is in progress. On device the button surfaced too
+/// soon — while the working auto-capture was still counting down or the side
+/// was dwelling toward capture — tempting the user to tap it instead of waiting
+/// for the auto-capture that fires on its own.
+///
+/// This gates the affordance on the auto-capture state so the manual stays a
+/// REAL fallback: it is withheld while the 3-2-1 [countdownActive] is on screen
+/// OR a side is actively dwelling toward capture ([autoCaptureProgressing]), and
+/// only appears once [manualModeActive] is flagged AND no auto-capture is in
+/// progress. It does not weaken the fallback — a side that never stabilizes
+/// still leaves both progress flags false, so the button appears after the
+/// fallback window as before.
+@visibleForTesting
+bool manualButtonVisible({
+  required bool manualModeActive,
+  required bool countdownActive,
+  required bool autoCaptureProgressing,
+}) {
+  if (!manualModeActive) return false;
+  return !countdownActive && !autoCaptureProgressing;
+}
+
+/// Whether a document is actually present and framed this frame (#5540/#5543).
+///
+/// The 3-2-1 countdown must abort, and the no-document banner must show, if the
+/// user REMOVES the DNI mid-count instead of counting down on empty air and
+/// capturing nothing. Presence is computed side-aware, mirroring the fire-time
+/// framing split in [DniScannerState._fireFramingValid] (#5543), because the
+/// two sides prove a framed document through different live signals:
+/// - [captureEligible]: the latest processed frame yielded a capture-ready /
+///   side-detected signal from [HuntStateMachine] (so OCR/quad confirmed a
+///   document), as opposed to a `none`/dropped frame.
+/// - [framingValid]: the quad detector confirms a well-framed document quad.
+///
+/// On the FRONT ([isFrontPhase] true) readiness is OCR-sourced. The text-dense
+/// Peru DNI front held still makes the native quad find text edges, not a clean
+/// 4-corner card boundary, so [framingValid] frequently degrades to false while
+/// the DNI IS present and OCR-confirmed. Gating front presence on the quad made
+/// the banner cry "no document" on a present card. Front presence therefore
+/// tracks [captureEligible] only — the real per-frame device signal. Removal
+/// still drops presence because OCR goes empty (signal=none ->
+/// captureEligible=false), so #5540 document-removed protection holds.
+///
+/// On the BACK ([isFrontPhase] false) there is no OCR readiness signal — the
+/// quad IS the only proof of a framed document — so presence stays the strict
+/// conjunction of [framingValid] and [captureEligible]: a stale flag alone never
+/// keeps it present, and a quad drop when the card leaves the frame aborts.
+///
+/// The same hysteresis is preserved — a single dropped frame within the grace
+/// window (#5504/#5532) does not reset, only a sustained loss.
+@visibleForTesting
+bool documentPresent({
+  required bool framingValid,
+  required bool captureEligible,
+  required bool isFrontPhase,
+}) {
+  if (isFrontPhase) return captureEligible;
+  return framingValid && captureEligible;
+}
+
+/// Whether the top banner should warn that no document is detected (#5540).
+///
+/// Shown while a side is being scanned ([HuntPhase.waitingFront],
+/// [HuntPhase.extractingFront], [HuntPhase.waitingBack],
+/// [HuntPhase.extractingBack]) and no document is present in the frame, so the
+/// user learns the countdown stopped because the DNI left the frame. Suppressed
+/// in [HuntPhase.done]: both sides are captured and the scanner is processing,
+/// where a missing document is expected and must not raise the warning.
+@visibleForTesting
+bool documentAbsentBannerVisible({
+  required bool documentPresent,
+  required HuntPhase phase,
+}) {
+  if (documentPresent) return false;
+  return phase != HuntPhase.done;
+}
+
+/// Honest side-progress ratio for the front/back indicator (#5494).
+///
+/// The raw field-count ratio (`filled / total`) is DECOUPLED from the capture
+/// state machine: the back can reach `7/7 = 100%` while the auto-capture
+/// trigger — governed by data STABILITY and the wrong-side SAFETY invariant,
+/// not by the raw field count — has not fired. Showing that "100%" implies an
+/// imminent or completed capture that the field count cannot promise, which is
+/// the misleading indicator the owner saw.
+///
+/// This keeps the indicator useful (it grows with data so the user sees real
+/// progress) but makes it HONEST: the only way to reach a full 100% ring is for
+/// the side to actually be captured ([done] == true). A not-done side is capped
+/// strictly below 1.0 by [scanningCeiling] so it never claims completion before
+/// the capture trigger fires. A non-positive [total] degrades gracefully.
+@visibleForTesting
+double sideProgressRatio({
+  required int filled,
+  required int total,
+  required bool done,
+  double scanningCeiling = 0.95,
+}) {
+  if (done) return 1.0;
+  if (total <= 0) return 0.0;
+  final raw = (filled / total).clamp(0.0, 1.0);
+  return raw < scanningCeiling ? raw : scanningCeiling;
+}
+
+/// How an empty-OCR frame must be routed by the live frame processor (#5523).
+enum EmptyOcrRoute {
+  /// Drive the single record-and-dispatch chain with empty-OCR back inputs so a
+  /// quad-confirmed textless back can still reach backCaptureReady.
+  dispatchBackTrigger,
+
+  /// Discard the frame: either no document quad confirms framing (a blank view
+  /// is not a document) or the machine is still in a front phase (the front
+  /// stays OCR-triggered, never back-triggered by an empty frame).
+  skip,
+}
+
+/// Routes an empty-OCR frame for [_DniScannerState._processImage] (#5523).
+///
+/// The Peru DNI back is textless, so OCR is frequently empty. The OCR path can
+/// no longer be the only trigger source: when the quad detector has confirmed a
+/// well-framed document ([framingValid]) AND the machine has left the front
+/// phase ([isFrontPhase] == false), the empty frame must DRIVE the back trigger
+/// instead of being discarded — otherwise the early skip wins the race and the
+/// textless back never auto-captures. Two guards keep this safe:
+/// - NO valid quad => [EmptyOcrRoute.skip]: a blank frame with no document quad
+///   must never trigger a capture.
+/// - A front phase => [EmptyOcrRoute.skip]: the front is text-dense and stays
+///   OCR-triggered; an empty frame must never produce a wrong-side back trigger.
+@visibleForTesting
+EmptyOcrRoute resolveEmptyOcrRoute({
+  required bool framingValid,
+  required bool isFrontPhase,
+}) {
+  if (framingValid && !isFrontPhase) {
+    return EmptyOcrRoute.dispatchBackTrigger;
+  }
+  return EmptyOcrRoute.skip;
+}
+
+/// Centered 3-2-1 auto-capture counter rendered in smoke white over the dark
+/// overlay. Each digit change plays a short scale-in + fade so the countdown
+/// feels intentional without being flashy.
+class _CountdownCounter extends StatelessWidget {
+  const _CountdownCounter({required this.digit});
+
+  /// Smoke white, kept slightly off pure white for a softer premium feel while
+  /// staying high-contrast against the dark overlay.
+  static const Color _smokeWhite = Color(0xFFF5F5F5);
+
+  final int digit;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutBack,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.7, end: 1.0).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: Text(
+        '$digit',
+        key: ValueKey<int>(digit),
+        style: const TextStyle(
+          color: _smokeWhite,
+          fontSize: 96,
+          fontWeight: FontWeight.w700,
+          height: 1,
+          shadows: [
+            Shadow(
+              color: Color(0x99000000),
+              blurRadius: 16,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Brief full-screen white flash fired the moment a photo is captured (the
+/// dwell countdown completed and the shutter triggered). The opacity ramps up
+/// then fades out over a short duration so the user gets an unmistakable but
+/// snappy "photo taken" cue. Rendered for both the front and back capture.
+class _CaptureFlash extends StatelessWidget {
+  const _CaptureFlash({required this.animation});
+
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) {
+        if (animation.status == AnimationStatus.dismissed) {
+          return const SizedBox.shrink();
+        }
+        // Ramp opacity up over the first third of the animation, then fade out
+        // over the rest, peaking just below opaque so the preview is never
+        // fully hidden.
+        final t = animation.value;
+        final opacity = t < 0.33 ? (t / 0.33) * 0.85 : (1 - t) / 0.67 * 0.85;
+        return Positioned.fill(
+          key: const Key('dni_scanner_capture_flash'),
+          child: IgnorePointer(
+            child: Opacity(
+              opacity: opacity.clamp(0.0, 1.0),
+              child: const ColoredBox(color: Color(0xFFFFFFFF)),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1103,6 +2271,7 @@ class _ScannerHint extends StatelessWidget {
           ),
           child: Text(
             hint,
+            key: const Key('dni_scanner_hint'),
             textAlign: TextAlign.center,
             style: TextStyle(
               color: theme.white,
@@ -1118,9 +2287,13 @@ class _ScannerHint extends StatelessWidget {
 }
 
 class _FlipDocumentBanner extends StatefulWidget {
-  const _FlipDocumentBanner({required this.visible});
+  const _FlipDocumentBanner({
+    required this.visible,
+    required this.guidanceText,
+  });
 
   final bool visible;
+  final String guidanceText;
 
   @override
   State<_FlipDocumentBanner> createState() => _FlipDocumentBannerState();
@@ -1192,11 +2365,87 @@ class _FlipDocumentBannerState extends State<_FlipDocumentBanner>
                     ),
                   ),
                   const SizedBox(width: 10),
-                  const Flexible(
+                  Flexible(
                     child: Text(
-                      'Voltee el documento',
+                      widget.guidanceText,
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Top banner shown when no document is detected in the frame while a side is
+/// being scanned (#5540). It tells the user the auto-capture stopped because
+/// the DNI left the frame. Mounted permanently and shown/hidden via the same
+/// slide+fade pattern as [_FlipDocumentBanner] so it animates in and out.
+class _DocumentAbsentBanner extends StatelessWidget {
+  const _DocumentAbsentBanner({
+    required this.visible,
+    required this.guidanceText,
+  });
+
+  final bool visible;
+  final String guidanceText;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedSlide(
+        offset: visible ? Offset.zero : const Offset(0, -1.0),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+        child: AnimatedOpacity(
+          opacity: visible ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 280),
+          child: Padding(
+            padding: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 16,
+              left: 20,
+              right: 20,
+            ),
+            child: Container(
+              key: const Key('dni_scanner_document_absent_banner'),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xE6212121),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.document_scanner_outlined,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      guidanceText,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -1231,8 +2480,6 @@ class _SideProgress extends StatelessWidget {
   final bool isFrontPhase;
   final KycTheme theme;
 
-  /// Totals derived from the consumer's [DniFields] selection. When null
-  /// (no explicit selection) the full-DNI totals apply.
   final int? frontTotal;
   final int? backTotal;
 
@@ -1278,12 +2525,20 @@ class _SideProgress extends StatelessWidget {
         (frontTotal ?? _frontTotalDefault).clamp(1, _frontTotalDefault);
     final effectiveBackTotal =
         (backTotal ?? _backTotalDefault).clamp(1, _backTotalDefault);
-    final frontProgress = isFrontDone
-        ? 1.0
-        : (frontFilled / effectiveFrontTotal).clamp(0.0, 1.0);
-    final backProgress = isBackDone
-        ? 1.0
-        : (backFilled / effectiveBackTotal).clamp(0.0, 1.0);
+    // Honest readiness-aware progress: a side that has not actually captured
+    // can never display 100%, because the auto-capture trigger is governed by
+    // data stability and the wrong-side invariant — not by this raw field
+    // count (#5494).
+    final frontProgress = sideProgressRatio(
+      filled: frontFilled,
+      total: effectiveFrontTotal,
+      done: isFrontDone,
+    );
+    final backProgress = sideProgressRatio(
+      filled: backFilled,
+      total: effectiveBackTotal,
+      done: isBackDone,
+    );
 
     return Center(
       child: Container(

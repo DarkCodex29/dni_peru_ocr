@@ -75,10 +75,14 @@ void main() {
       expect(ValidationGate.tilt, isNotNull);
     });
 
-    // ── Exactly 6 cases (exhaustiveness guarantee) ─────────────────────────
+    test('ValidationGate has quad case', () {
+      expect(ValidationGate.quad, isNotNull);
+    });
 
-    test('ValidationGate has exactly 6 values', () {
-      expect(ValidationGate.values.length, 7);
+    // ── Exhaustiveness guarantee ───────────────────────────────────────────
+
+    test('ValidationGate has exactly 10 values', () {
+      expect(ValidationGate.values.length, 10);
     });
 
     // ── Sentry-stable codes (no translation) ───────────────────────────────
@@ -105,6 +109,18 @@ void main() {
 
     test('tilt has stable Sentry code "tilt"', () {
       expect(ValidationGate.tilt.sentryCode, 'tilt');
+    });
+
+    test('lighting has stable code "lighting"', () {
+      expect(ValidationGate.lighting.sentryCode, 'lighting');
+    });
+
+    test('glare has stable code "glare"', () {
+      expect(ValidationGate.glare.sentryCode, 'glare');
+    });
+
+    test('quad has stable code "quad"', () {
+      expect(ValidationGate.quad.sentryCode, 'quad');
     });
   });
 
@@ -186,6 +202,9 @@ void main() {
         ValidationGate.lineCount => 'line_count',
         ValidationGate.tilt => 'tilt',
         ValidationGate.sideMismatch => 'side_mismatch',
+        ValidationGate.lighting => 'lighting',
+        ValidationGate.glare => 'glare',
+        ValidationGate.quad => 'quad',
         null => 'ok',
       };
       expect(code, isNotNull);

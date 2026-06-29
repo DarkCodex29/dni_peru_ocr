@@ -4,11 +4,9 @@ class DocumentSideDetector {
   const DocumentSideDetector();
 
   static final RegExp _frontPattern = RegExp(
-    r'\bC\W?[UỤÚÙÛŨŬŲ]\W?I\b'
-    r'|REP[UÚÙÛŨŬ]BLICA\s+DEL\s+PER[UÚÙÛŨŬ]'
+    r'REP[UÚÙÛŨŬ]BLICA\s+DEL\s+PER[UÚÙÛŨŬ]'
     r'|DOCUMENTO\s+NACIONAL\s+DE\s+IDENTIDAD'
-    r'|REGISTRO\s+NACIONAL\s+DE\s+IDENTIFICACI[ÓO]N'
-    r'|\bDNI\b\s*:?\s*\d{8}',
+    r'|REGISTRO\s+NACIONAL\s+DE\s+IDENTIFICACI[ÓO]N',
   );
 
   static final RegExp _backPattern = RegExp(

@@ -72,34 +72,91 @@ void main() {
       expect(machine.phase, HuntPhase.extractingFront);
     });
 
-    test('stays in extractingFront while frames keep adding new fields', () {
+    test('stays in extractingFront while frames keep revealing NEW distinct '
+        'fields (filled count rises every frame)', () {
       final machine = HuntStateMachine(idleFramesThreshold: 5);
-      machine.recordFrame(detectedSide: frontAnchor, addedNewField: false);
-      for (var i = 0; i < 10; i++) {
-        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+      machine.recordFrame(
+        detectedSide: frontAnchor,
+        addedNewField: false,
+        filledFields: 0,
+      );
+      // Each frame reveals a brand-new distinct field, so idle keeps resetting
+      // and capture never fires while the document is still revealing data.
+      var signal = HuntSignal.none;
+      for (var i = 1; i <= 10; i++) {
+        signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: i,
+        );
       }
       expect(machine.phase, HuntPhase.extractingFront);
+      expect(signal, HuntSignal.none);
     });
 
     test('signals frontCaptureReady after N idle frames', () {
+      // filledFields stays above the stable-capture floor (4) so the test
+      // exercises the idle-threshold mechanism, not the floor guard.
       final machine = HuntStateMachine(idleFramesThreshold: 3);
-      machine.recordFrame(detectedSide: frontAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      final signal =
-          machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+      machine.recordFrame(
+        detectedSide: frontAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: true,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      final signal = machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
       expect(signal, HuntSignal.frontCaptureReady);
     });
 
-    test('resets idle counter when a frame adds new field', () {
+    test('resets idle counter when a frame reveals a NEW distinct field '
+        '(filled count increases)', () {
       final machine = HuntStateMachine(idleFramesThreshold: 3);
-      machine.recordFrame(detectedSide: frontAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+      machine.recordFrame(
+        detectedSide: frontAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      // A genuinely new field (5 -> 6) resets the idle counter.
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: true,
+        filledFields: 6,
+      );
+      final signal = machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 6,
+      );
       expect(machine.phase, HuntPhase.extractingFront);
+      expect(signal, HuntSignal.none);
     });
 
     test('advanceToWaitingBack moves out of extractingFront', () {
@@ -128,15 +185,818 @@ void main() {
     });
 
     test('signals backCaptureReady after N idle frames in extractingBack', () {
+      // filledFields stays above the stable-capture floor (4) so the test
+      // exercises the idle-threshold mechanism, not the floor guard.
       final machine = HuntStateMachine(idleFramesThreshold: 2);
       _seedFrontPhaseComplete(machine);
       machine.advanceToWaitingBack();
-      machine.recordFrame(detectedSide: backAnchor, addedNewField: false);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
-      machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
-      final signal =
-          machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+      machine.recordFrame(
+        detectedSide: backAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: true,
+        filledFields: 5,
+      );
+      machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
+      final signal = machine.recordFrame(
+        detectedSide: noOpAnchor,
+        addedNewField: false,
+        filledFields: 5,
+      );
       expect(signal, HuntSignal.backCaptureReady);
+    });
+
+    group('waiting-phase stuck escape (#5457 latch fix)', () {
+      test('escapes a stuck waitingBack via idle with a recovery signal, '
+          'NOT a blind back-capture', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Side detector never confirms the back anchor (unknown forever).
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.recoverManual);
+      });
+
+      test('SAFETY: escaping waitingBack with an unconfirmed side does NOT '
+          'emit backCaptureReady', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+      });
+
+      test('escapes a stuck waitingFront via idle with a recovery signal', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.recoverManual);
+      });
+
+      test('REGRESSION: confirmed back anchor still advances to extractingBack '
+          'and reaches backCaptureReady (happy path intact)', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 2);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: backAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
+        expect(machine.phase, HuntPhase.extractingBack);
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 5,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('REGRESSION: in waitingFront an added field resets the idle counter '
+          'so a productive wait is not cut short', () {
+        // waitingFront still benefits from idle reset on new fields: a fresh
+        // field means OCR is making progress toward the front anchor.
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.none);
+      });
+    });
+
+    group('waitingBack stale-reread escape (#5461 reverso latch)', () {
+      test('stale FRONT re-reads (unknown side + addedNewField) do NOT reset '
+          'idle, so the manual escape still fires', () {
+        // Device repro: in waitingBack the FieldHunter keeps re-reading STALE
+        // front fields, flipping addedNewField=true intermittently. The old
+        // policy reset idle on every such re-read, so idle never reached the
+        // threshold and recoverManual never fired. A genuine BACK field would
+        // have advanced the phase to extractingBack before reaching here, so
+        // any addedNewField in waitingBack is by definition a non-back read.
+        final machine = HuntStateMachine(idleFramesThreshold: 4);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Interleave stale re-reads (addedNewField=true) with idle frames.
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        machine.recordFrame(detectedSide: noOpAnchor, addedNewField: true);
+        final signal =
+            machine.recordFrame(detectedSide: noOpAnchor, addedNewField: false);
+        expect(signal, HuntSignal.recoverManual);
+      });
+
+      test('SAFETY: the stale-reread escape emits recoverManual and NEVER '
+          'backCaptureReady (no wrong-side auto-capture)', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 8; i++)
+            machine.recordFrame(
+              detectedSide: noOpAnchor,
+              addedNewField: i.isEven,
+            ),
+        ];
+        expect(signals, contains(HuntSignal.recoverManual));
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+      });
+
+      test('HAPPY PATH: a confirmed back anchor still advances to '
+          'extractingBack and reaches backCaptureReady', () {
+        final machine = HuntStateMachine(idleFramesThreshold: 2);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: backAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
+        expect(machine.phase, HuntPhase.extractingBack);
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 5,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 5,
+        );
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+    });
+
+    group('extractingFront re-vote dwell (#5461 front 92% stall)', () {
+      test('re-votes of already-filled fields (addedNewField=true but the '
+          'distinct filled count is flat) do NOT reset idle, so the front '
+          'dwell still reaches frontCaptureReady', () {
+        // Device repro (S22): the text-dense FRONT plateaus at 11/19 filled,
+        // yet the FieldHunter keeps reading NEW normalized variants of fields
+        // it ALREADY filled, flipping addedNewField=true intermittently. The
+        // old policy reset idle on every such re-vote, so the 3-2-1 dwell
+        // stalled near ~92% and only the timeout fired. A re-vote that does
+        // not raise the distinct filled count is NOT new data — it must not
+        // reset the dwell.
+        final machine = HuntStateMachine(idleFramesThreshold: 4);
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        // filled stays clamped at 11/19; addedNewField flips true on re-votes.
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 11,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 11,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        expect(signal, HuntSignal.frontCaptureReady);
+      });
+
+      test('REGRESSION: a genuinely new distinct field (filled count '
+          'increases) DOES reset the idle dwell so a still-revealing '
+          'document is not cut short', () {
+        // The legitimate case: while the document keeps revealing NEW fields
+        // the distinct filled count rises, which still means productive
+        // progress and must reset idle.
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 8,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 8,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 8,
+        );
+        // A genuinely new field appears (8 -> 9): idle must reset here.
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 9,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 9,
+        );
+        expect(signal, HuntSignal.none);
+      });
+
+      test('extractingBack re-votes of already-filled fields also stop '
+          'resetting the dwell so backCaptureReady is reached', () {
+        // filledFields stays below minFieldsForFastAdvance (12) so the slow
+        // idleFramesThreshold (4) applies and the dwell is deterministic.
+        final machine = HuntStateMachine(idleFramesThreshold: 4);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: backAnchor,
+          addedNewField: false,
+          filledFields: 6,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 6,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 6,
+        );
+        machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: true,
+          filledFields: 6,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: noOpAnchor,
+          addedNewField: false,
+          filledFields: 6,
+        );
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+    });
+
+    group('capture on data stability, not all-fields completeness (#5471)', () {
+      test('FRONT plateaus at 11/19 with no new fields and never reaches the '
+          'complete count, yet stability still fires frontCaptureReady', () {
+        // Device truth (S22): a real DNI fills 11/19 because one printed field
+        // (e.g. "Fecha de inscripción") does not exist on that document, so
+        // the complete count is physically unreachable. Capture must fire on
+        // STABILITY (no new distinct field for N frames) regardless.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          // Mirror the live widget wiring: fast-advance kicks in at the small
+          // stability floor, so a plateau above it uses the fast path.
+          minFieldsForFastAdvance: 4,
+          // The full selection completes at 19, which this DNI can never reach.
+          frontCompleteFieldsCount: 19,
+        );
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        // Filled stays clamped at 11/19; no new distinct field arrives.
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 4; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 11,
+          );
+        }
+        expect(signal, HuntSignal.frontCaptureReady);
+      });
+
+      test('FRONT plateaus at 18/19 (one physically-absent field) and still '
+          'reaches frontCaptureReady via stability', () {
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          frontCompleteFieldsCount: 19,
+        );
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 18,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 4; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 18,
+          );
+        }
+        expect(signal, HuntSignal.frontCaptureReady);
+      });
+
+      test('BACK plateaus below the complete count and still reaches '
+          'backCaptureReady via stability', () {
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: backAnchor,
+          addedNewField: false,
+          filledFields: 13,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 4; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 13,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('FLOOR GUARD: below the minimum-fields floor stability does NOT '
+          'auto-capture (no premature garbage capture)', () {
+        // With almost no real data (filled below the floor) a long plateau is
+        // garbage, not a stabilized document. Capture must NOT fire.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          fastAdvanceThreshold: 2,
+          minFieldsForStableCapture: 4,
+          frontCompleteFieldsCount: 19,
+        );
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 10; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 2,
+          );
+        }
+        expect(signal, HuntSignal.none);
+        expect(machine.phase, HuntPhase.extractingFront);
+      });
+
+      test('FLOOR GUARD: once filled reaches the floor, a stable plateau '
+          'fires frontCaptureReady', () {
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          fastAdvanceThreshold: 2,
+          minFieldsForStableCapture: 4,
+          frontCompleteFieldsCount: 19,
+        );
+        machine.recordFrame(
+          detectedSide: frontAnchor,
+          addedNewField: false,
+          filledFields: 4,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 4; i++) {
+          signal = machine.recordFrame(
+            detectedSide: noOpAnchor,
+            addedNewField: false,
+            filledFields: 4,
+          );
+        }
+        expect(signal, HuntSignal.frontCaptureReady);
+      });
+
+      test('default minFieldsForStableCapture is 4 (DniFields.minimal size)',
+          () {
+        final machine = HuntStateMachine();
+        expect(machine.minFieldsForStableCapture, 4);
+      });
+    });
+
+    group('back auto-capture on stability when flipped (#5482)', () {
+      test('flipped back (side != front) with a stable data plateau above the '
+          'floor auto-captures via backCaptureReady, NOT recoverManual', () {
+        // Device truth (S22): the Peru DNI back carries almost no OCR-able
+        // text, so the side detector never confirms the back anchor and
+        // detectedSide stays `unknown`. The user HAS flipped (the front
+        // anchors left the frame, so detectedSide is no longer `front`) and
+        // the carried-over front fields plateau (e.g. 11/19) stays stable.
+        // This genuine flip must AUTO-CAPTURE, not fall to the manual escape.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Flipped to the back: detectedSide is `unknown` (sparse back, the
+        // front anchors are gone) and the front's fields are carried over and
+        // stable at 11.
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 5; i++) {
+          signal = machine.recordFrame(
+            detectedSide: DocumentSide.unknown,
+            addedNewField: false,
+            filledFields: 11,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('SAFETY: NOT flipped (side == front, user still showing the front) '
+          'does NOT emit backCaptureReady even with a stable plateau', () {
+        // The wrong-side risk: the user has not flipped, so the front anchors
+        // keep matching and detectedSide stays `front`. Auto-capturing here
+        // would photograph the front again. The machine must NOT emit
+        // backCaptureReady; it falls back to the manual/idle path as before.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Still showing the FRONT: detectedSide == front, fields stable at 11.
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 8; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.front,
+              addedNewField: false,
+              filledFields: 11,
+            ),
+        ];
+        // Never auto-captures the wrong side, and still falls back to the
+        // manual escape so the user is never stranded.
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(signals, contains(HuntSignal.recoverManual));
+      });
+
+      test('SAFETY: flipped but data still below the floor (near-empty frames) '
+          'does NOT auto-capture and still escapes to recoverManual', () {
+        // A genuinely flipped but data-starved view (filled below the floor)
+        // must not auto-capture garbage; the existing idle escape to manual
+        // still fires. This is the case the older escape tests exercise
+        // (filled defaults to 0).
+        final machine = HuntStateMachine(idleFramesThreshold: 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        expect(signal, HuntSignal.recoverManual);
+      });
+    });
+
+    group('back latches once like front (#5494 unified trigger)', () {
+      test('ONE genuine flipped frame latches into extractingBack; later '
+          'ambiguous (front) frames do NOT drop it back to recoverManual and '
+          'stability still fires backCaptureReady', () {
+        // Device truth: a single genuine flipped frame (front anchors gone,
+        // data above the floor) should COMMIT the back to the stability path,
+        // exactly like the front latches into extractingFront on the first
+        // front-detected frame. Subsequent ambiguous frames that momentarily
+        // read `front` (stale re-reads) must NOT pull the machine back to the
+        // waiting/idle escape. The old per-frame re-check fell to
+        // recoverManual on the first ambiguous frame after the flip.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // ONE genuine flipped frame above the floor.
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        expect(
+          machine.phase,
+          HuntPhase.extractingBack,
+          reason: 'a single genuine flipped frame must latch into '
+              'extractingBack like the front does',
+        );
+        // Now ambiguous frames arrive: some momentarily read `front` (stale
+        // re-reads of carried-over front fields). These must NOT drop the
+        // latch back to a waiting phase or emit recoverManual.
+        final signals = <HuntSignal>[];
+        for (var i = 0; i < 6; i++) {
+          signals.add(
+            machine.recordFrame(
+              detectedSide:
+                  i.isEven ? DocumentSide.front : DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 11,
+            ),
+          );
+        }
+        expect(
+          signals,
+          isNot(contains(HuntSignal.recoverManual)),
+          reason: 'once latched, ambiguous frames must not surface the manual '
+              'escape',
+        );
+        expect(
+          signals,
+          contains(HuntSignal.backCaptureReady),
+          reason: 'the latched back fires on pure stability via the same path '
+              'as the front',
+        );
+        expect(machine.phase, HuntPhase.extractingBack);
+      });
+
+      test('SAFETY: while every frame still reads FRONT (never flipped) the '
+          'back NEVER latches and NEVER emits backCaptureReady', () {
+        // The wrong-side invariant (#5457/#5484): if the user has NOT flipped,
+        // the front anchors keep matching and detectedSide stays `front`. The
+        // latch entry must require detectedSide != front, so the back never
+        // commits and never auto-captures the front again.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 10; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.front,
+              addedNewField: false,
+              filledFields: 11,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(
+          machine.phase,
+          isNot(HuntPhase.extractingBack),
+          reason: 'showing the front must never latch the back',
+        );
+        // Still surfaces the manual fallback so the user is never stranded.
+        expect(signals, contains(HuntSignal.recoverManual));
+      });
+
+      test('SAFETY: a flipped frame still BELOW the floor does NOT latch '
+          '(near-empty view is not a stabilized document)', () {
+        // The latch entry requires floorMet as well as side-safe. A flipped
+        // but data-starved view must not commit the back.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 3,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        expect(
+          machine.phase,
+          HuntPhase.waitingBack,
+          reason: 'below the floor the back must stay waiting, not latch',
+        );
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        final signal = machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 2,
+        );
+        expect(signal, HuntSignal.recoverManual);
+      });
+    });
+
+    group('quad-confirmed back trigger (#5517 textless reverso)', () {
+      test('a side-safe valid QUAD latches extractingBack even when filled is '
+          'below the field-count floor (textless back)', () {
+        // Device truth: the Peru DNI back carries almost no OCR-able text, so
+        // the field-count floor (>= 4) is never reached and the OCR-only latch
+        // can never fire. The quad detector supplies the FRAMING proof the
+        // field count cannot: a side-safe (detectedSide != front) frame with a
+        // valid quad must latch the back, mirroring the front commit. TODAY
+        // this stays in waitingBack because recordFrame has no quad input.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        expect(
+          machine.phase,
+          HuntPhase.extractingBack,
+          reason: 'a side-safe valid quad must latch the back even with no '
+              'OCR fields',
+        );
+      });
+
+      test('a sustained side-safe valid QUAD reaches backCaptureReady through '
+          'the stability dwell with NO OCR fields', () {
+        // The latch alone is not enough: the textless back has filled=0, so the
+        // existing field-count stability gate would never emit the ready
+        // signal. A sustained valid quad must satisfy the framing floor so the
+        // back quad dwell can fire backCaptureReady — the trigger the device
+        // needs. The textless back is now governed by backQuadDwellFrames
+        // (#5525), decoupled from the shared idleFramesThreshold, so the test
+        // drives that knob directly.
+        final machine = HuntStateMachine(
+          backQuadDwellFrames: 3,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 5; i++) {
+          signal = machine.recordFrame(
+            detectedSide: DocumentSide.unknown,
+            addedNewField: false,
+            filledFields: 0,
+            quadFramingValid: true,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('SAFETY: a valid QUAD held on the FRONT (detectedSide == front) '
+          'never latches the back and never emits backCaptureReady', () {
+        // Wrong-side invariant (#5457/#5484/#5499): a perfectly framed FRONT
+        // shown during the back phase must NOT trigger. The quad supplies
+        // FRAMING; the side detector supplies SIDE-SAFETY. A confident quad
+        // must never override detectedSide == front.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 10; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.front,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: true,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(
+          machine.phase,
+          isNot(HuntPhase.extractingBack),
+          reason: 'a valid quad on the front must never latch the back',
+        );
+      });
+
+      test('DWELL: a single valid-quad frame followed by quad loss does NOT '
+          'auto-capture (a blip must not fire)', () {
+        // Hysteresis: the quad must be SUSTAINED for the dwell, not fire on a
+        // single frame. A latch followed by quad loss must accrue no progress
+        // toward the ready signal.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // One valid quad frame latches.
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        expect(machine.phase, HuntPhase.extractingBack);
+        // Quad is then lost: no sustained framing, so the ready signal must
+        // not fire on these blank frames.
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: false,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+      });
+
+      test('REGRESSION: the OCR field-count back path still latches and fires '
+          'when filled >= floor and quad is absent (front-data-rich back)', () {
+        // The existing OCR-driven path must be preserved exactly: a flipped
+        // back carrying the front fields above the floor still auto-captures
+        // with no quad input at all.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 3,
+          minFieldsForStableCapture: 4,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 5; i++) {
+          signal = machine.recordFrame(
+            detectedSide: DocumentSide.unknown,
+            addedNewField: false,
+            filledFields: 11,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
+      });
+
+      test('SAFETY: the FRONT phase ignores quadFramingValid entirely (front '
+          'stays OCR-triggered)', () {
+        // Front behavior is unchanged: a valid quad must not short-circuit the
+        // front, which still fires on OCR data stability. Below the floor with
+        // no stable plateau, no capture even with a valid quad.
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 4,
+          minFieldsForStableCapture: 4,
+        );
+        machine.recordFrame(
+          detectedSide: DocumentSide.front,
+          addedNewField: false,
+          filledFields: 2,
+          quadFramingValid: true,
+        );
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 2,
+              quadFramingValid: true,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.frontCaptureReady)));
+        expect(machine.phase, HuntPhase.extractingFront);
+      });
     });
 
     test('advanceToDone moves to done phase', () {
@@ -212,6 +1072,258 @@ void main() {
           filledFields: 19,
         );
         expect(signal, HuntSignal.none);
+      });
+    });
+
+    group('real detect() -> recordFrame seam (#5498 blind spot)', () {
+      // The unit tests above feed detectedSide DIRECTLY, which is exactly what
+      // hid the device bug: they never drive the REAL DocumentSideDetector.
+      // These tests compute detectedSide through the production detector from
+      // realistic OCR text, then feed THAT into the state machine — the live
+      // path (dni_scanner.dart:384 -> :391) the isolated unit tests bypass.
+      const detector = DocumentSideDetector();
+
+      test('a realistic BACK frame computed through the REAL detector latches '
+          'into extractingBack and emits backCaptureReady (NOT recoverManual)',
+          () {
+        // Device-truth back OCR: the back prints the DNI number near the MRZ,
+        // plus Grupo de Votación and an address, but NO front title block and
+        // NO clean CONSTANCIA/DONACIÓN anchor. Through the corrected detector
+        // this resolves to NOT front, so the back latch can finally fire.
+        const backText =
+            'Grupo de Votación 083966\n'
+            'Dirección AMPLC. TUPAC AMARU SICUANI 215\n'
+            'DNI 71542895\n'
+            'I<PER7154289<<<<<<<<<<<<<<<';
+        final detectedSide = detector.detect(backText);
+        expect(
+          detectedSide,
+          isNot(DocumentSide.front),
+          reason: 'the realistic back must not read as front through the real '
+              'detector — this is the root-cause gate (#5498)',
+        );
+
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+
+        // First genuine flipped frame (computed via the real detector) latches.
+        machine.recordFrame(
+          detectedSide: detectedSide,
+          addedNewField: false,
+          filledFields: 11,
+        );
+        expect(
+          machine.phase,
+          HuntPhase.extractingBack,
+          reason: 'a back frame computed through the real detector must latch '
+              'the back, not stay stranded in waitingBack',
+        );
+
+        // Subsequent stable frames fire on pure stability through the same
+        // path as the front — reaching the counter, never the manual escape.
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: detector.detect(backText),
+              addedNewField: false,
+              filledFields: 11,
+            ),
+        ];
+        expect(signals, contains(HuntSignal.backCaptureReady));
+        expect(signals, isNot(contains(HuntSignal.recoverManual)));
+      });
+
+      test('SAFETY: a genuine FRONT frame computed through the REAL detector '
+          'never latches the back (wrong-side invariant #5457/#5484)', () {
+        // The front title block is present, so the real detector returns front
+        // every frame; the back must never latch and never auto-capture while
+        // the user is still showing the front.
+        const frontText =
+            'REPÚBLICA DEL PERÚ\n'
+            'DOCUMENTO NACIONAL DE IDENTIDAD\n'
+            'GOICOCHEA PEREZ ODETTE\n'
+            'DNI 71542895';
+        expect(detector.detect(frontText), DocumentSide.front);
+
+        final machine = HuntStateMachine(
+          idleFramesThreshold: 6,
+          fastAdvanceThreshold: 3,
+          minFieldsForFastAdvance: 4,
+          minFieldsForStableCapture: 4,
+          backCompleteFieldsCount: 19,
+        );
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 10; i++)
+            machine.recordFrame(
+              detectedSide: detector.detect(frontText),
+              addedNewField: false,
+              filledFields: 11,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(machine.phase, isNot(HuntPhase.extractingBack));
+      });
+    });
+
+    group('back quad dwell calibration (#5525 device-confirmed)', () {
+      test('default backQuadDwellFrames is 6 — shorter than the 18-frame idle '
+          'threshold so the textless reverso auto-captures in a human hold', () {
+        // Device truth (/tmp/dni_cap3.log, S22): the quad-confirmed back dwell
+        // climbed 0..8 cleanly (~118ms/frame) with framingValid=true the whole
+        // time, then the hold ended — it never reached the shared
+        // idleFramesThreshold of 18 (~2.1s) and always fell to manual. The
+        // back quad-latch path needs its OWN, shorter dwell so a reasonable
+        // hold (~0.7s sustained quad) reaches backCaptureReady; the 3-2-1
+        // countdown then gives the final stabilization.
+        final machine = HuntStateMachine();
+        expect(machine.idleFramesThreshold, 18);
+        expect(machine.backQuadDwellFrames, 6);
+      });
+
+      test('a sustained textless quad-confirmed back fires backCaptureReady at '
+          'the lower backQuadDwellFrames, NOT the 18-frame idle threshold', () {
+        // PRODUCTION DEFAULTS: idleFramesThreshold stays 18 (front slow path +
+        // manual escape are unchanged) but the back quad-latch path uses
+        // backQuadDwellFrames (6). With filled=0 and a sustained valid quad,
+        // backCaptureReady must fire by the 6th dwell frame after the latch —
+        // well before frame 18 (which is all the device ever reached, ~8).
+        final machine = HuntStateMachine();
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        // Frame 1 latches into extractingBack (backDetected, dwell resets to 0).
+        final latch = machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        expect(latch, HuntSignal.backDetected);
+        expect(machine.phase, HuntPhase.extractingBack);
+        // Dwell frames accrue. With backQuadDwellFrames=6 the ready signal must
+        // appear by the 6th post-latch frame and BEFORE the 18th — the old
+        // threshold the device could never reach.
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: true,
+            ),
+        ];
+        expect(
+          signals,
+          contains(HuntSignal.backCaptureReady),
+          reason: 'the quad-confirmed textless back must fire within '
+              'backQuadDwellFrames (6), not the 18-frame idle threshold',
+        );
+      });
+
+      test('REGRESSION: the front slow path still uses the 18-frame idle '
+          'threshold (lowering the back must not make the front fire early)', () {
+        // The back-only dwell must NOT shorten the front. A front plateau below
+        // minFieldsForFastAdvance uses idleFramesThreshold (18). Holding the
+        // front for only 6 idle frames must NOT fire frontCaptureReady — proves
+        // backQuadDwellFrames is scoped to the back quad path alone.
+        final machine = HuntStateMachine();
+        machine.recordFrame(detectedSide: DocumentSide.front, addedNewField: false);
+        expect(machine.phase, HuntPhase.extractingFront);
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 5,
+            ),
+        ];
+        expect(
+          signals,
+          isNot(contains(HuntSignal.frontCaptureReady)),
+          reason: 'the front slow path must still wait the full 18-frame idle '
+              'threshold; the lowered back dwell must not leak into the front',
+        );
+      });
+
+      test('DWELL: a single quad-confirmed back frame then quad loss does NOT '
+          'fire even at the lower threshold (a blip must not capture)', () {
+        // Hysteresis preserved: the lower dwell must still require SUSTAINED
+        // framing. One valid-quad latch frame followed by quad loss accrues no
+        // ready signal — a 1-frame blip never captures.
+        final machine = HuntStateMachine();
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        expect(machine.phase, HuntPhase.extractingBack);
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 6; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.unknown,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: false,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+      });
+
+      test('SAFETY: a valid quad held on the FRONT during the back phase never '
+          'fires even at the lower back dwell (wrong-side invariant intact)', () {
+        // The lowered dwell must not weaken wrong-side safety: a perfectly
+        // framed FRONT (detectedSide == front) shown during the back phase must
+        // NEVER latch or fire, regardless of how short the back dwell is.
+        final machine = HuntStateMachine();
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        final signals = <HuntSignal>[
+          for (var i = 0; i < 10; i++)
+            machine.recordFrame(
+              detectedSide: DocumentSide.front,
+              addedNewField: false,
+              filledFields: 0,
+              quadFramingValid: true,
+            ),
+        ];
+        expect(signals, isNot(contains(HuntSignal.backCaptureReady)));
+        expect(machine.phase, isNot(HuntPhase.extractingBack));
+      });
+
+      test('the back quad dwell is configurable for callers that need a '
+          'different hold', () {
+        final machine = HuntStateMachine(backQuadDwellFrames: 3);
+        expect(machine.backQuadDwellFrames, 3);
+        _seedFrontPhaseComplete(machine);
+        machine.advanceToWaitingBack();
+        machine.recordFrame(
+          detectedSide: DocumentSide.unknown,
+          addedNewField: false,
+          filledFields: 0,
+          quadFramingValid: true,
+        );
+        var signal = HuntSignal.none;
+        for (var i = 0; i < 3; i++) {
+          signal = machine.recordFrame(
+            detectedSide: DocumentSide.unknown,
+            addedNewField: false,
+            filledFields: 0,
+            quadFramingValid: true,
+          );
+        }
+        expect(signal, HuntSignal.backCaptureReady);
       });
     });
   });

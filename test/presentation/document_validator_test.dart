@@ -621,4 +621,86 @@ void main() {
       },
     );
   });
+
+  group('lighting merge', () {
+    test('invalid lighting overrides a captureable OCR result', () {
+      const lighting = LightingResult(
+        isValid: false,
+        meanLuminance: 20,
+        saturatedFraction: 0,
+        failing: ValidationGate.lighting,
+      );
+
+      final result = DocumentValidationResult.evaluate(
+        recognizedText: makeRecognizedText(count: 5),
+        imageSize: kTestImageSize,
+        lighting: lighting,
+      );
+
+      expect(result.isCaptureable, isFalse);
+      expect(result.failingGate, ValidationGate.lighting);
+    });
+
+    test('glare lighting overrides a captureable OCR result', () {
+      const lighting = LightingResult(
+        isValid: false,
+        meanLuminance: 200,
+        saturatedFraction: 0.4,
+        failing: ValidationGate.glare,
+      );
+
+      final result = DocumentValidationResult.evaluate(
+        recognizedText: makeRecognizedText(count: 5),
+        imageSize: kTestImageSize,
+        lighting: lighting,
+      );
+
+      expect(result.isCaptureable, isFalse);
+      expect(result.failingGate, ValidationGate.glare);
+    });
+
+    test('valid lighting leaves a captureable OCR result untouched', () {
+      const lighting = LightingResult(
+        isValid: true,
+        meanLuminance: 140,
+        saturatedFraction: 0,
+      );
+
+      final result = DocumentValidationResult.evaluate(
+        recognizedText: makeRecognizedText(count: 5),
+        imageSize: kTestImageSize,
+        lighting: lighting,
+      );
+
+      expect(result.isCaptureable, isTrue);
+      expect(result.failingGate, isNull);
+    });
+
+    test('OCR failure takes precedence over lighting evaluation', () {
+      const lighting = LightingResult(
+        isValid: true,
+        meanLuminance: 140,
+        saturatedFraction: 0,
+      );
+
+      final result = DocumentValidationResult.evaluate(
+        recognizedText: makeRecognizedText(count: 0),
+        imageSize: kTestImageSize,
+        lighting: lighting,
+      );
+
+      expect(result.isCaptureable, isFalse);
+      expect(result.failingGate, ValidationGate.minBlocks);
+    });
+
+    test('null lighting keeps legacy behavior (captureable)', () {
+      final result = DocumentValidationResult.evaluate(
+        recognizedText: makeRecognizedText(count: 5),
+        imageSize: kTestImageSize,
+      );
+
+      expect(result.isCaptureable, isTrue);
+      expect(result.failingGate, isNull);
+    });
+  });
 }

@@ -21,8 +21,9 @@ flutter run -d <your-physical-device>
 - **HomeScreen** — entry point with a single "Start Scan" call-to-action.
 - **ScanScreen** — front-side then back-side capture driven by a small state
   machine (`initializing → frontCapturing → backCapturing → backComplete`).
-  Manages the `CameraController` lifecycle and wires `DniCameraMask` for both
-  sides, including the `frontSideFields` seeding pattern.
+  Manages the `CameraController` lifecycle and wires `DniScanner`, which drives
+  both sides of the scan internally and reports the final result via
+  `onScanComplete`.
 - **ResultScreen** — displays all seven extracted DNI fields (`documentNumber`,
   `firstName`, `lastName`, `secondLastName`, `dateOfBirth`, `expirationDate`,
   `address`) with per-field confidence indicators.
@@ -51,56 +52,39 @@ Also ensure `minSdkVersion 21` (or higher) in your `build.gradle`.
 
 Also ensure `platform :ios, '12.0'` (or higher) in your `Podfile`.
 
-## The frontSideFields seeding pattern
+> **`sensors_plus` build floor (Android):** `DniScanner` reads the IMU, so the
+> host needs Java 17, Android Gradle Plugin ≥ 8.12.1, and Gradle ≥ 8.13. This
+> example currently pins AGP 8.11.1 — bump it to 8.12.1+ in your own project.
+> On iOS no extra `Info.plist` key is required: only the accelerometer and
+> gyroscope are read (the barometer, which would need `NSMotionUsageDescription`,
+> is never initialized).
 
-This is the most important integration detail. When the user scans the front
-side of the DNI, `DniCameraMask` progressively accumulates OCR fields and
-delivers them via `onFrontSideOcrUpdated`. You **must persist those fields in
-your own state** and pass them back as `frontSideFields` when mounting the
-back-side widget.
+## Driving the scan with DniScanner
+
+`DniScanner` owns the entire two-sided flow internally — front capture, the
+flip prompt, back capture, and OCR consensus — and reports the final result
+through a single `onScanComplete` callback. There is no manual front/back
+seeding to wire up.
 
 ```dart
-// In your StatefulWidget state:
-OcrExtractedFields? _frontFields;
-
-// Front-side widget — accumulate fields as they come in:
-DniCameraMask(
+DniScanner(
   controller: cameraController,
-  isBackSide: false,
-  onValidCapture: (file, consensus) {
-    setState(() => _step = ScanStep.backCapturing);
+  fields: widget.fields ?? DniFields.full(),
+  autoCaptureMs: 1500,
+  manualFallbackMs: 30000,
+  onScanComplete: (result) {
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => ResultScreen(result: result),
+    ));
   },
-  onFrontSideOcrUpdated: (fields) {
-    // Store the latest snapshot — no setState needed, it's just state.
-    _frontFields = fields;
-  },
-  onDocumentExpired: (_) => _goToError(),
-),
-
-// Back-side widget — seed with the accumulated front fields:
-DniCameraMask(
-  controller: cameraController,
-  isBackSide: true,
-  frontSideFields: _frontFields,   // <-- the seeding step
-  onValidCapture: (file, consensus) {
-    if (consensus != null) {
-      // consensus is populated only on the back side.
-      Navigator.push(context, MaterialPageRoute(
-        builder: (_) => ResultScreen(result: consensus),
-      ));
-    }
-  },
-  onDocumentExpired: (_) => _goToError(),
-),
+)
 ```
 
-**Why does this matter?** Flutter destroys the widget `State` when the host
-swaps from front-side to back-side (e.g. via a `switch` over an enum step). The
-back-side accumulator starts empty by default, which means it reads the MRZ and
-text fields from scratch and may need more frames to reach consensus. By passing
-`frontSideFields`, the library pre-loads the MRZ hypotheses gathered during the
-front scan, allowing the back-side accumulator to reach high confidence in fewer
-frames.
+For a single-side capture, provide `isBackSide` plus `onSideCaptured` instead
+of `onScanComplete`. The scanner auto-captures once the document is framed,
+still (IMU gate), well-lit (lighting gate), and sharp (post-shutter blur gate);
+if auto-capture has not fired after `manualFallbackMs`, a manual capture button
+appears so the user is never stuck.
 
 ## Project structure
 
@@ -113,7 +97,7 @@ example/
 │   │   └── app_theme.dart     — Material 3 theme (ColorScheme.fromSeed, indigo)
 │   ├── screens/
 │   │   ├── home_screen.dart   — entry CTA
-│   │   ├── scan_screen.dart   — state machine + camera lifecycle + DniCameraMask
+│   │   ├── scan_screen.dart   — state machine + camera lifecycle + DniScanner
 │   │   ├── result_screen.dart — field display with confidence badges
 │   │   └── error_screen.dart  — failure handling (expired/cancelled/permission/init)
 │   └── widgets/

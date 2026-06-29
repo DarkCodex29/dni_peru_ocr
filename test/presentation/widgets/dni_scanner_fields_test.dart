@@ -10,6 +10,17 @@ class _MockCameraController extends Mock implements CameraController {}
 
 class _FakeXFile extends Fake implements XFile {}
 
+class _StillMotionGate implements MotionStillnessGate {
+  @override
+  bool get isStill => true;
+
+  @override
+  Stream<bool> watchStillness() => const Stream<bool>.empty();
+
+  @override
+  void dispose() {}
+}
+
 CameraValue _initializedCameraValue() => const CameraValue(
       isInitialized: true,
       previewSize: Size(640, 480),
@@ -70,6 +81,7 @@ Widget _buildScanner({
           onScanComplete: (_) {},
           hunter: hunter,
           fields: fields,
+          motionGate: _StillMotionGate(),
         ),
       ),
     ),

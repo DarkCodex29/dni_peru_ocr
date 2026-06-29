@@ -1,7 +1,6 @@
 import '../document_validator.dart';
 import 'dni_capture_state.dart';
 
-/// Stateless state machine for the DNI auto-capture flow.
 final class DniCaptureOrchestrator {
   DniCaptureOrchestrator({
     required this.autoCaptureMs,
@@ -15,13 +14,15 @@ final class DniCaptureOrchestrator {
   final int manualFallbackMs;
   final int minStableFrames;
 
-  /// Pure state transition for one camera frame.
   DniCaptureState onFrame({
     required DniCaptureState current,
     required DocumentValidationResult validation,
     required int stableFrames,
     required bool? userDataMatch,
     required DateTime now,
+    bool imuStill = true,
+    bool lightingValid = true,
+    bool framingValid = true,
   }) {
     if (current is DniCaptureInFlight ||
         current is DniCaptureExpired ||
@@ -29,30 +30,47 @@ final class DniCaptureOrchestrator {
       return current;
     }
 
-    final isCaptureable = validation.isCaptureable;
+    final entryCaptureable =
+        validation.isCaptureable && lightingValid && framingValid;
+    final holdCaptureable = entryCaptureable && imuStill;
 
     if (current is CountingDownWithAnchor) {
       final elapsedMs =
           (now.millisecondsSinceEpoch - current.perfectSinceEpochMs)
               .clamp(0, autoCaptureMs * 10);
 
-      if (isCaptureable) {
+      if (holdCaptureable) {
         if (elapsedMs >= autoCaptureMs) {
           return const DniCaptureInFlight(showFlash: true);
         }
+        // Hold is good: progress accrues and any prior disturbance clears, so
+        // the next jitter starts a fresh grace window.
         return CountingDownWithAnchor(
           guideText: current.guideText,
           elapsedMs: elapsedMs,
           totalMs: autoCaptureMs,
           perfectSinceEpochMs: current.perfectSinceEpochMs,
+          disturbedSinceEpochMs: null,
         );
       } else {
-        if (elapsedMs < gracePeriodMs) {
+        // Hold is broken this frame. The grace window measures how long the
+        // disturbance has lasted CONTINUOUSLY — not the total countdown
+        // progress — so a brief handheld jitter pauses the dwell instead of
+        // resetting it. The reset-loop that hung the textless back compared the
+        // grace against total elapsed: once progress passed the grace mark, a
+        // single jitter frame reset the whole countdown and the back could
+        // never sustain 3s before the next micro-jitter (#5532).
+        final disturbedSince =
+            current.disturbedSinceEpochMs ?? now.millisecondsSinceEpoch;
+        final disturbedForMs = (now.millisecondsSinceEpoch - disturbedSince)
+            .clamp(0, autoCaptureMs * 10);
+        if (disturbedForMs < gracePeriodMs) {
           return CountingDownWithAnchor(
             guideText: current.guideText,
             elapsedMs: current.elapsedMs,
             totalMs: autoCaptureMs,
             perfectSinceEpochMs: current.perfectSinceEpochMs,
+            disturbedSinceEpochMs: disturbedSince,
           );
         }
         return _resetToScanning(current);
@@ -60,7 +78,7 @@ final class DniCaptureOrchestrator {
     }
 
     if (current is DniCaptureCountingDown) {
-      if (isCaptureable && stableFrames >= minStableFrames) {
+      if (entryCaptureable && stableFrames >= minStableFrames) {
         return CountingDownWithAnchor(
           guideText: _countdownGuideText(userDataMatch),
           elapsedMs: 0,
@@ -72,7 +90,7 @@ final class DniCaptureOrchestrator {
     }
 
     if (current is DniCaptureScanning) {
-      if (isCaptureable && stableFrames >= minStableFrames) {
+      if (entryCaptureable && stableFrames >= minStableFrames) {
         return CountingDownWithAnchor(
           guideText: _countdownGuideText(userDataMatch),
           elapsedMs: 0,
@@ -93,7 +111,6 @@ final class DniCaptureOrchestrator {
     return current;
   }
 
-  /// Manual-fallback timer expired — activates manual-capture mode.
   DniCaptureState onManualFallbackTimeout(DniCaptureState current) {
     if (current is DniCaptureScanning) {
       return DniCaptureScanning(
@@ -108,7 +125,6 @@ final class DniCaptureOrchestrator {
     return current;
   }
 
-  /// Side toggle — resets countdown and manual mode.
   DniCaptureState onSideToggle(DniCaptureState current) =>
       const DniCaptureScanning(
         guideText: '',

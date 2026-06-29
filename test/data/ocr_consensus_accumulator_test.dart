@@ -40,16 +40,9 @@ void main() {
     test(
       'DniCameraController.onSideChanged() can be called without error',
       () {
-        final orchestrator = DniCaptureOrchestrator(
-          autoCaptureMs: 5000,
-          gracePeriodMs: 1000,
-          manualFallbackMs: 30000,
-          minStableFrames: 10,
-        );
         final controller = DniCameraController(
-          orchestrator: orchestrator,
           isBackSide: false,
-          onValidCapture: (_, __) {},
+          onValidCapture: (_, _) {},
         );
         expect(() => controller.onSideChanged(), returnsNormally);
         controller.dispose();

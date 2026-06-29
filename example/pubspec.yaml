@@ -4,22 +4,22 @@ publish_to: 'none'
 version: 0.0.1+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
-  flutter: '>=3.3.0'
+  sdk: '>=3.10.0 <4.0.0'
+  flutter: '>=3.38.0'
 
 dependencies:
   flutter:
     sdk: flutter
   dni_peru_ocr:
     path: ../
-  camera: ^0.11.0+2
+  camera: ^0.12.0+1
   dio: ^5.0.0
   flutter_dotenv: ^5.2.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true
