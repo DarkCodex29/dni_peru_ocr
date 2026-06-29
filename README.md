@@ -74,16 +74,6 @@ dependencies:
 flutter pub get
 ```
 
-### Install from source
-
-```yaml
-dependencies:
-  dni_peru_ocr:
-    git:
-      url: https://github.com/DarkCodex29/dni_peru_ocr.git
-      ref: v1.0.0
-```
-
 ## Example
 
 A runnable example app is available under [`example/`](example/). It demonstrates
