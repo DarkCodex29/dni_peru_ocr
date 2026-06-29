@@ -78,7 +78,28 @@ class HuntStateMachine {
   int _idleFrames = 0;
   int _lastFilledFields = 0;
 
+  /// The filled-field count captured at the front->back handoff. The shared
+  /// FieldHunter is never reset, so the front's plateau fields stay cached into
+  /// the back phase; without this baseline the back latch floor
+  /// `filledFields >= minFieldsForStableCapture` would ALWAYS be met by cached
+  /// front fields, so a back frame momentarily reading `unknown` (the front
+  /// title briefly unread) while the front is still shown would latch
+  /// `extractingBack` and capture the FRONT as the BACK (#5562). The back floor
+  /// measures fields gained SINCE the handoff (`filledFields - baseline`), so
+  /// cached front fields can no longer satisfy it. The textless-back QUAD
+  /// trigger (#5517/#5525) and the wrong-side guard (`detectedSide != front`,
+  /// #5499) are unaffected.
+  int _backFieldBaseline = 0;
+
   HuntPhase get phase => _phase;
+
+  /// Distinct fields gained since the front->back handoff. Cached front fields
+  /// (at or below the baseline) contribute zero, so only genuine new back data
+  /// counts toward the back floor.
+  int _backRelativeFilled(int filledFields) {
+    final relative = filledFields - _backFieldBaseline;
+    return relative < 0 ? 0 : relative;
+  }
 
   HuntSignal recordFrame({
     required DocumentSide detectedSide,
@@ -148,7 +169,12 @@ class HuntStateMachine {
         // `front`. Framing source = quad; side-safety = detector; both are
         // required.
         final sideSafe = detectedSide != DocumentSide.front;
-        final floorMet = filledFields >= minFieldsForStableCapture;
+        // The floor measures fields gained SINCE the handoff, so the front's
+        // cached plateau fields cannot latch the back (#5562). A genuine
+        // OCR-rich back that reveals new back fields above the baseline still
+        // latches; the textless back latches via the quad below.
+        final floorMet =
+            _backRelativeFilled(filledFields) >= minFieldsForStableCapture;
         if (sideSafe && (floorMet || quadFramingValid)) {
           _phase = HuntPhase.extractingBack;
           _idleFrames = 0;
@@ -258,6 +284,10 @@ class HuntStateMachine {
   void advanceToWaitingBack() {
     _phase = HuntPhase.waitingBack;
     _idleFrames = 0;
+    // Snapshot the front plateau as the back-phase baseline so the cached front
+    // fields cannot satisfy the back latch floor (#5562). The back floor then
+    // measures only fields gained after this handoff.
+    _backFieldBaseline = _lastFilledFields;
     _lastFilledFields = 0;
   }
 
@@ -271,5 +301,6 @@ class HuntStateMachine {
     _phase = HuntPhase.waitingFront;
     _idleFrames = 0;
     _lastFilledFields = 0;
+    _backFieldBaseline = 0;
   }
 }
