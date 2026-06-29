@@ -29,6 +29,7 @@ import '../camera_overlay_logic.dart';
 import '../controllers/dni_camera_controller.dart';
 import '../coordinators/capture_coordinator.dart';
 import '../coordinators/capture_decision.dart';
+import '../coordinators/frame_input.dart';
 import '../framing/framing_signal.dart';
 import '../image_quality_gate.dart';
 import '../lighting_gate.dart';
@@ -477,41 +478,120 @@ class DniScannerState extends State<DniScanner>
     if (!mounted) return;
 
     final text = recognized.blocks.map((b) => b.text).join('\n');
-    if (text.isEmpty) {
-      _handleEmptyOcrFrame();
-      return;
+    if (text.isNotEmpty) {
+      DniLogger.verbose(
+        'DniScanner',
+        'raw OCR (${text.length} chars, ${recognized.blocks.length} blocks):\n$text',
+      );
     }
-
-    DniLogger.verbose(
-      'DniScanner',
-      'raw OCR (${text.length} chars, ${recognized.blocks.length} blocks):\n$text',
-    );
-
-    final DocumentSide detectedSide = switch (widget.isBackSide) {
-      null => const DocumentSideDetector().detect(text),
-      true => DocumentSide.back,
-      false => DocumentSide.front,
-    };
-    final addedNew = _hunter.process(text);
-    final filled = _countFilled(_hunter.snapshot.fields);
-    _recordAndDispatch(
-      detectedSide: detectedSide,
-      addedNewField: addedNew,
-      filledFields: filled,
-    );
+    // Route the per-frame readiness through the coordinator's tested seam
+    // (#5562): the same DocumentSideDetector.detect -> FieldHunter.process ->
+    // HuntStateMachine.recordFrame chain the harness golden drives, so the
+    // device path IS the tested path. The widget no longer runs its own
+    // duplicate detect()/recordFrame.
+    _dispatchFrame(text);
   }
 
-  /// Routes an empty-OCR frame through the single capture chain (#5523).
-  ///
-  /// The Peru DNI back is textless, so OCR is frequently empty and the OCR path
-  /// alone never triggers it. [resolveEmptyOcrRoute] decides, from the live
-  /// quad framing flag and the current phase, whether this empty frame must
-  /// drive the back trigger (a quad-confirmed, side-safe back) or be skipped (a
-  /// blank frame with no quad, or a front phase that stays OCR-triggered). An
-  /// empty frame carries no front title block, so the side resolves to
-  /// `unknown` (side-safe, != front); a held front is text-dense and takes the
-  /// OCR branch in [_processImage] instead, so the wrong-side guard in
-  /// [HuntStateMachine] still protects this path.
+  /// Feeds one recognized OCR frame through [CaptureCoordinator.onFrame] — the
+  /// REAL detect -> hunt -> recordFrame -> decision chain the harness golden
+  /// pins — and applies the returned [CaptureDecision] to the widget's render
+  /// and shutter. This is the device path routed through the tested coordinator
+  /// seam (#5562): the side is detected from [text] inside the coordinator (no
+  /// duplicate detect() in the widget), and the empty-OCR textless-back trigger
+  /// (#5523) is handled by the coordinator too.
+  void _dispatchFrame(String text) {
+    final phaseBefore = _stateMachine.phase;
+    final decision = _coordinator.onFrame(
+      FrameInput(
+        ocrText: text,
+        quadFramingValid: _framingValid,
+        imuStill: _motionGate.isStill,
+        now: _captureClock(),
+      ),
+    );
+    if (mounted &&
+        (_stateMachine.phase != _lastPhaseRendered ||
+            _stateMachine.phase != phaseBefore)) {
+      _lastPhaseRendered = _stateMachine.phase;
+    }
+    _applyDecision(decision);
+  }
+
+  /// Translates one coordinator [CaptureDecision] into the widget's render and
+  /// shutter actions. The coordinator OWNS the readiness + countdown decision;
+  /// the widget starts/keeps its smooth periodic ticker on a running countdown
+  /// (so the 3-2-1 stays smooth between sparse camera frames), fires the shutter
+  /// on completion, clears on a reset, and rebuilds for scanning/manual/absent.
+  void _applyDecision(CaptureDecision decision) {
+    switch (decision) {
+      case CaptureFire(side: final side):
+        _frameCaptureable = true;
+        _countdownTicker?.cancel();
+        _countdownTicker = null;
+        if (mounted) setState(() {});
+        unawaited(
+          _fireCapture(
+            side == CaptureSide.back
+                ? HuntSignal.backCaptureReady
+                : HuntSignal.frontCaptureReady,
+          ),
+        );
+      case CaptureCountingDown():
+        _frameCaptureable = true;
+        if (widget.captureMode == DniCaptureMode.manual) {
+          _markCaptureReady();
+        } else {
+          _ensureCountdownTicker();
+        }
+        if (mounted) setState(() {});
+      case CaptureReset():
+        _resetCaptureToScanning();
+      case CaptureManualAvailable():
+        _frameCaptureable = false;
+        _markCaptureReady();
+        if (mounted) setState(() {});
+      case CaptureScanning():
+      case CaptureAbsentBanner():
+        _frameCaptureable = false;
+        if (mounted) setState(() {});
+    }
+  }
+
+  /// Starts the smooth countdown ticker if a countdown is running but the timer
+  /// is not yet armed. The coordinator already advanced the dwell this frame;
+  /// the ticker keeps it advancing during the camera-stream cadence so the 3-2-1
+  /// renders smoothly between sparse OCR frames. Idempotent: a running ticker is
+  /// left alone so re-entry never collapses progress.
+  void _ensureCountdownTicker() {
+    if (_capturing || _disposed) return;
+    if (_countdownTicker != null) return;
+    final side = _captureState is DniCaptureCountingDown
+        ? (_coordinatorCountdownSide() ?? HuntSignal.frontCaptureReady)
+        : HuntSignal.frontCaptureReady;
+    _countdownAnchor = _captureClock();
+    _countdownElapsedMs = 0;
+    _startCountdownTicker(side);
+  }
+
+  /// The hunt phase resolves which side the running countdown targets so the
+  /// ticker fires the correct shutter. Front phases -> front, otherwise back.
+  HuntSignal? _coordinatorCountdownSide() => _isFrontPhase()
+      ? HuntSignal.frontCaptureReady
+      : HuntSignal.backCaptureReady;
+
+  /// The monotonic wall-clock the coordinator measures the dwell and the
+  /// manual-fallback window against. On device this is real time; under the test
+  /// fake-async clock the routed real-text path runs inside `runAsync`, so real
+  /// time advances consistently for both the per-frame [onFrame] and the
+  /// countdown ticker.
+  DateTime _captureClock() => DateTime.now();
+
+  /// Legacy debug-only empty-OCR routing (#5523), retained for
+  /// [debugProcessEmptyOcrForTest]. The LIVE device path no longer calls this:
+  /// [_processImage] feeds every frame — including empty-OCR textless-back
+  /// frames — through [CaptureCoordinator.onFrame], which owns the identical
+  /// empty-OCR back trigger (#5562). This mirror exists only so existing tests
+  /// can exercise the empty-OCR routing in isolation.
   DniCaptureState _handleEmptyOcrFrame() {
     if (_framingSignal().dispatchEmptyOcrBackTrigger) {
       return _recordAndDispatch(
@@ -526,13 +606,14 @@ class DniScannerState extends State<DniScanner>
     return _captureState;
   }
 
-  /// Records one frame through [HuntStateMachine] and dispatches the resulting
-  /// signal — the single capture trigger path shared by the OCR frames and the
-  /// quad-confirmed textless-back frames. The current quad framing flag
-  /// ([_framingValid], updated by the quad-detection isolate) is fed into the
-  /// machine so a side-safe valid quad can latch and fire the back even with no
-  /// OCR fields (#5517). There is exactly one trigger path, so the two
-  /// per-frame analyses (OCR + quad) never race for a second trigger.
+  /// Legacy debug-only readiness dispatch, retained for
+  /// [debugProcessFrameForTest]. The LIVE device path no longer calls this:
+  /// [_processImage] routes every frame through [CaptureCoordinator.onFrame],
+  /// the tested seam that runs the real `detect -> hunt -> recordFrame ->
+  /// decision` chain and owns the countdown (#5562). This mirror records a
+  /// pre-resolved frame on the shared machine so existing tests that drive the
+  /// back with a fixed side/field count keep working; it is never reached from
+  /// a live camera frame.
   DniCaptureState _recordAndDispatch({
     required DocumentSide detectedSide,
     required bool addedNewField,
@@ -732,6 +813,20 @@ class DniScannerState extends State<DniScanner>
   /// safely skipped) — the layer the device log fingered.
   @visibleForTesting
   DniCaptureState debugProcessEmptyOcrForTest() => _handleEmptyOcrFrame();
+
+  /// Drives the REAL routed device frame path a live camera frame takes (#5562):
+  /// the recognized [ocrText] flows through [CaptureCoordinator.onFrame] — the
+  /// SAME `DocumentSideDetector.detect -> FieldHunter.process ->
+  /// HuntStateMachine.recordFrame` chain the harness golden pins — with NO
+  /// pre-set side and NO injected signal. Unlike [debugProcessFrameForTest] it
+  /// never receives a resolved side/field count, so a test can prove the device
+  /// path does NOT confuse the front for the back from real OCR text across the
+  /// handoff. Returns the resulting capture state.
+  @visibleForTesting
+  DniCaptureState debugProcessTextForTest(String ocrText) {
+    _dispatchFrame(ocrText);
+    return _captureState;
+  }
 
   @visibleForTesting
   DniCaptureState get debugCaptureState => _captureState;
@@ -983,20 +1078,19 @@ class DniScannerState extends State<DniScanner>
         );
         return;
       }
-      _stateMachine.advanceToWaitingBack();
-      // Clear the leftover front DniCaptureInFlight so the back's
-      // _onCaptureReady guard passes and its countdown can start (#5535). The
-      // front shutter has already completed (post-await), so this never
-      // re-arms a capture during the live front; the in-flight re-entry guard
-      // stays intact for frames arriving mid-shutter.
-      _resetCaptureToScanning();
-      // Restart the manual-fallback window for the BACK so it measures from the
-      // moment the back starts trying, not from scanner open (#5536). The live
-      // handoff does not route through onSideChanged, so without this the back
-      // inherits the front's already-elapsing window and the manual button
-      // surfaces before the back auto-capture gets a full window. PR5: the
-      // window is coordinator-owned now (the single manual source).
-      _coordinator.restartManualWindow();
+      // The front->back handoff now routes through the coordinator's tested
+      // seam (#5562): advanceToWaitingBack snapshots the back-phase field
+      // baseline so cached front fields cannot latch the back, clears the
+      // leftover front countdown so the back guard passes (#5535), and restarts
+      // the per-side manual window so the back gets its own full window (#5536).
+      // The widget only cancels its own countdown timer; the coordinator owns
+      // the rest.
+      _countdownTicker?.cancel();
+      _countdownTicker = null;
+      _countdownAnchor = null;
+      _countdownElapsedMs = 0;
+      _coordinator.advanceAfterCapture();
+      if (mounted) setState(() {});
     } on CameraException catch (e) {
       DniLogger.error('DniScanner', 'front capture failed: ${e.code}');
     } finally {
