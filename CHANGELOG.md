@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+### Changed
+- Bumped `dio` to `5.10.0` (and resolved transitive dependencies) to restore
+  the pub.dev "up-to-date dependencies" score. No API or behavior changes.
+
 ## 1.0.0
 
 The first major release. It lands on-device document quad detection (a hybrid,
