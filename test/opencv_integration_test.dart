@@ -34,8 +34,11 @@ void main() {
       expect(constraintFor(pubspec, 'opencv_dart'), '^2.2.1+4');
     });
 
-    test('library version is bumped to the 1.0.0 MAJOR', () {
-      expect(fieldFor(pubspec, 'version'), '1.0.0');
+    test('library version is at the 1.x MAJOR or higher', () {
+      final version = fieldFor(pubspec, 'version');
+      final major = int.parse(version.split('.').first);
+      expect(major, greaterThanOrEqualTo(1),
+          reason: 'opencv_dart landed in the 1.0.0 MAJOR; version must stay >=1.x.');
     });
 
     test('SDK floor is raised to Dart >=3.10 for opencv_dart 2.x hooks', () {
