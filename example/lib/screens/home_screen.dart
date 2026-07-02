@@ -7,7 +7,7 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   static const String _libraryName = 'dni_peru_ocr';
-  static const String _libraryVersion = '0.13.1';
+  static const String _libraryVersion = '1.0.1';
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
